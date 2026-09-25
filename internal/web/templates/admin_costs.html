@@ -53,7 +53,7 @@ async function load() {
       '<div class="stat"><div class="v">' + usd(p.cached_per_m_usd, 2) + '</div><div class="l">$ / 1M cached</div></div>' +
       '<div class="stat"><div class="v">' + usd(p.fixed_cost_usd_month, 0) + '/mo</div><div class="l">fixed (capex+overhead+idle)</div></div>' +
       '</div>' +
-      '<table class="mini"><tr><td></td><th>marginal</th><th>fixed/vol</th><th>recommended</th></tr>' +
+      '<table class="mini"><tr><td></td><th>marginal</th><th>+ fixed (mix-weighted)</th><th>= recommended</th></tr>' +
       '<tr><th>prompt</th><td>' + usd(p.marginal_prompt_per_m_usd, 2) + '</td><td>+' + usd(p.fixed_prompt_per_m_usd, 2) + '</td><td><strong>' + usd(p.prompt_per_m_usd, 2) + '</strong></td></tr>' +
       '<tr><th>generated</th><td>' + usd(p.marginal_output_per_m_usd, 2) + '</td><td>+' + usd(p.fixed_output_per_m_usd, 2) + '</td><td><strong>' + usd(p.output_per_m_usd, 2) + '</strong></td></tr>' +
       '</table>' +

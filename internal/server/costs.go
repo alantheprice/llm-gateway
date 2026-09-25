@@ -567,17 +567,19 @@ func ComputePricingV2(in PricingInputs) PricingRecommendation {
 	p.FixedMonthly = round2(in.FixedToday * 30)
 	if in.ExpectedTokensPerDay > 0 {
 		fixedPerM := in.FixedToday / in.ExpectedTokensPerDay * 1e6
-		p.FixedPPPerM = round2(fixedPerM * mult)
-		p.FixedTGPerM = round2(fixedPerM * mult)
-		// Recommended = marginal + fixed spread by today's non-cached mix.
+		// Split fixed across classes by today's non-cached mix — the
+		// per-class contributions shown are what's actually added, so
+		// marginal + fixed == recommended and the columns sum.
 		denom := in.PromptTokens + in.OutputTokens
 		ppMix, tgMix := 0.5, 0.5
 		if denom > 0 {
 			ppMix = in.PromptTokens / denom
 			tgMix = in.OutputTokens / denom
 		}
-		p.PromptPerM = round2(p.MarginalPPPerM + fixedPerM*ppMix*mult)
-		p.OutputPerM = round2(p.MarginalTGPerM + fixedPerM*tgMix*mult)
+		p.FixedPPPerM = round2(fixedPerM * ppMix * mult)
+		p.FixedTGPerM = round2(fixedPerM * tgMix * mult)
+		p.PromptPerM = round2(p.MarginalPPPerM + p.FixedPPPerM)
+		p.OutputPerM = round2(p.MarginalTGPerM + p.FixedTGPerM)
 	}
 	// Cached: prompt price minus the cache discount (default 75% off).
 	p.CachedPerM = round2(p.PromptPerM * (1 - in.CacheDiscountPct/100))
