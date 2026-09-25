@@ -87,4 +87,4 @@ bearer key, or LAN trust.
 
 ## License
 
-TBD (Apache-2.0 or MIT before first public release).
+[Apache-2.0](LICENSE)

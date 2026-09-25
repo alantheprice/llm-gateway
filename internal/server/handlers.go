@@ -403,7 +403,8 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 		leader = pick.URL
 
 		// Rewrite pool name -> the chosen member's backend model id
-		// (SPEC §5: members serve their own ids, e.g. qwen3.8-27b-5090).
+		// (SPEC §5: members serve their own ids, which usually differ
+		// from the pool's virtual name).
 		fwdBody := body
 		var reqData map[string]any
 		if json.Unmarshal(body, &reqData) == nil {
