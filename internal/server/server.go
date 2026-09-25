@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"llmgateway/internal/embeddedpb"
+
 	"github.com/danielgtaylor/huma/v2"
 
 	"llmgateway/internal/auth"
@@ -62,6 +64,12 @@ type Server struct {
 
 	costHistory *CostHistory // per-day actual cost + value (chart)
 
+	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
+	// PocketBase's database. Nil in tests that don't embed PB — every
+	// call site must nil-check.
+	ops   OpsStore
+	muOps sync.RWMutex
+
 	huma         huma.API
 	docHandler   http.Handler
 	uiKeys       map[string]string // username -> plaintext ui key (session lifetime)
@@ -69,6 +77,29 @@ type Server struct {
 	streamClient *http.Client      // no overall timeout — SSE/long streams
 }
 
+// OpsStore is the SQLite ops surface (embeddedpb.App satisfies it).
+// Interface keeps the server testable without a live PB.
+type OpsStore interface {
+	UpsertUsageDaily(day, user, kind string, requests, prompt, cached, output int) error
+	UpsertCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
+	CostSeries(days int) ([]embeddedpb.CostRow, error)
+	PruneOlderThan(days int) (int64, error)
+}
+
+// SetOps attaches the embedded PB ops store (called from main after
+// bootstrap). Nil clears it.
+func (s *Server) SetOps(ops OpsStore) {
+	s.muOps.Lock()
+	s.ops = ops
+	s.muOps.Unlock()
+}
+
+// Ops returns the current ops store (or nil).
+func (s *Server) Ops() OpsStore {
+	s.muOps.RLock()
+	defer s.muOps.RUnlock()
+	return s.ops
+}
 func New(cfg *config.Config, store *auth.Store) *Server {
 	store.LegacyKeysFile = cfg.Gateway.APIKeysFile
 	s := &Server{
@@ -86,9 +117,9 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		rate:         map[string][]time.Time{},
 		probe:        map[string][]time.Time{},
 		leader:       map[string]string{},
-		usage:        NewUsageStore(usagePath(cfg)),
-		peaks:        NewPeakStore(peaksPath(usagePath(cfg))),
-		costHistory:  NewCostHistory(costHistoryPath(usagePath(cfg))),
+		usage:        NewUsageStore(UsagePath(cfg)),
+		peaks:        NewPeakStore(peaksPath(UsagePath(cfg))),
+		costHistory:  NewCostHistory(CostHistoryPath(UsagePath(cfg))),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},
@@ -148,7 +179,7 @@ func pbURL(cfg *config.Config) string {
 	return "http://127.0.0.1:8090"
 }
 
-func usagePath(cfg *config.Config) string {
+func UsagePath(cfg *config.Config) string {
 	if cfg.Gateway.UsageFile != "" {
 		return cfg.Gateway.UsageFile
 	}
@@ -224,22 +255,27 @@ func (s *Server) authRequired(r *http.Request) bool {
 	return !(s.cfg.Gateway.TrustLocalNetworks && isLocalRequest(r))
 }
 
+// authorized: (username, keyID, ok). Order matters:
+//  1. A presented, VALID key always resolves to its user — even from
+//     trusted networks (LAN trust is for UNKEYED convenience; it must not
+//     swallow keyed requests or per-key usage/quota attribution breaks).
+//  2. Trusted network without (or with an invalid) key → LAN trust,
+//     unattributed ("local" upstream).
+//  3. Untrusted + missing/invalid key → 401.
 func (s *Server) authorized(r *http.Request) (string, string, bool) {
-	// returns (username, keyID, ok)
+	key := bearerKey(r)
+	if key != "" {
+		if user, rec, ok := s.store.LookupKey(key); ok {
+			return user, rec.KeyID, true
+		}
+		for _, lk := range s.store.LegacyKeys() {
+			if lk == key {
+				return "operator", "operator", true
+			}
+		}
+	}
 	if !s.authRequired(r) {
 		return "", "", true
-	}
-	key := bearerKey(r)
-	if key == "" {
-		return "", "", false
-	}
-	if user, rec, ok := s.store.LookupKey(key); ok {
-		return user, rec.KeyID, true
-	}
-	for _, lk := range s.store.LegacyKeys() {
-		if lk == key {
-			return "operator", "operator", true
-		}
 	}
 	return "", "", false
 }

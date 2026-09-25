@@ -246,7 +246,7 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"username": username,
-			"keys":     s.store.ListKeys(username),
+			"keys":     s.keysWithUsage(username),
 		})
 	case http.MethodPost:
 		var body struct {
@@ -341,7 +341,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			out[u.Username] = map[string]any{
 				"username": u.Username, "email": u.Email, "role": u.Role,
 				"verified": u.Verified, "created": u.Created,
-				"keys":   s.store.ListKeys(u.Username),
+				"keys":   s.keysWithUsage(u.Username),
 				"limits": s.userDailyStatus(u.Username),
 			}
 		}
