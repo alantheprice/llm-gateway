@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"llmgateway/internal/config"
 )
@@ -182,6 +183,36 @@ func validateConfig(c *config.Config) error {
 		}
 		pair.Threshold = clamp01(pair.Threshold)
 		c.OverflowPairs[model] = pair
+	}
+	seenIP := map[string]bool{}
+	for i, h := range c.Hosts {
+		if len(h.IPs) == 0 {
+			return fmt.Errorf("hosts[%d] (%s): at least one ip required", i, h.Label)
+		}
+		for _, ip := range h.IPs {
+			if ip == "" {
+				return fmt.Errorf("hosts[%d] (%s): empty ip entry", i, h.Label)
+			}
+			if seenIP[ip] {
+				return fmt.Errorf("hosts[%d] (%s): ip %q claimed by two hosts", i, h.Label, ip)
+			}
+			seenIP[ip] = true
+		}
+		if h.HardwareCostUSD < 0 {
+			h.HardwareCostUSD = 0
+		}
+		if h.OverheadWatts < 0 {
+			h.OverheadWatts = 0
+		}
+		if h.AmortizeYears < 0 {
+			h.AmortizeYears = 0
+		}
+		if h.Purchased != "" {
+			if _, err := time.ParseInLocation("2006-01-02", h.Purchased, time.Local); err != nil {
+				return fmt.Errorf("hosts[%d] (%s): purchased must be YYYY-MM-DD", i, h.Label)
+			}
+		}
+		c.Hosts[i] = h
 	}
 	return nil
 }

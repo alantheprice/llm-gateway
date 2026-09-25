@@ -243,6 +243,28 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
 .cfgtoggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0; }
 .cfgtoggle input { width: auto; }
 .cfgtoggle span { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.cfgbox { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 10px 0; }
+.cfgbox .members { margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.memberrow, .pairrow { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.memberrow .mf:first-child, .memberrow .mf:nth-child(2) { flex: 2 1 180px; }
+.pairrow .mf { flex: 1 1 140px; }
+.mf { display: flex; flex-direction: column; gap: 3px; font-size: 12px; flex: 1 1 120px; }
+.mf span { color: var(--muted); font-size: 11px; font-weight: 500; }
+.mf input { font-size: 12.5px; padding: 6px 8px; }
+.mf-check { flex: 0 0 auto; flex-direction: row; align-items: center; gap: 6px; padding: 8px 0; cursor: pointer; }
+.mf-check span { font-size: 12px; }
+.mf-num { flex: 0 1 90px; }
+.rowlegend { display: flex; gap: 8px; font-size: 10.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.rowlegend span:first-child, .rowlegend span:nth-child(2) { flex: 2 1 180px; }
+.rowlegend span:nth-child(3) { flex: 1 1 140px; }
+.rowlegend span:nth-child(4) { flex: 0 1 90px; }
+.rowlegend span:last-child { flex: 0 0 34px; }
+.delbtn, .btn.small { padding: 6px 10px; font-size: 12px; }
+.memberrow .btn.small, .pairrow .btn.small { flex: 0 0 34px; }
+@media (max-width: 768px) {
+  .memberrow, .pairrow { flex-direction: column; align-items: stretch; }
+  .rowlegend { display: none; }
+}
 
 /* ---------- login ---------- */
 body.auth { display: flex; align-items: center; justify-content: center; min-height: 100vh; }

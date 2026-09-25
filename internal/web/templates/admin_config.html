@@ -7,14 +7,96 @@ function field(label, input, hint) {
   return '<label class="cfgfield"><span class="cfglabel">' + esc(label) + '</span>' + input +
     (hint ? '<span class="cfghint">' + esc(hint) + '</span>' : '') + '</label>';
 }
-function num(id, v, step) {
-  return '<input id="' + id + '" type="number" step="' + (step||'any') + '" value="' + (v ?? 0) + '">';
+function num(name, v, step) {
+  return '<input name="' + name + '" type="number" step="' + (step||'any') + '" value="' + (v ?? 0) + '">';
 }
-function txt(id, v, ph) {
-  return '<input id="' + id + '" type="text" value="' + escAttr(v ?? '') + '" placeholder="' + escAttr(ph||'') + '">';
+function txt(name, v, ph) {
+  return '<input name="' + name + '" type="text" value="' + escAttr(v ?? '') + '" placeholder="' + escAttr(ph||'') + '">';
 }
-function chk(id, v) {
-  return '<label class="cfgtoggle"><input id="' + id + '" type="checkbox"' + (v ? ' checked' : '') + '><span>' + (v ? 'on' : 'off') + '</span></label>';
+function chk(name, v) {
+  return '<label class="cfgtoggle"><input name="' + name + '" type="checkbox"' + (v ? ' checked' : '') + '><span>' + (v ? 'on' : 'off') + '</span></label>';
+}
+function delBtn(cls) { return '<button type="button" class="btn small ' + cls + '-del" title="Remove">✕</button>'; }
+
+/* ---------- hosts (full-cost accounting) ---------- */
+function hostRow(h) {
+  return '<div class="hostrow cfgbox">' +
+    '<div class="cfggrid">' +
+    field('label', txt('label', h.label, 'gpu-a (5090)')) +
+    field('ips (comma-separated)', txt('ips', (h.ips||[]).join(', '), '127.0.0.1, 192.168.1.10'),
+      'Backend URL hosts living on this box (1 IP = 1 box).') +
+    field('overhead_watts', num('overhead_watts', h.overhead_watts ?? 0, 10),
+      'Whole-system draw minus the GPUs: CPU, RAM, fans, PSU loss.') +
+    field('hardware_cost_usd', num('hardware_cost_usd', h.hardware_cost_usd ?? 0, 10), 'Original purchase price.') +
+    field('purchased', '<input name="purchased" type="date" value="' + escAttr(h.purchased||'') + '">') +
+    field('amortize_years', num('amortize_years', h.amortize_years ?? 3, 0.5), 'Straight-line term.') +
+    '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('host') + '</div>' +
+    '</div></div>';
+}
+function wireHostDels() {
+  document.querySelectorAll('.host-del').forEach(b => b.onclick = () => b.closest('.hostrow').remove());
+}
+
+/* ---------- pools ---------- */
+function memberRow(m) {
+  m = m || {};
+  return '<div class="memberrow">' +
+    '<label class="mf"><span>model id</span>' +
+    '<input name="member_model" type="text" value="' + escAttr(m.model_id||'') + '" placeholder="qwen3.8-27b-5090" title="Engine model id as the backend reports it (hidden from /v1/models)"></label>' +
+    '<label class="mf"><span>backend url</span>' +
+    '<input name="member_backend" type="text" value="' + escAttr(m.backend||'') + '" placeholder="http://127.0.0.1:8000" title="Base URL of the engine serving this model"></label>' +
+    '<label class="mf mf-check" title="Big prompts prefer this member (large_prompt_tokens threshold)"><input name="member_large" type="checkbox"' + (m.large_context ? ' checked' : '') + '><span>large ctx</span></label>' +
+    '<label class="mf mf-num" title="Relative capacity vs other members (default 1)"><span>weight</span>' +
+    '<input name="member_weight" type="number" step="1" value="' + (m.capacity_weight ?? 1) + '"></label>' +
+    delBtn('member') + '</div>';
+}
+function memberLegend() {
+  return '<div class="rowlegend"><span>model id</span><span>backend url</span><span>large ctx</span><span>weight</span><span></span></div>';
+}
+function poolRow(name, p) {
+  p = p || {};
+  return '<div class="poolrow cfgbox">' +
+    '<div class="cfggrid">' +
+    field('pool name', txt('pool_name', name, 'qwen3.8-27b'), 'The model id clients call; member ids are hidden.') +
+    field('overflow_threshold', num('pool_threshold', p.overflow_threshold ?? 0.20, 0.05), 'Load score (0-1) above which a member is skipped for new requests.') +
+    field('sticky_bias', num('pool_sticky', p.sticky_bias ?? 0, 0.05), 'Score bonus for a member already holding the session (KV cache reuse).') +
+    field('large_prompt_tokens', num('pool_big', p.large_prompt_tokens ?? 0, 1000), 'Prompts above this size go to large-ctx members first.') +
+    field('capacity_bias', num('pool_bias', p.capacity_bias ?? 0, 0.05), 'Static preference for higher-capacity members.') +
+    '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('pool') + '</div>' +
+    '</div>' +
+    '<div class="members">' + memberLegend() + (p.members||[]).map(memberRow).join('') + '</div>' +
+    '<button type="button" class="btn small member-add">+ member</button>' +
+    '</div>';
+}
+function wirePoolBtns() {
+  document.querySelectorAll('.member-del').forEach(b => b.onclick = () => b.closest('.memberrow').remove());
+  document.querySelectorAll('.pool-del').forEach(b => b.onclick = () => b.closest('.poolrow').remove());
+  document.querySelectorAll('.member-add').forEach(b => b.onclick = () => {
+    const wrap = b.closest('.poolrow').querySelector('.members');
+    wrap.insertAdjacentHTML('beforeend', memberRow({}));
+    wirePoolBtns();
+  });
+}
+
+/* ---------- overflow pairs ---------- */
+function pairRow(name, o) {
+  o = o || {};
+  return '<div class="pairrow">' +
+    '<label class="mf"><span>source model</span>' +
+    '<input name="pair_name" type="text" value="' + escAttr(name||'') + '" placeholder="qwen3.8-27b-5090" title="The model whose overflow routes here"></label>' +
+    '<label class="mf"><span>fallback model</span>' +
+    '<input name="pair_model" type="text" value="' + escAttr(o.fallback_model_id||'') + '" placeholder="qwen3.8-27b" title="Model id to use on the fallback backend"></label>' +
+    '<label class="mf"><span>fallback backend</span>' +
+    '<input name="pair_backend" type="text" value="' + escAttr(o.fallback_backend||'') + '" placeholder="http://192.168.1.20:8006" title="Where requests go when the source model is saturated"></label>' +
+    '<label class="mf mf-num" title="Load score at which overflow fires (0-1)"><span>threshold</span>' +
+    '<input name="pair_threshold" type="number" step="0.05" value="' + (o.overflow_threshold ?? 0.20) + '"></label>' +
+    delBtn('pair') + '</div>';
+}
+function pairLegend() {
+  return '<div class="rowlegend"><span>source model</span><span>fallback model</span><span>fallback backend</span><span>threshold</span><span></span></div>';
+}
+function wirePairDels() {
+  document.querySelectorAll('.pair-del').forEach(b => b.onclick = () => b.closest('.pairrow').remove());
 }
 
 function render(c) {
@@ -29,7 +111,7 @@ function render(c) {
       'LAN hosts call inference without a key. 127.0.0.1 is NEVER trusted (tunnel path).') +
     field('models_require_auth', chk('g_mra', g.models_require_auth),
       'Off (default): GET /v1/models is public. On: the catalog needs a key like every other /v1 surface.') +
-    field('local_networks (one CIDR per line)', '<textarea id="g_nets" rows="3">' + esc((c.local_networks||[]).join('\n')) + '</textarea>',
+    field('local_networks (one CIDR per line)', '<textarea name="g_nets" rows="3">' + esc((c.local_networks||[]).join('\n')) + '</textarea>',
       'Applies instantly on save.');
 
   document.getElementById('cachegrid').innerHTML =
@@ -43,7 +125,8 @@ function render(c) {
     field('ninfer_lane_weight', num('m_lane', m.ninfer_lane_weight, 0.05), 'NInfer score = lane*W + queue*W + kv_pressure*W.') +
     field('ninfer_queue_weight', num('m_queue', m.ninfer_queue_weight, 0.05)) +
     field('ninfer_pressure_weight', num('m_press', m.ninfer_pressure_weight, 0.05)) +
-    field('backend_max_seqs (JSON: url → concurrency)', '<textarea id="m_bms" rows="3">' + esc(JSON.stringify(m.backend_max_seqs||{}, null, 1)) + '</textarea>',
+    field('backend_max_seqs (one "url = concurrency" per line)',
+      '<textarea name="m_bms" rows="3">' + esc(Object.entries(m.backend_max_seqs||{}).map(([k,v]) => k + ' = ' + v).join('\n')) + '</textarea>',
       'Used by vLLM-style scoring and capacity math.');
 
   document.getElementById('discgrid').innerHTML =
@@ -51,51 +134,134 @@ function render(c) {
     field('local_ports (comma-separated)', txt('d_lports', (d.local_ports||[]).join(', '))) +
     field('remote_ports (comma-separated)', txt('d_rports', (d.remote_ports||[]).join(', ')));
 
-  document.getElementById('poolsjson').value = JSON.stringify(
-    {model_pools: c.model_pools || {}, overflow_pairs: c.overflow_pairs || {}, public_models: c.public_models || []},
-    null, 2);
+  // Costs & hosts.
+  document.getElementById('rategrid').innerHTML =
+    field('electricity_rate_usd_per_kwh', num('e_rate', c.electricity_rate_usd_per_kwh ?? 0.125, 0.005),
+      'Used for overhead energy; engines carry their own rate for GPU energy.');
+  document.getElementById('hostsbox').innerHTML = (c.hosts||[]).map(hostRow).join('') ||
+    '<p class="muted">No hosts configured — the Costs page shows GPU energy only.</p>';
+  wireHostDels();
+
+  // Pools.
+  document.getElementById('poolsbox').innerHTML =
+    Object.entries(c.model_pools||{}).map(([n, p]) => poolRow(n, p)).join('') ||
+    '<p class="muted">No pools. A pool lets one model id load-balance across GPUs.</p>';
+  wirePoolBtns();
+
+  // Overflow pairs.
+  document.getElementById('pairsbox').innerHTML = pairLegend() +
+    (Object.entries(c.overflow_pairs||{}).map(([n, o]) => pairRow(n, o)).join('') ||
+    '<p class="muted">No overflow pairs. A pair routes saturated models to a fallback engine.</p>');
+  wirePairDels();
+
+  // Public models: plain lines, no JSON.
+  document.getElementById('publicmodels').value = (c.public_models||[]).join('\n');
 }
 
 function collect() {
-  const nets = document.getElementById('g_nets').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const list = s => s.split(',').map(x=>parseInt(x.trim(),10)).filter(n=>!isNaN(n)&&n>0);
-  let bms = {};
-  try { bms = JSON.parse(document.getElementById('m_bms').value || '{}'); } catch(e) {
-    flash('backend_max_seqs is not valid JSON: ' + e.message, true); throw e; }
-  let pools; try { pools = JSON.parse(document.getElementById('poolsjson').value); } catch(e) {
-    flash('pools JSON is not valid: ' + e.message, true); throw e; }
+  const val = n => { const el = document.querySelector('[name="'+n+'"]'); return el ? el.value : ''; };
+  const chkv = n => { const el = document.querySelector('[name="'+n+'"]'); return el ? el.checked : false; };
+  const ints = s => s.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+  const floats = s => s.split(',').map(x => parseFloat(x.trim())).filter(n => !isNaN(n));
+  const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean);
+
+  const hosts = [...document.querySelectorAll('.hostrow')].map(row => {
+    const g = n => row.querySelector('[name="'+n+'"]').value;
+    return {
+      label: g('label').trim(),
+      ips: g('ips').split(',').map(s => s.trim()).filter(Boolean),
+      overhead_watts: parseFloat(g('overhead_watts')) || 0,
+      hardware_cost_usd: parseFloat(g('hardware_cost_usd')) || 0,
+      purchased: g('purchased') || '',
+      amortize_years: parseFloat(g('amortize_years')) || 0,
+    };
+  }).filter(h => h.ips.length);
+
+  const model_pools = {};
+  document.querySelectorAll('.poolrow').forEach(row => {
+    const name = row.querySelector('[name="pool_name"]').value.trim();
+    if (!name) return;
+    const members = [...row.querySelectorAll('.memberrow')].map(mr => {
+      const gv = n => mr.querySelector('[name="'+n+'"]');
+      return {
+        model_id: gv('member_model').value.trim(),
+        backend: gv('member_backend').value.trim(),
+        large_context: gv('member_large').checked,
+        capacity_weight: parseInt(gv('member_weight').value, 10) || 1,
+      };
+    }).filter(m => m.model_id && m.backend);
+    model_pools[name] = {
+      members,
+      overflow_threshold: parseFloat(row.querySelector('[name="pool_threshold"]').value) || 0,
+      sticky_bias: parseFloat(row.querySelector('[name="pool_sticky"]').value) || 0,
+      large_prompt_tokens: parseInt(row.querySelector('[name="pool_big"]').value, 10) || 0,
+      capacity_bias: parseFloat(row.querySelector('[name="pool_bias"]').value) || 0,
+    };
+  });
+
+  const overflow_pairs = {};
+  document.querySelectorAll('.pairrow').forEach(row => {
+    const gv = n => row.querySelector('[name="'+n+'"]').value.trim();
+    const name = gv('pair_name');
+    if (!name || !gv('pair_backend')) return;
+    overflow_pairs[name] = {
+      fallback_model_id: gv('pair_model'),
+      fallback_backend: gv('pair_backend'),
+      overflow_threshold: parseFloat(row.querySelector('[name="pair_threshold"]').value) || 0,
+    };
+  });
+
+  const bms = {};
+  lines(val('m_bms')).forEach(l => {
+    const i = l.indexOf('=');
+    if (i > 0) { const v = parseInt(l.slice(i+1).trim(), 10); if (v > 0) bms[l.slice(0, i).trim()] = v; }
+  });
+
   return {
     gateway: {
       port: CFG.gateway.port, // port edits need a restart; not editable here
-      trust_local_networks: document.getElementById('g_tln').checked,
-      models_require_auth: document.getElementById('g_mra').checked,
+      trust_local_networks: chkv('g_tln'),
+      models_require_auth: chkv('g_mra'),
     },
-    local_networks: nets,
-    cache: {ttl: parseInt(document.getElementById('c_ttl').value,10)||60},
+    local_networks: lines(val('g_nets')),
+    cache: {ttl: parseInt(val('c_ttl'), 10) || 60},
     discovery: {
-      local_ports: list(document.getElementById('d_lports').value),
-      remote_host: document.getElementById('d_host').value.trim(),
-      remote_ports: list(document.getElementById('d_rports').value),
+      local_ports: ints(val('d_lports')),
+      remote_host: val('d_host').trim(),
+      remote_ports: ints(val('d_rports')),
     },
     metrics: {
-      poll_interval: parseInt(document.getElementById('m_poll').value,10)||10,
-      stale_threshold: parseInt(document.getElementById('m_stale').value,10)||30,
-      default_max_seqs: parseInt(document.getElementById('m_seqs').value,10)||3,
-      ninfer_lane_weight: parseFloat(document.getElementById('m_lane').value)||0,
-      ninfer_queue_weight: parseFloat(document.getElementById('m_queue').value)||0,
-      ninfer_pressure_weight: parseFloat(document.getElementById('m_press').value)||0,
+      poll_interval: parseInt(val('m_poll'), 10) || 10,
+      stale_threshold: parseInt(val('m_stale'), 10) || 30,
+      default_max_seqs: parseInt(val('m_seqs'), 10) || 3,
+      ninfer_lane_weight: parseFloat(val('m_lane')) || 0,
+      ninfer_queue_weight: parseFloat(val('m_queue')) || 0,
+      ninfer_pressure_weight: parseFloat(val('m_press')) || 0,
       backend_max_seqs: bms,
     },
-    model_pools: pools.model_pools || {},
-    overflow_pairs: pools.overflow_pairs || {},
-    public_models: pools.public_models || [],
+    electricity_rate_usd_per_kwh: parseFloat(val('e_rate')) || 0.125,
+    hosts,
+    model_pools,
+    overflow_pairs,
+    public_models: lines(document.getElementById('publicmodels').value),
   };
 }
 
+document.getElementById('addhost').addEventListener('click', () => {
+  document.getElementById('hostsbox').insertAdjacentHTML('beforeend', hostRow({}));
+  wireHostDels();
+});
+document.getElementById('addpool').addEventListener('click', () => {
+  document.getElementById('poolsbox').insertAdjacentHTML('beforeend', poolRow('', {}));
+  wirePoolBtns();
+});
+document.getElementById('addpair').addEventListener('click', () => {
+  document.getElementById('pairsbox').insertAdjacentHTML('beforeend', pairRow('', {}));
+  wirePairDels();
+});
+
 document.getElementById('save').addEventListener('click', async () => {
-  let body;
-  try { body = JSON.stringify(collect()); } catch(e) { return; }
-  const r = await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'}, body});
+  const r = await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(collect())});
   if (r.status === 401) { location = '/'; return; }
   flash(r.ok ? 'Saved — live now, persisted to the conf file.' : (r.data.error || 'save failed'), !r.ok);
   if (r.ok) load();
@@ -146,9 +312,31 @@ load();
   </div>
 
   <div class="card">
-    <h2>Pools &amp; overflow (JSON)</h2>
-    <textarea id="poolsjson" rows="14" style="font-family:monospace;font-size:12.5px;width:100%"></textarea>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">model_pools members: {model_id, backend, large_context?, capacity_weight?}. Pool MEMBER model ids are hidden from /v1/models; the pool name is what clients call.</p>
+    <h2>Costs &amp; hosts</h2>
+    <div class="cfggrid" id="rategrid"></div>
+    <div id="hostsbox"></div>
+    <button type="button" class="btn small" id="addhost">+ host</button>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">One entry per physical box. GPU energy comes from the engines' NVML; overhead watts and capex drive the full-cost view at /admin/costs.</p>
+  </div>
+
+  <div class="card">
+    <h2>Model pools</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">One pool = one virtual model id that load-balances across several GPUs. Members are picked per request by load score; big prompts prefer large-ctx members.</p>
+    <div id="poolsbox"></div>
+    <button type="button" class="btn small" id="addpool">+ pool</button>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Pool MEMBER model ids are hidden from /v1/models; the pool name is what clients call.</p>
+  </div>
+
+  <div class="card">
+    <h2>Overflow pairs</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Route requests away from a saturated model to a fallback engine (failover happens before any bytes reach the client).</p>
+    <div id="pairsbox"></div>
+    <button type="button" class="btn small" id="addpair">+ pair</button>
+  </div>
+
+  <div class="card">
+    <h2>Public models (one per line)</h2>
+    <textarea id="publicmodels" rows="4" style="font-family:monospace;font-size:12.5px;width:100%"></textarea>
   </div>
 
   <div style="display:flex;gap:8px;margin-top:4px">
