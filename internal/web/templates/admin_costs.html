@@ -75,14 +75,15 @@ async function load() {
       '<div class="stat"><div class="v">' + usd(p.cached_per_m_usd, 2) + '</div><div class="l">$ / 1M cached</div></div>' +
       '<div class="stat"><div class="v">' + usd(p.fixed_cost_usd_month, 0) + '/mo</div><div class="l">fixed (capex+overhead+idle)</div></div>' +
       '</div>' +
-      '<table class="mini"><tr><td></td><th>marginal</th><th>+ fixed (mix-weighted)</th><th>= recommended</th></tr>' +
+      '<table class="mini"><tr><td></td><th>marginal</th><th>+ fixed (capacity)</th><th>= recommended</th></tr>' +
       '<tr><th>prompt</th><td>' + usd(p.marginal_prompt_per_m_usd, 2) + '</td><td>+' + usd(p.fixed_prompt_per_m_usd, 2) + '</td><td><strong>' + usd(p.prompt_per_m_usd, 2) + '</strong></td></tr>' +
       '<tr><th>generated</th><td>' + usd(p.marginal_output_per_m_usd, 2) + '</td><td>+' + usd(p.fixed_output_per_m_usd, 2) + '</td><td><strong>' + usd(p.output_per_m_usd, 2) + '</strong></td></tr>' +
       '</table>' +
       '<p class="muted" style="font-size:12px;margin:8px 0 0">Marginal = GPU energy above idle — what each extra token truly costs today (' +
       'pp at ~' + Math.round(p.fleet_pp_tok_per_s||0).toLocaleString() + ' tok/s, tg at ~' + Math.round(p.fleet_tg_tok_per_s||0).toLocaleString() +
-      ' tok/s, split by GPU-time). Fixed = capex + host overhead + idle power — that bill runs whether tokens flow or not, so it\'s spread over ' +
-      'an expected ' + Math.round((p.expected_tokens_per_day||0)/1e6) + 'M tokens/day (7-day average or config), not today\'s actuals. ' +
+      ' tok/s, split by GPU-time — generated tokens hold the card far longer). Fixed = capex + host overhead + idle power, a capacity load ' +
+      'charged uniformly per 1M of every class, spread over ' +
+      'an expected ' + Math.round((p.expected_tokens_per_day||0)/1e6) + 'M tokens/day (1/3 of measured peak, or config). ' +
       'Cached tokens skip prefill compute but hold KV memory: priced at prompt −' + (p.cache_discount_pct||75) + '%. ' +
       'Margin: ' + (p.margin_pct > 0 ? '+' + p.margin_pct + '%' : 'break-even') + ' (pricing_margin_pct in Config).</p>';
   } else {

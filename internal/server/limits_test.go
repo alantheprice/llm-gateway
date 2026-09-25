@@ -134,17 +134,18 @@ func TestComputePricingV2MarginalFixed(t *testing.T) {
 	if p.MarginalTGPerM < 1.05 || p.MarginalTGPerM > 1.07 {
 		t.Fatalf("marginal tg = %v, want 1.06", p.MarginalTGPerM)
 	}
-	// Fixed $10 over 50M expected = $0.20/M, split 50/50 by mix →
-	// +$0.10 per class. Recommended = marginal + mix-weighted fixed,
-	// and the columns must sum.
-	if p.FixedPPPerM < 0.09 || p.FixedPPPerM > 0.11 || p.FixedTGPerM < 0.09 || p.FixedTGPerM > 0.11 {
-		t.Fatalf("fixed split pp=%v tg=%v, want ~0.10/~0.10", p.FixedPPPerM, p.FixedTGPerM)
+	// Fixed $10 over 50M expected = $0.20/M, uniform per class (capacity
+	// load, not mix-weighted — prompt must never outprice generation on
+	// fixed cost alone).
+	if p.FixedPPPerM != 0.2 || p.FixedTGPerM != 0.2 {
+		t.Fatalf("fixed split pp=%v tg=%v, want 0.20/0.20", p.FixedPPPerM, p.FixedTGPerM)
 	}
-	if p.PromptPerM < 0.22 || p.PromptPerM > 0.24 {
-		t.Fatalf("recommended pp = %v, want 0.23", p.PromptPerM)
+	// Recommended = marginal + uniform fixed: pp 0.13+0.20=0.33, tg 1.06+0.20=1.26.
+	if p.PromptPerM < 0.32 || p.PromptPerM > 0.34 {
+		t.Fatalf("recommended pp = %v, want 0.33", p.PromptPerM)
 	}
-	if p.OutputPerM < 1.15 || p.OutputPerM > 1.17 {
-		t.Fatalf("recommended tg = %v, want 1.16", p.OutputPerM)
+	if p.OutputPerM < 1.25 || p.OutputPerM > 1.27 {
+		t.Fatalf("recommended tg = %v, want 1.26", p.OutputPerM)
 	}
 	// Additivity: recommended == marginal + fixed, per class.
 	if math.Abs(p.PromptPerM-(p.MarginalPPPerM+p.FixedPPPerM)) > 0.011 {
@@ -153,9 +154,9 @@ func TestComputePricingV2MarginalFixed(t *testing.T) {
 	if math.Abs(p.OutputPerM-(p.MarginalTGPerM+p.FixedTGPerM)) > 0.011 {
 		t.Fatalf("tg columns do not sum: %v != %v + %v", p.OutputPerM, p.MarginalTGPerM, p.FixedTGPerM)
 	}
-	// Cached = prompt - 75%.
-	if p.CachedPerM < 0.05 || p.CachedPerM > 0.06 {
-		t.Fatalf("cached = %v, want 0.06", p.CachedPerM)
+	// Cached = prompt − 75% (0.33 × 0.25 = 0.08).
+	if p.CachedPerM < 0.07 || p.CachedPerM > 0.09 {
+		t.Fatalf("cached = %v, want 0.08", p.CachedPerM)
 	}
 	if p.FixedMonthly != 300 {
 		t.Fatalf("fixed monthly = %v, want 300", p.FixedMonthly)

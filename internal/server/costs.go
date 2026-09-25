@@ -587,18 +587,14 @@ func ComputePricingV2(in PricingInputs) PricingRecommendation {
 	p.FixedToday = round2(in.FixedToday)
 	p.FixedMonthly = round2(in.FixedToday * 30)
 	if in.ExpectedTokensPerDay > 0 {
-		fixedPerM := in.FixedToday / in.ExpectedTokensPerDay * 1e6
-		// Split fixed across classes by today's non-cached mix — the
-		// per-class contributions shown are what's actually added, so
-		// marginal + fixed == recommended and the columns sum.
-		denom := in.PromptTokens + in.OutputTokens
-		ppMix, tgMix := 0.5, 0.5
-		if denom > 0 {
-			ppMix = in.PromptTokens / denom
-			tgMix = in.OutputTokens / denom
-		}
-		p.FixedPPPerM = round2(fixedPerM * ppMix * mult)
-		p.FixedTGPerM = round2(fixedPerM * tgMix * mult)
+		// Fixed cost is a capacity load: uniform per 1M tokens of EVERY
+		// class. (Splitting it by today's class mix made the dominant
+		// class carry the highest price — charging prompt more than
+		// generated, backwards.) Collect fixedPerM per 1M of each class;
+		// at expected volume the fleet collects exactly fixed_today.
+		fixedPerM := in.FixedToday / in.ExpectedTokensPerDay * 1e6 * mult
+		p.FixedPPPerM = round2(fixedPerM)
+		p.FixedTGPerM = round2(fixedPerM)
 		p.PromptPerM = round2(p.MarginalPPPerM + p.FixedPPPerM)
 		p.OutputPerM = round2(p.MarginalTGPerM + p.FixedTGPerM)
 	}
