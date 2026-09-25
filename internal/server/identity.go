@@ -341,7 +341,8 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			out[u.Username] = map[string]any{
 				"username": u.Username, "email": u.Email, "role": u.Role,
 				"verified": u.Verified, "created": u.Created,
-				"keys": s.store.ListKeys(u.Username),
+				"keys":   s.store.ListKeys(u.Username),
+				"limits": s.userDailyStatus(u.Username),
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -355,6 +356,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		Role     string `json:"role"`
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Limit    int    `json:"daily_token_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		errBody(w, 400, "bad json")
@@ -367,6 +369,21 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch body.Action {
+	case "set_limit":
+		if target == "" {
+			errBody(w, 400, "username required")
+			return
+		}
+		if body.Limit < 0 {
+			errBody(w, 400, "limit must be >= 0 (0 = unlimited)")
+			return
+		}
+		if err := s.store.SetDailyLimit(target, body.Limit); err != nil {
+			errBody(w, 500, err.Error())
+			return
+		}
+		log.Printf("Admin %s set %s daily_token_limit=%d", sess.U, target, body.Limit)
+		jsonOK(w, map[string]any{"status": "ok", "daily_token_limit": body.Limit})
 	case "create_user":
 		pw := body.Password
 		if pw == "" {

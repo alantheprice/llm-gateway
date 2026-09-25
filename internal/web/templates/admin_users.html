@@ -15,15 +15,22 @@ async function load() {
     r.data.pocketbase_reachable ? 'PocketBase: connected' : 'PocketBase: UNREACHABLE (provisioning disabled)';
   const tb = document.getElementById('userrows');
   const users = Object.entries(r.data.users || {});
-  if (!users.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No users.</td></tr>'; return; }
+  if (!users.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No users.</td></tr>'; return; }
   tb.innerHTML = users.map(([name, u]) => {
     const nk = (u.keys || []).filter(k => k.active).length;
+    const lim = u.limits || {};
+    const quota = lim.daily_token_limit > 0
+      ? fmtNum(lim.tokens_today) + ' / ' + fmtNum(lim.daily_token_limit) +
+        (lim.pct_of_limit >= 100 ? ' <span class="badge off" style="color:var(--danger)">over</span>' : '')
+      : fmtNum(lim.tokens_today) + ' <span class="muted">(no limit)</span>';
     return '<tr>' +
       '<td data-label="User"><strong>' + esc(name) + '</strong></td>' +
       '<td data-label="Email" class="muted">' + esc(u.email || '') + '</td>' +
       '<td data-label="Role"><span class="badge ' + (u.role === 'admin' ? 'role-admin' : 'off') + '">' + esc(u.role || 'user') + '</span></td>' +
       '<td data-label="Keys">' + nk + ' active</td>' +
+      '<td data-label="Today / limit">' + quota + '</td>' +
       '<td data-label="Actions" style="white-space:nowrap">' +
+      '<button class="btn sm" data-act="limit" data-u="' + esc(name) + '" data-limit="' + (lim.daily_token_limit||0) + '">Limit</button> ' +
       '<button class="btn sm" data-act="role" data-u="' + esc(name) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' +
       (u.role === 'admin' ? 'Demote' : 'Promote') + '</button> ' +
       '<button class="btn sm" data-act="reset" data-u="' + esc(name) + '">Reset pw</button> ' +
@@ -31,7 +38,17 @@ async function load() {
   }).join('');
   tb.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
     const u = b.dataset.u, act = b.dataset.act;
-    if (act === 'role') {
+    if (act === 'limit') {
+      const cur = parseInt(b.dataset.limit, 10) || 0;
+      const v = prompt('Daily token limit for ' + u + ' (prompt+output, UTC-day window). 0 = unlimited:', cur || 0);
+      if (v === null) return;
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 0) { flash('Limit must be a number >= 0.', true); return; }
+      const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'set_limit', username:u, daily_token_limit:n})});
+      flash(r2.ok ? (n > 0 ? 'Limit set: ' + fmtNum(n) + ' tokens/day.' : 'Limit cleared (unlimited).') : (r2.data.error || 'failed'), !r2.ok);
+      load();
+    } else if (act === 'role') {
       const role = b.dataset.role;
       if (!confirm((role === 'admin' ? 'Promote ' : 'Demote ') + u + '?')) return;
       const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -91,9 +108,10 @@ load();
 
   <div class="card">
     <div class="tablewrap"><table>
-      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Keys</th><th style="text-align:right">Actions</th></tr></thead>
-      <tbody id="userrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Keys</th><th>Tokens today / limit</th><th style="text-align:right">Actions</th></tr></thead>
+      <tbody id="userrows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
     </table></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Limits count prompt + output tokens per user per UTC day across all engines; requests over the limit get a 429 with a retry-after until midnight. Admins, the operator key, and LAN-trusted requests are exempt.</p>
   </div>
 
   <div class="card">

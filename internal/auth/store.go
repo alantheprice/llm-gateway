@@ -89,11 +89,19 @@ type Store struct {
 	LocalKeys       map[string][]*KeyRecord `json:"local_keys"`
 	MustChangePWMap map[string]bool         `json:"must_change_pw"`
 	SessionEpochs   map[string]int          `json:"session_epochs"`
+	// UserSettings: gateway-owned per-user policy (daily quotas etc.).
+	// 0 limit = unlimited.
+	UserSettings map[string]UserSettings `json:"user_settings,omitempty"`
 
 	// legacy key file path ("" disables)
 	LegacyKeysFile string
 	legacyKeys     []string
 	legacyAt       time.Time
+}
+
+// UserSettings carries per-user service policy.
+type UserSettings struct {
+	DailyTokenLimit int `json:"daily_token_limit"` // prompt+output per UTC day; 0 = unlimited
 }
 
 func Open(path string) (*Store, error) {
@@ -134,7 +142,35 @@ func (s *Store) reload() error {
 	if s.MustChangePWMap == nil {
 		s.MustChangePWMap = map[string]bool{}
 	}
+	if s.UserSettings == nil {
+		s.UserSettings = map[string]UserSettings{}
+	}
 	return nil
+}
+
+// DailyLimit returns the user's daily token limit (0 = unlimited).
+func (s *Store) DailyLimit(username string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.UserSettings[username].DailyTokenLimit
+}
+
+// SetDailyLimit persists a user's daily token limit (0 = unlimited).
+func (s *Store) SetDailyLimit(username string, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit < 0 {
+		limit = 0
+	}
+	if s.UserSettings == nil {
+		s.UserSettings = map[string]UserSettings{}
+	}
+	if limit == 0 {
+		delete(s.UserSettings, username)
+	} else {
+		s.UserSettings[username] = UserSettings{DailyTokenLimit: limit}
+	}
+	return s.saveLocked()
 }
 
 // watchLoop re-reads users.json when its mtime advances (external writers).

@@ -40,11 +40,17 @@ type KindTally struct {
 }
 
 func NewUsageStore(path string) *UsageStore {
-	u := &UsageStore{path: path, Data: UsageFile{Users: map[string]*UserUsage{}}}
+	u := &UsageStore{path: path, Data: UsageFile{
+		Users: map[string]*UserUsage{},
+		Daily: map[string]map[string]*UserUsage{},
+	}}
 	if data, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(data, &u.Data)
 		if u.Data.Users == nil {
 			u.Data.Users = map[string]*UserUsage{}
+		}
+		if u.Data.Daily == nil {
+			u.Data.Daily = map[string]map[string]*UserUsage{}
 		}
 	}
 	return u
@@ -63,6 +69,7 @@ func kindFor(model string) string {
 
 func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
 	kind := kindFor(model)
+	today := time.Now().Format("2006-01-02")
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	usr, ok := u.Data.Users[user]
@@ -70,15 +77,38 @@ func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
 		usr = &UserUsage{Keys: map[string]*KindTally{}, Kinds: map[string]*KindTally{}}
 		u.Data.Users[user] = usr
 	}
+	applyTally(usr, keyID, kind, prompt, output)
+	// Per-day buckets (history charts + daily quotas). Python parity:
+	// local-date keys, full UserUsage shape.
+	day := u.Data.Daily[today]
+	if day == nil {
+		day = map[string]*UserUsage{}
+		u.Data.Daily[today] = day
+	}
+	du := day[user]
+	if du == nil {
+		du = &UserUsage{Keys: map[string]*KindTally{}, Kinds: map[string]*KindTally{}}
+		day[user] = du
+	}
+	applyTally(du, keyID, kind, prompt, output)
+	u.dirty = true
+	u.flushIfDue()
+}
+
+func applyTally(usr *UserUsage, keyID, kind string, prompt, output int) {
 	usr.Requests++
 	usr.PromptTokens += prompt
 	usr.OutputTokens += output
+	if usr.Kinds == nil {
+		usr.Kinds = map[string]*KindTally{}
+	}
 	if keyID != "" {
+		if usr.Keys == nil {
+			usr.Keys = map[string]*KindTally{}
+		}
 		tally(usr.Keys, keyID, prompt, output)
 	}
 	tally(usr.Kinds, kind, prompt, output)
-	u.dirty = true
-	u.flushIfDue()
 }
 
 func tally(m map[string]*KindTally, name string, p, o int) {
@@ -162,11 +192,38 @@ func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsa
 	return all, out
 }
 
+// TodaySnapshot returns today's per-user usage (copy).
+func (u *UsageStore) TodaySnapshot() map[string]*UserUsage {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	today := time.Now().Format("2006-01-02")
+	out := map[string]*UserUsage{}
+	for k, v := range u.Data.Daily[today] {
+		cp := *v
+		out[k] = &cp
+	}
+	return out
+}
+
 // User returns the caller's usage record (nil if unknown).
 func (u *UsageStore) User(username string) *UserUsage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.Data.Users[username]
+}
+
+// TodayTokens returns the user's prompt+output tokens for the current UTC
+// day (the quota window). In-memory counters are always current — Daily is
+// written at Record time, not only at flush.
+func (u *UsageStore) TodayTokens(username string) int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	t := u.Data.Daily[today][username]
+	if t == nil {
+		return 0
+	}
+	return t.PromptTokens + t.OutputTokens
 }
 
 // DailyTop-level access for history: returns sorted days (last 30) and the

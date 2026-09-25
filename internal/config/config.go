@@ -68,12 +68,12 @@ type CacheCfg struct {
 // accounting: GPU energy comes from the engines' NVML; overhead watts and
 // capex amortization are declared here (SPEC §11).
 type HostCfg struct {
-	Label          string   `json:"label"`
-	IPs            []string `json:"ips"` // backend URL hosts on this box
-	OverheadWatts  float64  `json:"overhead_watts"`      // CPU/RAM/fans/PSU, GPU excluded
-	HardwareCostUSD float64 `json:"hardware_cost_usd"`  // original purchase price
-	Purchased      string   `json:"purchased"`           // ISO date
-	AmortizeYears  float64  `json:"amortize_years"`      // straight-line term
+	Label           string   `json:"label"`
+	IPs             []string `json:"ips"`               // backend URL hosts on this box
+	OverheadWatts   float64  `json:"overhead_watts"`    // CPU/RAM/fans/PSU, GPU excluded
+	HardwareCostUSD float64  `json:"hardware_cost_usd"` // original purchase price
+	Purchased       string   `json:"purchased"`         // ISO date
+	AmortizeYears   float64  `json:"amortize_years"`    // straight-line term
 }
 
 type Config struct {
@@ -86,8 +86,10 @@ type Config struct {
 	PublicModels  []string                `json:"public_models"`
 	Cache         CacheCfg                `json:"cache"`
 	// Full-cost accounting (admin /usage/costs):
-	ElectricityRate float64  `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
+	ElectricityRate float64   `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
 	Hosts           []HostCfg `json:"hosts"`
+	// Recommended-pricing margin (% over the cost floor; 0 = break-even).
+	PricingMarginPct float64 `json:"pricing_margin_pct"`
 
 	path     string
 	mtime    time.Time

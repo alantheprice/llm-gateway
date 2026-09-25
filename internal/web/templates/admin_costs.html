@@ -43,6 +43,31 @@ async function load() {
     ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'
     : '';
 
+  // Recommended pricing + value attribution.
+  const p = d.recommended_pricing || {};
+  if (p.prompt_per_m_usd != null || p.output_per_m_usd != null) {
+    document.getElementById('pricingbox').innerHTML =
+      '<div class="statgrid">' +
+      '<div class="stat"><div class="v">' + usd(p.prompt_per_m_usd, 2) + '</div><div class="l">recommended $ / 1M prompt (pp)</div></div>' +
+      '<div class="stat"><div class="v">' + usd(p.output_per_m_usd, 2) + '</div><div class="l">recommended $ / 1M generated (tg)</div></div>' +
+      '<div class="stat"><div class="v">' + usd(p.cost_total_usd_today, 2) + '</div><div class="l">cost basis (today all-in)</div></div>' +
+      '<div class="stat"><div class="v">' + (p.margin_pct > 0 ? '+' + p.margin_pct + '%' : 'break-even') + '</div><div class="l">margin</div></div>' +
+      '</div>' +
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">Cost floor split by measured GPU-time: prompt tokens prefill at ~' + Math.round(p.fleet_pp_tok_per_s||0).toLocaleString() +
+      ' tok/s while generation decodes at ~' + Math.round(p.fleet_tg_tok_per_s||0).toLocaleString() +
+      ' tok/s, so a generated token occupies the GPU ~' + (p.fleet_pp_tok_per_s > 0 && p.fleet_tg_tok_per_s > 0 ? (p.fleet_pp_tok_per_s/p.fleet_tg_tok_per_s).toFixed(1) : '—') +
+      'x longer. ' + esc(p.note || '') + ' Set pricing_margin_pct in Config to add margin.</p>';
+  } else {
+    document.getElementById('pricingbox').innerHTML = '<p class="muted">No tokens served today — no price to recommend yet.</p>';
+  }
+
+  const uv = Object.entries(d.user_value_today || {}).sort((a,b) => b[1]-a[1]);
+  document.getElementById('valuerows').innerHTML = uv.length
+    ? uv.map(([name, v]) =>
+      '<tr><td data-label="User"><strong>' + esc(name) + '</strong></td>' +
+      '<td data-label="Value today">' + usd(v, 3) + '</td></tr>').join('')
+    : '<tr><td colspan="2" class="muted">No user traffic today.</td></tr>';
+
   // Per-host forward schedule chart: capital remaining over time.
   const series = (d.hosts || []).filter(h => (h.schedule||[]).length).map((h, i) => {
     const colors = ['#58a6ff', '#3fb950', '#d29922', '#f778ba'];
@@ -89,6 +114,19 @@ document.addEventListener('DOMContentLoaded', load);
   <p class="muted" id="unmatched"></p>
 
   <div class="statgrid" id="fleetstats"></div>
+
+  <div class="card">
+    <h2>Recommended pricing</h2>
+    <div id="pricingbox"><p class="muted">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Value by user (today, at cost-floor prices)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>User</th><th>Value today</th></tr></thead>
+      <tbody id="valuerows"><tr><td colspan="2" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
 
   <div class="card">
     <h2>Per-host breakdown — today</h2>

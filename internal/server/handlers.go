@@ -281,6 +281,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.enforceDailyLimit(w, user) {
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err != nil {
 		http.Error(w, `{"error":{"message":"body too large"}}`, http.StatusRequestEntityTooLarge)
@@ -337,7 +340,11 @@ func (s *Server) resolve(model string) (url, modelID string) {
 }
 
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
+	user, _, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.enforceDailyLimit(w, user) {
 		return
 	}
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -348,11 +355,15 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"no backend"}}`, http.StatusNotFound)
 		return
 	}
-	s.proxy(w, r, url, body, "operator", "", req.Model, mid)
+	s.proxy(w, r, url, body, user, "", req.Model, mid)
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
+	user, _, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.enforceDailyLimit(w, user) {
 		return
 	}
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -374,7 +385,7 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"no embedding backend"}}`, http.StatusNotFound)
 		return
 	}
-	s.proxy(w, r, url, body, "operator", "", req.Model, mid)
+	s.proxy(w, r, url, body, user, "", req.Model, mid)
 }
 
 func (s *Server) handleV1Other(w http.ResponseWriter, r *http.Request) {

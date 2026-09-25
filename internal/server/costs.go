@@ -35,16 +35,16 @@ type HostCost struct {
 	OverheadCost30d   float64 `json:"overhead_cost_usd_30d"`
 
 	// Capital amortization (straight line).
-	HardwareUSD   float64  `json:"hardware_cost_usd"`
-	Purchased     string   `json:"purchased,omitempty"`
-	AmortizeYears float64  `json:"amortize_years,omitempty"`
-	DailyCapital  float64  `json:"capital_usd_per_day"`
-	CapitalToday  float64  `json:"capital_usd_today"`
-	Capital30d    float64  `json:"capital_usd_30d"`
-	CapitalPaid   float64  `json:"capital_accrued_usd"` // capped at HardwareUSD
-	MonthsElapsed float64  `json:"months_elapsed"`
-	MonthsLeft    float64  `json:"months_remaining"`
-	FullyAmort    bool     `json:"fully_amortized"`
+	HardwareUSD    float64 `json:"hardware_cost_usd"`
+	Purchased      string  `json:"purchased,omitempty"`
+	AmortizeYears  float64 `json:"amortize_years,omitempty"`
+	DailyCapital   float64 `json:"capital_usd_per_day"`
+	CapitalToday   float64 `json:"capital_usd_today"`
+	Capital30d     float64 `json:"capital_usd_30d"`
+	CapitalPaid    float64 `json:"capital_accrued_usd"` // capped at HardwareUSD
+	MonthsElapsed  float64 `json:"months_elapsed"`
+	MonthsLeft     float64 `json:"months_remaining"`
+	FullyAmort     bool    `json:"fully_amortized"`
 	PctDepreciated float64 `json:"pct_depreciated"`
 
 	// Totals.
@@ -79,15 +79,15 @@ type HostConfig struct {
 
 // CostsParams bundles everything the cost math needs (pure — unit-testable).
 type CostsParams struct {
-	Hosts           []HostConfig
-	RateUSDPerKwh   float64
-	Now             time.Time
+	Hosts         []HostConfig
+	RateUSDPerKwh float64
+	Now           time.Time
 	// Per-host engine facts, keyed by host index (already matched).
-	GPUKwhToday     []float64
-	GPUCostToday    []float64
-	GPUKwh30d       []float64
-	GPUCost30d      []float64
-	TokensToday     []float64
+	GPUKwhToday  []float64
+	GPUCostToday []float64
+	GPUKwh30d    []float64
+	GPUCost30d   []float64
+	TokensToday  []float64
 }
 
 const amortMonthsCap = 48
@@ -277,6 +277,43 @@ func (s *Server) usageCostsPayload() map[string]any {
 		fleetPerM = math.Round(totalToday/tokens*1e6*100) / 100
 	}
 
+	// Recommended pricing: split all-in cost by measured GPU-time. Prompt/
+	// output split comes from the usage store's per-day tallies (all users,
+	// all engines); fleet pp/tg rates from the live engine throughput.
+	todays := s.usage.TodaySnapshot()
+	var pTok, oTok float64
+	for _, t := range todays {
+		pTok += float64(t.PromptTokens)
+		oTok += float64(t.OutputTokens)
+	}
+	s.mu.Lock()
+	var ppTPS, tgTPS float64
+	for _, u := range backends {
+		if payload, ok := s.lastMetrics[u]; ok {
+			ppTPS += usageNum(payload, "throughput", "prefill_tok_per_s")
+			tgTPS += usageNum(payload, "throughput", "decode_tok_per_s")
+		}
+	}
+	margin := s.cfg.PricingMarginPct
+	s.mu.Unlock()
+	pricing := ComputePricing(totalToday, ppTPS, tgTPS, pTok, oTok, margin)
+
+	// Value attribution: what each user's usage would have cost at the
+	// recommended (cost-floor) prices — "how it's generating value".
+	userValue := map[string]float64{}
+	for name, t := range todays {
+		v := 0.0
+		if pricing.PromptPerM > 0 || pricing.OutputPerM > 0 {
+			// attribute at pre-margin cost shares (floor pricing)
+			pp := pricing.PromptPerM / (1 + margin/100)
+			tg := pricing.OutputPerM / (1 + margin/100)
+			v = pp*float64(t.PromptTokens)/1e6 + tg*float64(t.OutputTokens)/1e6
+		}
+		if v > 0 {
+			userValue[name] = math.Round(v*1000) / 1000
+		}
+	}
+
 	// Unmatched backends (visible so admins notice uncounted GPU hosts).
 	configured := map[string]bool{}
 	for _, h := range hosts {
@@ -297,14 +334,16 @@ func (s *Server) usageCostsPayload() map[string]any {
 		"hosts":                        hostCosts,
 		"unmatched_backends":           unmatched,
 		"totals": map[string]any{
-			"total_cost_usd_today":        math.Round(totalToday*100) / 100,
-			"total_cost_usd_30d":          math.Round(total30d*100) / 100,
-			"tokens_today":                tokens,
-			"all_in_usd_per_m_tokens":     fleetPerM,
-			"projected_monthly_usd":       math.Round(totalToday*30*100) / 100,
-			"gpu_only_usd_per_m_tokens":   gpuOnlyPerM(hostCosts, tokens),
+			"total_cost_usd_today":      math.Round(totalToday*100) / 100,
+			"total_cost_usd_30d":        math.Round(total30d*100) / 100,
+			"tokens_today":              tokens,
+			"all_in_usd_per_m_tokens":   fleetPerM,
+			"projected_monthly_usd":     math.Round(totalToday*30*100) / 100,
+			"gpu_only_usd_per_m_tokens": gpuOnlyPerM(hostCosts, tokens),
 		},
-		"gateway_port": port,
+		"recommended_pricing": pricing,
+		"user_value_today":    userValue,
+		"gateway_port":        port,
 	}
 }
 
@@ -322,7 +361,65 @@ func gpuOnlyPerM(hosts []HostCost, tokens float64) any {
 	return math.Round(gpu/tokens*1e6*100) / 100
 }
 
+// PricingRecommendation: what to charge per 1M prompt (pp) and per 1M
+// generated (tg) tokens so revenue covers measured all-in cost. The split
+// uses GPU-time attribution: prefill runs at pp tok/s, decode at tg tok/s
+// (fleet, live engines) — a decode token occupies the card ~pp/tg times
+// longer, so it carries that multiple of the per-second cost.
+type PricingRecommendation struct {
+	PromptPerM   float64 `json:"prompt_per_m_usd"`
+	OutputPerM   float64 `json:"output_per_m_usd"`
+	CostTotal    float64 `json:"cost_total_usd_today"`
+	CostPPShare  float64 `json:"cost_prompt_share_usd"`
+	CostTGShare  float64 `json:"cost_output_share_usd"`
+	PPtokPerS    float64 `json:"fleet_pp_tok_per_s"`
+	TGtokPerS    float64 `json:"fleet_tg_tok_per_s"`
+	PromptTokens float64 `json:"prompt_tokens_today"`
+	OutputTokens float64 `json:"output_tokens_today"`
+	MarginPct    float64 `json:"margin_pct"`
+	Note         string  `json:"note"`
+}
+
+// ComputePricing splits totalCost across prompt-processing and generation
+// by GPU-time, then prices per million tokens (optionally + margin %).
+func ComputePricing(totalCost, ppTPS, tgTPS, promptTokens, outputTokens, marginPct float64) PricingRecommendation {
+	p := PricingRecommendation{
+		CostTotal: totalCost, PPtokPerS: ppTPS, TGtokPerS: tgTPS,
+		PromptTokens: promptTokens, OutputTokens: outputTokens, MarginPct: marginPct,
+		Note: "Cost floor from today's all-in spend (GPU energy + system overhead + capex), split by measured GPU-time: " +
+			"prompt tokens process at ~X tok/s while generation runs ~Y tok/s, so a generated token occupies the GPU proportionally longer. " +
+			"Margin on top is your call — this is the break-even price.",
+	}
+	// GPU-seconds attributable to each activity today.
+	ppSecs, tgSecs := 0.0, 0.0
+	if ppTPS > 0 {
+		ppSecs = promptTokens / ppTPS
+	}
+	if tgTPS > 0 {
+		tgSecs = outputTokens / tgTPS
+	}
+	if ppSecs+tgSecs <= 0 {
+		return p
+	}
+	p.CostPPShare = totalCost * ppSecs / (ppSecs + tgSecs)
+	p.CostTGShare = totalCost * tgSecs / (ppSecs + tgSecs)
+	mult := 1 + marginPct/100
+	if promptTokens > 0 {
+		p.PromptPerM = round2(p.CostPPShare / promptTokens * 1e6 * mult)
+	}
+	if outputTokens > 0 {
+		p.OutputPerM = round2(p.CostTGShare / outputTokens * 1e6 * mult)
+	}
+	return p
+}
+
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// handleUsageCosts already returns the envelope below — pricing block and
+// per-user value attribution are added to it.
+
 // handleUsageCosts: GET /usage/costs — full cost picture (admin only).
+
 func (s *Server) handleUsageCosts(w http.ResponseWriter, r *http.Request) {
 	if !s.adminGate(w, r) {
 		return
