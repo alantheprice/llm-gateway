@@ -7,21 +7,29 @@ import (
 	"time"
 )
 
-// CreateUIKey mints the single UI key for a user: drops prior ui keys
-// (plaintext unrecoverable post-restart) and names the new one after its
-// own prefix — Python parity: key_id = "ui-" + plaintext[3:11].
+// CreateUIKey mints a UI key for a user. Prior ui keys are kept as a small
+// ring (newest 3 including the new one): each gateway surface (8033/8034/
+// 8035) mints on restart/login, and a hard clobber let one surface's mint
+// kill every other surface's live session (observed 2026-09-25: agent-mode
+// chat 401'd 13s after an admin login on another port). A bounded ring
+// keeps orphan accumulation capped while surviving cross-surface mints.
+// key_id = "ui-" + plaintext[3:11] (Python parity).
 func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	keys := s.LocalKeys[username]
-	out := keys[:0]
+	var named, uis []*KeyRecord
 	for _, k := range keys {
-		if !k.UI {
-			out = append(out, k)
+		if k.UI {
+			uis = append(uis, k)
+		} else {
+			named = append(named, k)
 		}
 	}
-	s.LocalKeys[username] = out
-
+	// keep the newest 2 prior ui keys (list order = mint order)
+	if len(uis) > 2 {
+		uis = uis[len(uis)-2:]
+	}
 	plain, prefix, salt := NewAPIKey()
 	rec := &KeyRecord{
 		KeyID:   "ui-" + strings.TrimPrefix(plain[:11], "sk-"),
@@ -33,7 +41,8 @@ func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 		UI:      true,
 	}
 	rec.KeyHash = HashSecret(plain, salt)
-	s.LocalKeys[username] = append(s.LocalKeys[username], rec)
+	uis = append(uis, rec)
+	s.LocalKeys[username] = append(named, uis...)
 	if err := s.saveLocked(); err != nil {
 		return "", nil, err
 	}

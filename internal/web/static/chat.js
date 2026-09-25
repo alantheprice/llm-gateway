@@ -306,10 +306,16 @@
     // Agent mode goes through the gateway proxy (same-origin, auth-gated);
     // the gateway forwards to the seed-agent sidecar.
     const url = useTools ? '/v1/agent/chat' : '/v1/chat/completions';
-    const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.api_key };
-    if (useTools) headers['X-Session-Id'] = s.id;
-    try {
-      const resp = await fetch(url, {
+
+    // Send one generation request. On 401 the stored UI key is stale (another
+    // surface minted a newer one, or the gateway restarted): refetch
+    // /chat/config — the session cookie is still valid, so this mints/
+    // returns a fresh key — and retry ONCE before surfacing the error.
+    async function sendOnce() {
+      const headers = { 'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + cfg.api_key };
+      if (useTools) headers['X-Session-Id'] = s.id;
+      return fetch(url, {
         method: 'POST',
         signal: abortCtrl.signal,
         headers,
@@ -319,6 +325,19 @@
             .map(m => ({ role: m.role, content: m.content }))
         })
       });
+    }
+    let resp = await sendOnce();
+    if (resp.status === 401) {
+      const cr = await fetch('/chat/config');
+      if (cr.ok) {
+        const c2 = await cr.json();
+        if (c2.api_key && c2.api_key !== cfg.api_key) {
+          cfg.api_key = c2.api_key;   // fresh key, same session
+          resp = await sendOnce();
+        }
+      }
+    }
+    try {
       if (!resp.ok) {
         const err = await resp.text();
         a.content = '⚠ ' + resp.status + ': ' + err.slice(0, 300);
