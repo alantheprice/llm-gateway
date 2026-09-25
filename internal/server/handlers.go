@@ -206,44 +206,53 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": s.catalog()})
 }
 
-// catalog builds the model list (SPEC §7): pool collapse + public filter.
+// catalog builds the model list, mirroring the live Python gateway's
+// models_handler: pool MEMBER model ids are hidden (they'd let clients pin an
+// engine and bypass cache-affinity routing); every other discovered model
+// (embeddings, FIM, standalone) is advertised; pool virtual names are
+// synthesized when no backend carries them. The legacy `public_models`
+// config knob is parsed for compat but NOT applied (Python retired it).
 func (s *Server) catalog() []ModelEntry {
-	seen := map[string]bool{}
-	var ids []string
+	memberIDs := map[string]bool{}
 	s.mu.Lock()
+	discovered := make([]ModelEntry, 0, 8)
 	for _, info := range s.backends {
 		for _, id := range info.Models {
-			if !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
+			if memberIDs[id] || id == "" {
+				continue
 			}
+			memberIDs[id] = false
+			discovered = append(discovered, ModelEntry{ID: id, Object: "model", OwnedBy: "llm-gateway"})
 		}
 	}
 	s.mu.Unlock()
-	for pool := range s.cfg.ModelPools {
-		if !seen[pool] {
-			seen[pool] = true
-			ids = append(ids, pool)
-		}
-	}
-	if len(s.cfg.PublicModels) > 0 {
-		pub := map[string]bool{}
-		for _, m := range s.cfg.PublicModels {
-			pub[m] = true
-		}
-		var filtered []string
-		for _, id := range ids {
-			if pub[id] {
-				filtered = append(filtered, id)
+	for _, pool := range s.cfg.ModelPools {
+		for _, m := range pool.Members {
+			if m.ModelID != "" {
+				memberIDs[m.ModelID] = true
 			}
 		}
-		ids = filtered
 	}
-	data := make([]ModelEntry, 0, len(ids))
-	for _, id := range ids {
-		data = append(data, ModelEntry{ID: id, Object: "model", OwnedBy: "llm-gateway"})
+	var ids []ModelEntry
+	known := map[string]bool{}
+	for _, e := range discovered {
+		if !memberIDs[e.ID] {
+			known[e.ID] = true
+			ids = append(ids, e)
+		}
 	}
-	return data
+	for name := range s.cfg.ModelPools {
+		if !known[name] {
+			// Virtual id isn't a backend-discovered model: synthesize a
+			// listing so clients can discover and select it (front of list).
+			ids = append([]ModelEntry{{ID: name, Object: "model", OwnedBy: "llm-gateway"}}, ids...)
+			known[name] = true
+		}
+	}
+	// Note: `public_models` is parsed for config compat but intentionally NOT
+	// applied — live Python retired that filter in favor of pool-driven
+	// member-hiding (llm_gateway.py models_handler).
+	return ids
 }
 
 type chatReq struct {

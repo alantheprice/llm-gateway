@@ -239,6 +239,8 @@ func TestModelsCatalogPoolsCollapseAndFilter(t *testing.T) {
 		}})
 	}))
 	defer up.Close()
+	// No model_pools: only the member-hiding rule can't apply; everything
+	// discovered is advertised (public_models is accepted but not applied).
 	conf := `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"],"discovery":{"local_ports":[` +
 		strings.TrimPrefix(up.URL, "http://127.0.0.1:") + `]},"public_models":["qwen"]}`
 	s := testServer(t, conf, nil)
@@ -250,8 +252,73 @@ func TestModelsCatalogPoolsCollapseAndFilter(t *testing.T) {
 		Data []struct{ ID string } `json:"data"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp.Data) != 1 || resp.Data[0].ID != "qwen" {
-		t.Fatalf("catalog = %+v, want only pooled 'qwen'", resp.Data)
+	got := map[string]bool{}
+	for _, m := range resp.Data {
+		got[m.ID] = true
+	}
+	for _, want := range []string{"qwen", "qwen-large", "Qwen3-Embedding-0.6B"} {
+		if !got[want] {
+			t.Fatalf("catalog missing %q: %+v", want, resp.Data)
+		}
+	}
+	if len(resp.Data) != 3 {
+		t.Fatalf("catalog = %+v, want exactly the 3 discovered models", resp.Data)
+	}
+}
+
+func TestModelsCatalogHidesPoolMembersSynthesizesVirtual(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{
+			{"id": "qwen3.8-27b-5090"}, {"id": "Qwen3-Embedding-0.6B"}, {"id": "qwen3.5-9b-fim"},
+		}})
+	}))
+	defer up.Close()
+	conf := `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"],"discovery":{"local_ports":[` +
+		strings.TrimPrefix(up.URL, "http://127.0.0.1:") + `]},"model_pools":{"qwen3.8-27b":{"members":[{"model_id":"qwen3.8-27b-5090","backend":"http://127.0.0.1:1"}]}}}`
+	s := testServer(t, conf, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/v1/models", nil)
+	r.RemoteAddr = "192.168.1.50:5557"
+	s.Handler().ServeHTTP(w, r)
+	var resp struct {
+		Data []struct{ ID string } `json:"data"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	got := map[string]bool{}
+	for _, m := range resp.Data {
+		got[m.ID] = true
+	}
+	if got["qwen3.8-27b-5090"] {
+		t.Fatalf("pool member id leaked into catalog: %+v", resp.Data)
+	}
+	for _, want := range []string{"qwen3.8-27b", "Qwen3-Embedding-0.6B", "qwen3.5-9b-fim"} {
+		if !got[want] {
+			t.Fatalf("catalog missing %q: %+v", want, resp.Data)
+		}
+	}
+}
+
+func TestChatConfigModelsAreNames(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{
+			{"id": "qwen3.8-27b-5090"}, {"id": "Qwen3-Embedding-0.6B"},
+		}})
+	}))
+	defer up.Close()
+	conf := `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"],"discovery":{"local_ports":[` +
+		strings.TrimPrefix(up.URL, "http://127.0.0.1:") + `]}}`
+	s := testServer(t, conf, nil)
+	tok := s.store.SignSession(auth.Claims{U: "bob", Role: "user"}, time.Hour)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/chat/config", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	s.Handler().ServeHTTP(w, r)
+	var out struct {
+		Models []string `json:"models"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || len(out.Models) != 2 || out.Models[0] != "Qwen3-Embedding-0.6B" {
+		t.Fatalf("chat/config models = %v (code %d, body %s)", out.Models, w.Code, w.Body.String())
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -204,15 +205,26 @@ func (s *Server) handleChatConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// modelIDs returns sorted advertised model ids (backend cache keys).
+// modelIDs returns the chat-UI model list: every discovered model id
+// (Python parity — /chat/config serves sorted _backend_cache.keys(), which
+// includes pool member ids; /v1/models is the filtered public catalog).
 func (s *Server) modelIDs() []string {
+	set := map[string]bool{}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.backends))
-	for u := range s.backends {
-		out = append(out, u)
+	for _, info := range s.backends {
+		for _, id := range info.Models {
+			if id != "" {
+				set[id] = true
+			}
+		}
 	}
-	return out // URLs, sorted by caller need; models listed via /v1/models
+	s.mu.Unlock()
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // ---- /keys: self-service key management (SPEC parity) ----

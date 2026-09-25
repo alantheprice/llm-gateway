@@ -232,7 +232,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
   font-size: 11px; fill: var(--muted);
 }
 .axis-line { stroke: var(--border); stroke-width: 1; }
-.axis-text { font-size: 10.5px; fill: var(--muted); }
+.axis-text, .chart-tick { font-size: 10.5px; fill: var(--muted); }
 .grid-line { stroke: var(--border2); stroke-width: 1; stroke-dasharray: 3 3; }
 
 /* ---------- login ---------- */

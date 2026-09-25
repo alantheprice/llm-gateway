@@ -61,7 +61,7 @@ Rules:
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
 | GET | `/health` | none | `200 "OK"` text/plain |
-| GET | `/v1/models` | key or LAN-trust | catalog; pools collapse to virtual name; public_models filter if configured |
+| GET | `/v1/models` | key or LAN-trust | catalog; pool member ids hidden, virtual names synthesized (`public_models` accepted but not applied) |
 | POST | `/v1/chat/completions` | key or LAN-trust | route (pool or direct); stream-aware proxy |
 | POST | `/v1/completions` | key or LAN-trust | direct to resolved backend |
 | POST | `/v1/embeddings` | key or LAN-trust | direct to embedding backend |
@@ -154,9 +154,15 @@ Loop guard: each member tried at most once.
 - Scan `discovery.local_ports` on 127.0.0.1 and `discovery.remote_host`
   ports: GET /v1/models (1s timeout). Response model ids recorded with
   backend URL + capability hints (chat/embeddings).
-- Catalog: pool models collapse to the virtual pool name; ids in
-  `public_models` (if set) filter the output. Output shape mirrors OpenAI:
+- Catalog: pool MEMBER model ids are hidden (clients must use the pool
+  virtual name so cache-affinity routing can't be bypassed); all other
+  discovered models (embeddings, FIM, standalone) are advertised; pool
+  virtual names are synthesized if no backend reports them. The legacy
+  `public_models` knob is accepted in config but NOT applied (retired in
+  the Python gateway). Output shape mirrors OpenAI:
   `{"object":"list","data":[{"id":...,"object":"model",...}]}`.
+- `/chat/config` returns every discovered model id (sorted), member ids
+  included — the chat UI can target a specific engine if it wants.
 
 ## 8. Usage accounting
 `usage.json` (0600, atomic writes, flush ~60s or on mutation count):
