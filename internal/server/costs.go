@@ -583,23 +583,35 @@ func ComputePricingV2(in PricingInputs) PricingRecommendation {
 		}
 	}
 
-	// --- fixed layer over expected volume ---
+	// --- usage prices + capacity fee: two separate billing axes ---
+	//
+	// Fixed cost (capex + overhead + idle) accrues per HOUR, not per
+	// token — expressed per 1M tokens it's hyperbolic in utilization
+	// (÷140M tok/day at peak = +$0.09/M; ÷14M at 10% = +$0.86/M), so a
+	// flat per-token fixed add is the wrong shape. The scheme is:
+	//   usage price = marginal (+ margin)      — recovers the cost of
+	//                                            actually serving tokens
+	//   capacity fee = fixed per day/month     — recovers having the
+	//                                            hardware available, time-
+	//                                            based like the cost itself
+	// All-in $/M at an assumed utilization stays available as a REFERENCE
+	// (FixedPPPerM/FixedTGPerM = the add-on at the basis volume) for
+	// one-number comparisons against cloud pricing.
 	p.FixedToday = round2(in.FixedToday)
 	p.FixedMonthly = round2(in.FixedToday * 30)
-	if in.ExpectedTokensPerDay > 0 {
-		// Fixed cost is a capacity load: uniform per 1M tokens of EVERY
-		// class. (Splitting it by today's class mix made the dominant
-		// class carry the highest price — charging prompt more than
-		// generated, backwards.) Collect fixedPerM per 1M of each class;
-		// at expected volume the fleet collects exactly fixed_today.
-		fixedPerM := in.FixedToday / in.ExpectedTokensPerDay * 1e6 * mult
-		p.FixedPPPerM = round2(fixedPerM)
-		p.FixedTGPerM = round2(fixedPerM)
-		p.PromptPerM = round2(p.MarginalPPPerM + p.FixedPPPerM)
-		p.OutputPerM = round2(p.MarginalTGPerM + p.FixedTGPerM)
+	p.PromptPerM = p.MarginalPPPerM
+	p.OutputPerM = p.MarginalTGPerM
+	if in.MarginPct > 0 {
+		p.PromptPerM = round2(p.MarginalPPPerM * mult)
+		p.OutputPerM = round2(p.MarginalTGPerM * mult)
 	}
-	// Cached: prompt price minus the cache discount (default 75% off).
+	// Cached: usage prompt price minus the cache discount (default 75%).
 	p.CachedPerM = round2(p.PromptPerM * (1 - in.CacheDiscountPct/100))
+	if in.ExpectedTokensPerDay > 0 {
+		ref := round2(in.FixedToday / in.ExpectedTokensPerDay * 1e6)
+		p.FixedPPPerM = ref
+		p.FixedTGPerM = ref
+	}
 	return p
 }
 
