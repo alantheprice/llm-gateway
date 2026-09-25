@@ -5,3 +5,4 @@ usage.json
 *.log
 .tmp
 *.jar
+peaks.json

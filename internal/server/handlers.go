@@ -466,7 +466,7 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 			s.mu.Unlock()
 			s.tracker.InFlightInc(pick.URL)
 			defer s.tracker.InFlightDec(pick.URL)
-			s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est)
+			s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
 			return
 		}
 		lastStatus, lastBody = status, respBody

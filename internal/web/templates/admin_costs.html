@@ -43,6 +43,28 @@ async function load() {
     ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'
     : '';
 
+  // Capacity basis strip.
+  const cb = d.capacity_basis;
+  if (cb) {
+    const pk = d.peaks || {};
+    const peakRows = Object.entries(pk).map(([url, b]) => {
+      const buckets = Object.entries(b.tg_by_context || {}).map(([k, v]) => k + ': ' + Math.round(v)).join(' · ');
+      return '<tr><td data-label="Backend"><code>' + esc(url) + '</code></td>' +
+        '<td data-label="Peak tg">' + (b.tg_tok_per_s_peak||0).toFixed(0) + ' tok/s</td>' +
+        '<td data-label="Peak pp">' + (b.pp_tok_per_s_peak||0).toFixed(0) + ' tok/s</td>' +
+        '<td data-label="Peaks by context" class="muted">' + (buckets || '—') + '</td></tr>';
+    }).join('');
+    document.getElementById('capacitybox').innerHTML =
+      '<div class="statgrid">' +
+      '<div class="stat"><div class="v">' + (cb.peak_fleet_tg_tok_per_s||0).toFixed(0) + ' tok/s</div><div class="l">measured fleet peak (decode)</div></div>' +
+      '<div class="stat"><div class="v">' + (cb.assumed_utilization_pct||33.3).toFixed(0) + '%</div><div class="l">assumed utilization (1/3 of peak)</div></div>' +
+      '<div class="stat"><div class="v">' + Math.round((cb.expected_tokens_per_day||0)/1e6) + 'M/day</div><div class="l">pricing volume basis</div></div>' +
+      '<div class="stat"><div class="v">' + Math.round((cb.avg_7d_daily_tokens||0)/1e6) + 'M/day</div><div class="l">trailing 7-day actual</div></div>' +
+      '</div>' +
+      (peakRows ? '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Peak decode</th><th>Peak prefill</th><th>Decode peak by context</th></tr></thead><tbody>' + peakRows + '</tbody></table></div>' : '') +
+      '<p class="muted" style="font-size:12px;margin:8px 0 0">Peaks are high-water marks from engine timings (per context bucket — decode slows as context fills), halving weekly when not re-observed. Fixed costs are amortized over 1/3 of peak sustained 24/7, floored at 25% of the 7-day actual.</p>';
+  }
+
   // Recommended pricing + value attribution.
   const p = d.recommended_pricing || {};
   if (p.prompt_per_m_usd != null || p.output_per_m_usd != null) {
@@ -120,6 +142,11 @@ document.addEventListener('DOMContentLoaded', load);
   <p class="muted" id="unmatched"></p>
 
   <div class="statgrid" id="fleetstats"></div>
+
+  <div class="card">
+    <h2>Capacity basis</h2>
+    <div id="capacitybox"><p class="muted">Loading…</p></div>
+  </div>
 
   <div class="card">
     <h2>Recommended pricing</h2>

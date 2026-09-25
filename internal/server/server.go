@@ -58,6 +58,8 @@ type Server struct {
 	lastGoodPP float64
 	lastGoodTG float64
 
+	peaks *PeakStore // per-backend high-water throughput (pricing basis)
+
 	huma         huma.API
 	docHandler   http.Handler
 	uiKeys       map[string]string // username -> plaintext ui key (session lifetime)
@@ -83,6 +85,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		probe:        map[string][]time.Time{},
 		leader:       map[string]string{},
 		usage:        NewUsageStore(usagePath(cfg)),
+		peaks:        NewPeakStore(peaksPath(usagePath(cfg))),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},

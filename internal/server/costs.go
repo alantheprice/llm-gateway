@@ -344,16 +344,19 @@ func (s *Server) usageCostsPayload() map[string]any {
 			tgTPS += usageNum(payload, "throughput", "decode_tok_per_s")
 		}
 	}
+	s.mu.Unlock()
 	// Throughput windows are 5s snapshots — idle windows read ~0 and near-
 	// idle reads a few tok/s, either of which wrecks the GPU-time split.
-	// Only accept genuinely-busy readings (both engines clearly active);
-	// otherwise hold the last good pair or a typical default until the
-	// engines are seen working.
-	if ppTPS >= 500 && tgTPS >= 30 {
-		s.lastGoodPP, s.lastGoodTG = ppTPS, tgTPS
+	// Use peak capacity instead: per-request high-water × lanes = the
+	// fleet's measured ceiling (decayed), the same basis the expected-
+	// volume calculation uses below. (peakCapacity takes s.mu itself —
+	// must run unlocked.)
+	ppPeak, tgPeak := s.peakCapacity()
+	if tgPeak > 0 {
+		ppTPS, tgTPS = ppPeak, tgPeak
+	} else {
+		ppTPS, tgTPS = s.lastGoodPP, s.lastGoodTG
 	}
-	ppTPS, tgTPS = s.lastGoodPP, s.lastGoodTG
-	s.mu.Unlock()
 
 	// Fixed = total all-in today minus marginal GPU energy (capital +
 	// overhead + idle energy). Idle-kWh already moves to fixed inside
@@ -369,7 +372,17 @@ func (s *Server) usageCostsPayload() map[string]any {
 
 	// Trailing 7-day average daily tokens for the auto expected-volume.
 	avg7 := s.usage.AvgDailyTokens(7)
-	expected := ExpectedVolume(expCfg, avg7)
+	// Capacity basis: 1/3 of measured peak capacity sustained 24/7 —
+	// per-request peak decode × lanes × 86400 ÷ 3.
+	ppPeak, tgPeak = s.peakCapacity()
+	peakDaily := tgPeak * 86400 / 3
+	// The explicit config knob still wins; otherwise capacity basis,
+	// floored at 25% of the 7-day actual so a quiet week doesn't over-amortize.
+	auto := math.Max(peakDaily, avg7*0.25)
+	if auto < 1e6 {
+		auto = 1e6
+	}
+	expected := ExpectedVolume(expCfg, auto)
 
 	pricing := ComputePricingV2(PricingInputs{
 		GPUKwhToday: gpuKwh, GPUIdleWatts: idleW, RateUSDPerKwh: rate,
@@ -427,7 +440,15 @@ func (s *Server) usageCostsPayload() map[string]any {
 		},
 		"recommended_pricing": pricing,
 		"user_value_today":    userValue,
-		"gateway_port":        port,
+		"capacity_basis": map[string]any{
+			"peak_fleet_tg_tok_per_s": math.Round(tgPeak*10) / 10,
+			"peak_daily_tokens":       math.Round(peakDaily),
+			"assumed_utilization_pct": 33.3,
+			"avg_7d_daily_tokens":     math.Round(avg7),
+			"expected_tokens_per_day": math.Round(expected),
+		},
+		"peaks":        s.peaks.Snapshot(),
+		"gateway_port": port,
 	}
 }
 
@@ -586,7 +607,42 @@ func ComputePricingV2(in PricingInputs) PricingRecommendation {
 	return p
 }
 
-func round2(v float64) float64 { return math.Round(v*100) / 100 } // handleUsageCosts already returns the envelope below — pricing block and
+func round2(v float64) float64 { return math.Round(v*100) / 100 } // peakCapacity: fleet throughput ceiling = per-request peak decode/prefill
+// × the backend's lane count, summed over backends. A 6-lane GPU decoding
+// ~160 tok/s per stream delivers ~960 tok/s; that's the number a
+// utilization assumption applies to.
+func (s *Server) peakCapacity() (pp, tg float64) {
+	s.mu.Lock()
+	lanes := map[string]int{}
+	for url, l := range s.tracker.Snapshot() {
+		n := l.Lanes
+		if n <= 0 {
+			n = l.MaxSeqs
+		}
+		if n <= 0 {
+			n = s.cfg.MaxSeqsFor(url)
+		}
+		lanes[url] = n
+	}
+	s.mu.Unlock()
+	for url, raw := range s.peaks.Snapshot() {
+		bp, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		ppPeak, _ := bp["pp_tok_per_s_peak"].(float64)
+		tgPeak, _ := bp["tg_tok_per_s_peak"].(float64)
+		n := lanes[url]
+		if n <= 0 {
+			n = 1
+		}
+		pp += ppPeak * float64(n)
+		tg += tgPeak * float64(n)
+	}
+	return pp, tg
+}
+
+// handleUsageCosts already returns the envelope below — pricing block and
 // per-user value attribution are added to it.
 
 // handleUsageCosts: GET /usage/costs — full cost picture (admin only).

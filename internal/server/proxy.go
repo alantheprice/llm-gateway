@@ -90,7 +90,7 @@ func (s *Server) dispatch(r *http.Request, url string, body []byte) (
 // and records usage once on the serving member (SPEC §8).
 func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	hdr http.Header, buffered []byte, stream io.Reader, status int,
-	user, keyID, model string, est int) {
+	user, keyID, model string, est int, backendURL string) {
 
 	copyHeader(w.Header(), hdr)
 	w.WriteHeader(status)
@@ -115,11 +115,72 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 		}
 		pt, ot, cached := usageFromSSE(captured, est)
 		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+		s.observePeak(model, backendURL, captured, false)
 		return
 	}
 	w.Write(buffered)
 	pt, ot, cached := usageFromJSON(buffered, est)
 	s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+	s.observePeak(model, backendURL, buffered, true)
+}
+
+// observePeak feeds the engine's timings block (final SSE chunk or embedded
+// JSON) into the peak-throughput memory that anchors capacity pricing.
+func (s *Server) observePeak(modelID, backendURL string, body []byte, isJSON bool) {
+	var tg, pp, prompt float64
+	if isJSON {
+		var resp struct {
+			Timings struct {
+				PredictedPerSecond float64 `json:"predicted_per_second"`
+				PromptPerSecond    float64 `json:"prompt_per_second"`
+				PromptN            float64 `json:"prompt_n"`
+			} `json:"timings"`
+			Usage struct {
+				PromptTokens int `json:"prompt_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal(body, &resp) != nil {
+			return
+		}
+		tg, pp = resp.Timings.PredictedPerSecond, resp.Timings.PromptPerSecond
+		prompt = float64(resp.Usage.PromptTokens)
+	} else {
+		// Last data: line with timings (the final chunk).
+		for i := len(body) - 1; i >= 0; i-- {
+			if body[i] != '\n' {
+				continue
+			}
+			line := strings.TrimSpace(string(body[i+1:]))
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			var chunk struct {
+				Timings *struct {
+					PredictedPerSecond float64 `json:"predicted_per_second"`
+					PromptPerSecond    float64 `json:"prompt_per_second"`
+					PromptN            float64 `json:"prompt_n"`
+				} `json:"timings"`
+				Usage *struct {
+					PromptTokens int `json:"prompt_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal([]byte(line[5:]), &chunk) == nil && chunk.Timings != nil {
+				tg = chunk.Timings.PredictedPerSecond
+				pp = chunk.Timings.PromptPerSecond
+				if chunk.Usage != nil {
+					prompt = float64(chunk.Usage.PromptTokens)
+				}
+			}
+			break
+		}
+	}
+	if tg <= 0 && pp <= 0 {
+		return
+	}
+	if prompt <= 0 {
+		prompt = float64(estimateFrom(nil))
+	}
+	s.peaks.Observe(backendURL, prompt, tg, pp)
 }
 
 func copyHeader(dst, src http.Header) {
@@ -208,7 +269,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body 
 		w.Write([]byte(`{"error":{"message":"backend connect failed","type":"proxy_error"}}`))
 		return
 	}
-	s.relay(w, r, hdr, buffered, stream, status, user, keyID, modelID, estimateFrom(body))
+	s.relay(w, r, hdr, buffered, stream, status, user, keyID, modelID, estimateFrom(body), url)
 }
 
 // tryOverflow implements SPEC §9: if primary backend score >= threshold,
@@ -231,7 +292,7 @@ func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model strin
 	if err != nil || status >= 500 {
 		return false // fall through to direct attempt
 	}
-	s.relay(w, r, hdr, buffered, stream, status, user, keyID, pair.FallbackModelID, estimateFrom(body))
+	s.relay(w, r, hdr, buffered, stream, status, user, keyID, pair.FallbackModelID, estimateFrom(body), pair.FallbackBackend)
 	return true
 }
 
