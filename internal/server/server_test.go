@@ -57,20 +57,34 @@ func TestHealthNoAuth(t *testing.T) {
 }
 
 func TestAuthRequiredFromLoopback(t *testing.T) {
-	// 127.0.0.1 is tunnel traffic: never trusted (SPEC §2).
+	// 127.0.0.1 is tunnel traffic: never trusted (SPEC §2). /usage is
+	// ADMIN-gated (Python parity): session admin or admin ui key only.
 	s := testServer(t, `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/usage", nil))
 	if w.Code != 401 {
 		t.Fatalf("loopback /usage without key = %d, want 401", w.Code)
 	}
-	// LAN IP is trusted when trust_local_networks
+	// LAN IP is NOT enough either (admin plane doesn't trust LAN)
 	w = httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/usage", nil)
 	r.RemoteAddr = "192.168.1.50:44444"
 	s.Handler().ServeHTTP(w, r)
-	if w.Code != 200 {
-		t.Fatalf("LAN request = %d, want 200", w.Code)
+	if w.Code != 401 {
+		t.Fatalf("LAN request = %d, want 401 (admin plane)", w.Code)
+	}
+	// Admin session works
+	s2 := testServer(t, `{"gateway":{"trust_local_networks":true}}`, s.store)
+	rr := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/login", strings.NewReader("username=admin&password=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Login hits PB — instead, mint the session cookie directly.
+	tok := s.store.SignSession(auth.Claims{U: "admin", Role: "admin"}, time.Hour)
+	req2 := httptest.NewRequest("GET", "/usage", nil)
+	req2.AddCookie(&http.Cookie{Name: "llmgw_session", Value: tok})
+	s2.Handler().ServeHTTP(rr, req2)
+	if rr.Code != 200 {
+		t.Fatalf("admin session /usage = %d, want 200 (%s)", rr.Code, rr.Body.String())
 	}
 }
 
@@ -110,14 +124,32 @@ func TestBearerKeyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// /usage is key-or-LAN gated; httptest's default RemoteAddr (192.0.2.1)
-	// is outside local_networks, so the key is what authenticates here.
+	// A plain user key no longer opens the admin plane (Python parity).
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/usage", nil)
 	r.Header.Set("Authorization", "Bearer "+plain)
 	s.Handler().ServeHTTP(w, r)
+	if w.Code != 401 {
+		t.Fatalf("user key on /usage = %d, want 401", w.Code)
+	}
+	// Admin ui key does.
+	adminKey, _, err := s.store.CreateUIKey("admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest("GET", "/usage", nil)
+	r.Header.Set("Authorization", "Bearer "+adminKey)
+	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
-		t.Fatalf("valid key = %d, want 200 (%s)", w.Code, w.Body.String())
+		t.Fatalf("admin ui key /usage = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	// ?api_key= query form works too (Prometheus scrapes).
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest("GET", "/metrics?api_key="+adminKey, nil)
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("metrics ?api_key = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
 	// Legacy key works too
 	legacyDir := t.TempDir()
@@ -125,7 +157,7 @@ func TestBearerKeyAuth(t *testing.T) {
 	os.WriteFile(legacyFile, []byte("sk-legacy-op\n"), 0o600)
 	s.store.LegacyKeysFile = legacyFile
 	w = httptest.NewRecorder()
-	r = httptest.NewRequest("GET", "/usage", nil)
+	r = httptest.NewRequest("GET", "/v1/models", nil)
 	r.Header.Set("Authorization", "Bearer sk-legacy-op")
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {

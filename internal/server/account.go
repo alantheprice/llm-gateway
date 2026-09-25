@@ -155,22 +155,40 @@ func (s *Server) handleAPIUsageMe(w http.ResponseWriter, r *http.Request) {
 	}
 	s.usage.Flush()
 	u := s.usage.User(sess.U)
-	total := 0
-	if u != nil {
-		total = u.PromptTokens + u.OutputTokens
-	}
-	var kinds map[string]*KindTally
-	if u != nil {
-		kinds = u.Kinds
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	tot := map[string]any{
 		"requests":      uint0(u),
 		"prompt_tokens": pint(u),
 		"output_tokens": pout(u),
-		"total_tokens":  total,
-		"kinds":         kinds,
-		"keys":          s.usage.KeyUsage(sess.U),
+		"total_tokens":  pint(u) + pout(u),
+		"kinds":         map[string]any{},
+	}
+	if u != nil && u.Kinds != nil {
+		tot["kinds"] = u.Kinds
+	}
+	// Python parity: keys = store views (key_id/active) merged with usage
+	// tallies, as an array.
+	tallies := s.usage.KeyUsage(sess.U)
+	keys := []map[string]any{}
+	for _, kv := range s.store.ListKeys(sess.U) {
+		entry := map[string]any{
+			"key_id": kv.KeyID,
+			"active": kv.Active,
+			"usage": map[string]int{
+				"requests":      0,
+				"prompt_tokens": 0,
+				"output_tokens": 0,
+			},
+		}
+		if t, ok := tallies[kv.KeyID]; ok {
+			entry["usage"] = t
+		}
+		keys = append(keys, entry)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"username": sess.U,
+		"totals":   tot,
+		"keys":     keys,
 	})
 }
 

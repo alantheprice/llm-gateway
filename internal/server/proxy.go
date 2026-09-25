@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -230,58 +229,7 @@ func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model strin
 
 // --- observability (SPEC §12) ---
 
-func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
-		return
-	}
-	out := map[string]any{}
-	s.PollOnce()
-	s.mu.Lock()
-	urls := make([]string, 0, len(s.backends))
-	for u := range s.backends {
-		urls = append(urls, u)
-	}
-	s.mu.Unlock()
-	for _, u := range urls {
-		if m, ok := getJSON(s.client, u+"/usage", 3*time.Second); ok {
-			out[u] = m
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
-}
 
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
-		return
-	}
-	s.mu.Lock()
-	urls := make([]string, 0, len(s.backends))
-	for u := range s.backends {
-		urls = append(urls, u)
-	}
-	s.mu.Unlock()
-	var b strings.Builder
-	c := &http.Client{Timeout: 3 * time.Second}
-	for _, u := range urls {
-		resp, err := c.Get(u + "/metrics")
-		if err != nil || resp.StatusCode != 200 {
-			if resp != nil {
-				resp.Body.Close()
-			}
-			continue
-		}
-		te := bufio.NewScanner(resp.Body)
-		te.Buffer(make([]byte, 1024*1024), 8*1024*1024)
-		for te.Scan() {
-			b.WriteString(te.Text())
-			b.WriteByte('\n')
-		}
-		resp.Body.Close()
-	}
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.Write([]byte(b.String()))
-}
 
 func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.checkAuth(w, r); !ok {
@@ -303,13 +251,6 @@ func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"backends": s.backendSnapshot()})
-}
 
 // backendSnapshot polls fresh and returns per-backend score/load info.
 func (s *Server) backendSnapshot() map[string]map[string]any {

@@ -371,8 +371,11 @@ func (s *Server) PollOnce() {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
-			if l := pollNinfer(s.client, u); l != nil {
+			if l, raw := pollNinferFull(s.client, u); l != nil {
 				s.tracker.Set(u, l)
+				s.mu.Lock()
+				s.lastMetrics[u] = raw // raw /usage payload for /backends extras
+				s.mu.Unlock()
 				return
 			}
 			if l := pollVLLM(s.client, u, s.cfg); l != nil {
@@ -401,13 +404,21 @@ func getJSON(client *http.Client, url string, timeout time.Duration) (map[string
 }
 
 func pollNinfer(client *http.Client, backend string) *routing.Load {
+	l, _ := pollNinferFull(client, backend)
+	return l
+}
+
+// pollNinferFull fetches /slots + /usage and returns both the routing Load
+// and the raw /usage payload (uptime, KV windows, lane breakdown — the
+// /backends view needs them; see Python's _backend_load field list).
+func pollNinferFull(client *http.Client, backend string) (*routing.Load, map[string]any) {
 	slots, ok := getJSON(client, backend+"/slots", 3*time.Second)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	mc, _ := slots["max_concurrency"].(float64)
 	if mc == 0 {
-		return nil // not a ninfer /slots shape
+		return nil, nil // not a ninfer /slots shape
 	}
 	proc, _ := slots["requests_processing"].(float64)
 	wait, _ := slots["requests_waiting"].(float64)
@@ -416,27 +427,29 @@ func pollNinfer(client *http.Client, backend string) *routing.Load {
 		Engine: "ninfer", Running: int(proc), Waiting: int(wait), Lanes: lanes,
 		MaxSeqs: lanes, LastUpdated: time.Now(),
 	}
-	if usage, ok := getJSON(client, backend+"/usage", 3*time.Second); ok {
-		if h, ok := usage["health"].(map[string]any); ok {
-			l.SpillsTotal, _ = toInt(h["kv_pressure_spills"])
-			l.EvictionsTotal, _ = toInt(h["sessions_evicted"])
-		}
-		if thr, ok := usage["throughput"].(map[string]any); ok {
-			l.DecodeTPS, _ = toF(thr["decode_tok_per_s"])
-			l.PrefillTPS, _ = toF(thr["prefill_tok_per_s"])
-		}
-		if en, ok := usage["energy"].(map[string]any); ok {
-			if today, ok := en["today"].(map[string]any); ok {
-				l.EnergyKWH, _ = toF(today["kwh"])
-			}
-		}
-		if tok, ok := usage["tokens"].(map[string]any); ok {
-			if in, ok := tok["input"].(map[string]any); ok {
-				l.CacheHitPct, _ = toF(in["cache_hit_rate_pct"])
-			}
+	usage, ok := getJSON(client, backend+"/usage", 3*time.Second)
+	if !ok {
+		return l, nil
+	}
+	if h, ok := usage["health"].(map[string]any); ok {
+		l.SpillsTotal, _ = toInt(h["kv_pressure_spills"])
+		l.EvictionsTotal, _ = toInt(h["sessions_evicted"])
+	}
+	if thr, ok := usage["throughput"].(map[string]any); ok {
+		l.DecodeTPS, _ = toF(thr["decode_tok_per_s"])
+		l.PrefillTPS, _ = toF(thr["prefill_tok_per_s"])
+	}
+	if en, ok := usage["energy"].(map[string]any); ok {
+		if today, ok := en["today"].(map[string]any); ok {
+			l.EnergyKWH, _ = toF(today["kwh"])
 		}
 	}
-	return l
+	if tok, ok := usage["tokens"].(map[string]any); ok {
+		if in, ok := tok["input"].(map[string]any); ok {
+			l.CacheHitPct, _ = toF(in["cache_hit_rate_pct"])
+		}
+	}
+	return l, usage
 }
 
 func pollVLLM(client *http.Client, backend string, cfg *config.Config) *routing.Load {

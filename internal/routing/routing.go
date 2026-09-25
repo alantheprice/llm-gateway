@@ -69,6 +69,18 @@ func (t *Tracker) Get(url string) *Load {
 	return t.loads[url]
 }
 
+// Snapshot copies the current load map (metrics views iterate it without
+// holding the tracker lock).
+func (t *Tracker) Snapshot() map[string]*Load {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]*Load, len(t.loads))
+	for u, l := range t.loads {
+		out[u] = l
+	}
+	return out
+}
+
 func (t *Tracker) InFlightInc(url string) { t.mu.Lock(); t.inFlight[url]++; t.mu.Unlock() }
 func (t *Tracker) InFlightDec(url string) {
 	t.mu.Lock()

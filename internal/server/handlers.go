@@ -100,7 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/completions", s.handlePassthrough)
 	mux.HandleFunc("/v1/embeddings", s.handleEmbeddings)
 	mux.HandleFunc("/v1/", s.handleV1Other)
-	mux.HandleFunc("/usage", s.handleUsage)
+	mux.HandleFunc("/usage", s.handleUsageRich)
 	mux.HandleFunc("/usage/users", s.handleUsageUsers)
 	mux.HandleFunc("/config", s.handleConfig)
 	mux.HandleFunc("/config/reload", s.handleConfigReload)
@@ -110,9 +110,9 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.HandleFunc("/admin/config/page", s.handleAdminConfigPage)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
-	mux.HandleFunc("/metrics", s.handleMetrics)
+	mux.HandleFunc("/metrics", s.handleMetricsRich)
 	mux.HandleFunc("/slots", s.handleSlots)
-	mux.HandleFunc("/backends", s.handleBackends)
+	mux.HandleFunc("/backends", s.handleBackendsRich)
 
 	// Identity plane (SPEC parity with Python gateway)
 	mux.HandleFunc("/login", s.methodSwitch(map[string]http.HandlerFunc{
