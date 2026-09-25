@@ -145,6 +145,59 @@ type PickResult struct {
 	URL     string
 	ModelID string
 	Scores  map[string]float64
+	// CacheHit: true when content affinity chose the member (diagnostics).
+	CacheHit   bool
+	CacheDepth int
+}
+
+// PickCache: content-affinity pick. Consults the conversation table and
+// honors the match only if the target GPU has headroom — guards scale with
+// match strength (a deep prefix is worth keeping; a shallow one isn't
+// worth piling onto a busy card). Returns nil when there's no usable match.
+//
+// guards: depth>=3 match released above 0.90; depth==2 above 0.50 (a
+// thousand scraper sessions sharing an opener must not pile onto one GPU).
+// Large prompts are handled by the caller's size-affinity path and never
+// reach here.
+func PickCache(ct *CacheTable, poolName string, members []Member, tr *Tracker,
+	msgs []Message, inFlightByURL map[string]int) *PickResult {
+	if ct == nil || len(msgs) < 2 || len(members) == 0 {
+		return nil
+	}
+	url, depth, ok := ct.Lookup(poolName, msgs)
+	if !ok {
+		return nil
+	}
+	var picked *Member
+	for i := range members {
+		if members[i].URL == url {
+			picked = &members[i]
+			break
+		}
+	}
+	if picked == nil {
+		return nil // member vanished from the pool
+	}
+	guard := 0.90
+	if depth <= 2 {
+		guard = 0.50
+	}
+	score := tr.Score(url)
+	// Blend in-flight so concurrent bursts count even before /slots polls.
+	if l := tr.Get(url); l != nil {
+		lanes := l.Lanes
+		if lanes < 1 {
+			lanes = 6
+		}
+		blended := float64(l.Running+inFlightByURL[url]) / float64(lanes)
+		if blended > score {
+			score = blended
+		}
+	}
+	if score >= guard {
+		return nil // cache hit but GPU too busy: fall through to score-based pick
+	}
+	return &PickResult{URL: picked.URL, ModelID: picked.ModelID, CacheHit: true, CacheDepth: depth}
 }
 
 // PickPool implements SPEC §5.4 deterministically.
@@ -172,7 +225,7 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 		}
 		pinnedRunning += tr.InFlight(pinned.URL)
 		if pinnedRunning+1 <= pinnedLanes && scores[pinned.URL] < 0.90 {
-			return PickResult{pinned.URL, pinned.ModelID, scores}
+			return PickResult{URL: pinned.URL, ModelID: pinned.ModelID, Scores: scores}
 		}
 	}
 
@@ -237,7 +290,7 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 	if wantsLarge {
 		bestLarge := pickLarge(members, scores, 0.90)
 		if bestLarge != nil {
-			return PickResult{bestLarge.URL, bestLarge.ModelID, scores}
+			return PickResult{URL: bestLarge.URL, ModelID: bestLarge.ModelID, Scores: scores}
 		}
 	}
 
@@ -256,7 +309,7 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 				best = m
 			}
 		}
-		return PickResult{best.URL, best.ModelID, scores}
+		return PickResult{URL: best.URL, ModelID: best.ModelID, Scores: scores}
 	}
 
 	// 7. Choice: min by (score + sizePenalty - sticky, original index)
@@ -278,7 +331,7 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 		}
 	}
 	chosen := eligible[bestIdx]
-	return PickResult{chosen.URL, chosen.ModelID, scores}
+	return PickResult{URL: chosen.URL, ModelID: chosen.ModelID, Scores: scores}
 }
 
 func pickLarge(members []Member, scores map[string]float64, cap float64) *Member {

@@ -404,7 +404,6 @@ func (s *Server) handleV1Other(w http.ResponseWriter, r *http.Request) {
 // routePool implements SPEC §5.4 + §5.5 (failover before first byte).
 func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfgT,
 	modelName string, body []byte, user, keyID string) {
-
 	// Refresh member metrics (best-effort, concurrent).
 	s.PollOnce()
 
@@ -428,11 +427,64 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 	}
 
 	est := estimateFrom(body)
-	sess := sessionKey(r, keyID)
 
+	// Content-affinity: if this pool opts in and the body carries a
+	// messages array, try to ride the GPU that already holds the KV
+	// prefix. Falls through to the classic picker on any miss/guard.
+	var convMsgs []routing.Message
+	if pool.CacheAffinity {
+		var req struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if json.Unmarshal(body, &req) == nil && len(req.Messages) >= 2 {
+			for _, m := range req.Messages {
+				convMsgs = append(convMsgs, routing.Message{
+					Role: m.Role, Content: contentText(m.Content),
+				})
+			}
+		}
+	}
+	if pool.CacheAffinity && len(convMsgs) >= 2 && est < pool.LargePromptTokens {
+		inflight := map[string]int{}
+		for _, m := range members {
+			inflight[m.URL] = s.tracker.InFlight(m.URL)
+		}
+		if cp := routing.PickCache(s.cacheTable, modelName, members, s.tracker, convMsgs, inflight); cp != nil {
+			s.relayPoolPick(w, r, modelName, pool, body, *cp, user, keyID, est, convMsgs)
+			return
+		}
+	}
+
+	s.routePoolClassic(w, r, modelName, pool, body, user, keyID, est, convMsgs)
+}
+
+// routePoolClassic: score/pin-based member loop (SPEC §5.4) with
+// pre-commit failover. The cache-affinity path delegates here on miss.
+func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
+	modelName string, pool *poolCfgT, body []byte, user, keyID string, est int, convMsgs []routing.Message) {
+
+	sess := sessionKey(r, keyID)
 	s.mu.Lock()
 	leader := s.leader[modelName]
 	s.mu.Unlock()
+
+	s.mu.Lock()
+	membersCfg := pool.Members
+	s.mu.Unlock()
+	members := make([]routing.Member, 0, len(membersCfg))
+	for _, m := range membersCfg {
+		lanes := 0
+		if l := s.tracker.Get(m.Backend); l != nil {
+			lanes = l.Lanes
+		}
+		members = append(members, routing.Member{
+			URL: m.Backend, ModelID: m.ModelID,
+			LargeContext: m.LargeContext, CapacityWeight: m.CapacityWeight, Lanes: lanes,
+		})
+	}
 
 	var lastStatus int
 	var lastBody []byte
@@ -467,6 +519,7 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 			s.tracker.InFlightInc(pick.URL)
 			defer s.tracker.InFlightDec(pick.URL)
 			s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
+			s.recordConv(modelName, convMsgs, pick.URL)
 			return
 		}
 		lastStatus, lastBody = status, respBody

@@ -52,6 +52,9 @@ type PoolCfg struct {
 	StickyBias        float64         `json:"sticky_bias"`
 	LargePromptTokens int             `json:"large_prompt_tokens"`
 	CapacityBias      float64         `json:"capacity_bias"`
+	// CacheAffinity: route conversations to the GPU holding their KV
+	// prefix (content-hash table), falling back to score-based pick.
+	CacheAffinity bool `json:"cache_affinity"`
 }
 
 type OverflowPair struct {

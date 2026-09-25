@@ -64,6 +64,8 @@ type Server struct {
 
 	costHistory *CostHistory // per-day actual cost + value (chart)
 
+	cacheTable *routing.CacheTable // conversation-hash → GPU (content affinity)
+
 	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
 	// PocketBase's database. Nil in tests that don't embed PB — every
 	// call site must nil-check.
@@ -120,6 +122,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		usage:        NewUsageStore(UsagePath(cfg)),
 		peaks:        NewPeakStore(peaksPath(UsagePath(cfg))),
 		costHistory:  NewCostHistory(CostHistoryPath(UsagePath(cfg))),
+		cacheTable:   routing.NewCacheTable(2*time.Hour, 8192),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},

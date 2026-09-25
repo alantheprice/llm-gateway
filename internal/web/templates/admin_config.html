@@ -64,6 +64,7 @@ function poolRow(name, p) {
     field('sticky_bias', num('pool_sticky', p.sticky_bias ?? 0, 0.05), 'Score bonus for a member already holding the session (KV cache reuse).') +
     field('large_prompt_tokens', num('pool_big', p.large_prompt_tokens ?? 0, 1000), 'Prompts above this size go to large-ctx members first.') +
     field('capacity_bias', num('pool_bias', p.capacity_bias ?? 0, 0.05), 'Static preference for higher-capacity members.') +
+    '<label class="cfgfield cfgtoggle" title="Route conversations to the GPU already holding their KV prefix (content-hash table)"><input name="pool_cacheaff" type="checkbox"' + (p.cache_affinity ? ' checked' : '') + '><span>cache affinity</span></label>' +
     '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('pool') + '</div>' +
     '</div>' +
     '<div class="members">' + memberLegend() + (p.members||[]).map(memberRow).join('') + '</div>' +
@@ -206,6 +207,7 @@ function collect() {
       sticky_bias: parseFloat(row.querySelector('[name="pool_sticky"]').value) || 0,
       large_prompt_tokens: parseInt(row.querySelector('[name="pool_big"]').value, 10) || 0,
       capacity_bias: parseFloat(row.querySelector('[name="pool_bias"]').value) || 0,
+      cache_affinity: row.querySelector('[name="pool_cacheaff"]').checked,
     };
   });
 
