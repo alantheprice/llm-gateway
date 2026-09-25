@@ -51,6 +51,7 @@ func (s *Server) relayPoolPick(w http.ResponseWriter, r *http.Request,
 	fwdBody := rewriteModel(body, pick.ModelID)
 	status, respHeader, respBody, reader, err := s.dispatch(r, pick.URL, fwdBody)
 	if err == nil && status < 500 && status != http.StatusRequestTimeout {
+		log.Printf("Pool '%s': cache-affinity depth=%d -> %s", modelName, pick.CacheDepth, pick.URL)
 		s.tracker.InFlightInc(pick.URL)
 		defer s.tracker.InFlightDec(pick.URL)
 		s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
