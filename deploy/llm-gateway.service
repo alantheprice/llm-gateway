@@ -1,0 +1,22 @@
+[Unit]
+Description=LLM Gateway (Go) - pooled routing, identity, cost accounting
+After=network.target pocketbase.service
+Wants=pocketbase.service
+
+[Service]
+Type=simple
+User=llmgateway
+WorkingDirectory=/opt/llm-gateway
+ExecStart=/opt/llm-gateway/bin/llm-gateway
+Restart=always
+RestartSec=3
+Environment=LLM_GATEWAY_CONF=/opt/llm-gateway/llm_gateway.conf
+Environment=POCKETBASE_URL=http://127.0.0.1:8090
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-gateway
+
+[Install]
+WantedBy=multi-user.target

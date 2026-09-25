@@ -7,3 +7,4 @@ usage.json
 *.jar
 peaks.json
 cost_history.json
+bin/
