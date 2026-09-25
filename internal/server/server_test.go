@@ -60,17 +60,47 @@ func TestAuthRequiredFromLoopback(t *testing.T) {
 	// 127.0.0.1 is tunnel traffic: never trusted (SPEC §2).
 	s := testServer(t, `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/v1/models", nil))
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/usage", nil))
 	if w.Code != 401 {
-		t.Fatalf("loopback without key = %d, want 401", w.Code)
+		t.Fatalf("loopback /usage without key = %d, want 401", w.Code)
 	}
 	// LAN IP is trusted when trust_local_networks
 	w = httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/models", nil)
+	r := httptest.NewRequest("GET", "/usage", nil)
 	r.RemoteAddr = "192.168.1.50:44444"
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Fatalf("LAN request = %d, want 200", w.Code)
+	}
+}
+
+func TestModelsPublicByDefault(t *testing.T) {
+	// Default: the catalog is open (gateway.models_require_auth absent =
+	// false) — even from loopback, which is never LAN-trusted. OpenAI-
+	// compatible clients probe /v1/models before they have a key.
+	s := testServer(t, `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/v1/models", nil))
+	if w.Code != 200 {
+		t.Fatalf("public catalog = %d, want 200", w.Code)
+	}
+	// Opt-in gating.
+	s2 := testServer(t, `{"gateway":{"trust_local_networks":true,"models_require_auth":true},"local_networks":["192.168.1.0/24"]}`, nil)
+	w2 := httptest.NewRecorder()
+	s2.Handler().ServeHTTP(w2, httptest.NewRequest("GET", "/v1/models", nil))
+	if w2.Code != 401 {
+		t.Fatalf("gated catalog (loopback, no key) = %d, want 401", w2.Code)
+	}
+	plain, _, err := s2.store.CreateKey("bob", "main", "user", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w3 := httptest.NewRecorder()
+	r3 := httptest.NewRequest("GET", "/v1/models", nil)
+	r3.Header.Set("Authorization", "Bearer "+plain)
+	s2.Handler().ServeHTTP(w3, r3)
+	if w3.Code != 200 {
+		t.Fatalf("gated catalog with key = %d, want 200 (%s)", w3.Code, w3.Body.String())
 	}
 }
 
@@ -80,8 +110,10 @@ func TestBearerKeyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// /usage is key-or-LAN gated; httptest's default RemoteAddr (192.0.2.1)
+	// is outside local_networks, so the key is what authenticates here.
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/models", nil)
+	r := httptest.NewRequest("GET", "/usage", nil)
 	r.Header.Set("Authorization", "Bearer "+plain)
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
@@ -93,7 +125,7 @@ func TestBearerKeyAuth(t *testing.T) {
 	os.WriteFile(legacyFile, []byte("sk-legacy-op\n"), 0o600)
 	s.store.LegacyKeysFile = legacyFile
 	w = httptest.NewRecorder()
-	r = httptest.NewRequest("GET", "/v1/models", nil)
+	r = httptest.NewRequest("GET", "/usage", nil)
 	r.Header.Set("Authorization", "Bearer sk-legacy-op")
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {

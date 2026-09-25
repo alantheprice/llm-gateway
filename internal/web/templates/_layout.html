@@ -31,6 +31,7 @@
       <div class="nav-section">Admin</div>
       <a href="/admin/users/page" class="nav-item {{if eq .Nav "admin_users"}}active{{end}}">{{Icon "users"}}<span>Users</span></a>
       <a href="/admin/system" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "activity"}}<span>System</span></a>
+      <a href="/admin/config/page" class="nav-item {{if eq .Nav "admin_config"}}active{{end}}">{{Icon "sliders"}}<span>Config</span></a>
       {{end}}
       <div class="nav-section">Settings</div>
       <button class="nav-item" id="themeToggle" type="button" title="Switch between light and dark theme">

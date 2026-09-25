@@ -22,11 +22,14 @@ var staticVerValue = func() *atomic.Value {
 
 func init() { web.SetIconFunc(iconSVG) }
 
-// SetConfig swaps the active config after a hot reload.
+// SetConfig swaps the active config after a hot reload (or admin save).
 func (s *Server) SetConfig(nc *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg = nc
+	// local_networks live in a package-level parsed set; re-derive so
+	// network edits apply without a restart.
+	s.ParseNetworks()
 	s.tracker = routing.NewTracker(routing.Weights{
 		NinferLane:     nc.Metrics.NinferLaneWeight,
 		NinferQueue:    nc.Metrics.NinferQueueWeight,
@@ -101,6 +104,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/usage/users", s.handleUsageUsers)
 	mux.HandleFunc("/config", s.handleConfig)
 	mux.HandleFunc("/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/admin/config", s.methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet:  s.handleAdminConfigGet,
+		http.MethodPost: s.handleAdminConfigPost,
+	}))
+	mux.HandleFunc("/admin/config/page", s.handleAdminConfigPage)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/slots", s.handleSlots)
@@ -199,8 +207,13 @@ func (s *Server) docsAuth(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
-		return
+	// Catalog is public by default (models_require_auth=false): OpenAI-
+	// compatible clients probe /v1/models before they have a key. The knob
+	// opts into gating it like the other /v1 surfaces.
+	if s.cfg.Gateway.ModelsRequireAuth {
+		if _, _, ok := s.checkAuth(w, r); !ok {
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": s.catalog()})

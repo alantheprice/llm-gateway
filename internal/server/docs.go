@@ -118,17 +118,24 @@ func (s *Server) registerInferenceDocs() {
 	}, func(o *huma.Operation) {
 		o.Tags = []string{"inference"}
 		o.Summary = "Model catalog"
-		o.Description = "Lists advertised models. Pool members collapse to the virtual pool name; public_models filters when configured."
-		o.Security = secs(secBearer, secSession)
-		o.Middlewares = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
-			if err := s.humaAuth(ctx); err != nil {
-				return
+		o.Description = "Lists advertised models. Pool members collapse to the virtual pool name; public_models filters when configured. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust."
+		if s.cfg.Gateway.ModelsRequireAuth {
+			o.Security = secs(secBearer, secSession)
+			o.Middlewares = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
+				if err := s.humaAuth(ctx); err != nil {
+					return
+				}
+				next(ctx)
+			}}
+			o.Responses = map[string]*huma.Response{
+				"200": {Description: "Catalog"},
+				"401": {Description: "Missing/invalid key"},
 			}
-			next(ctx)
-		}}
-		o.Responses = map[string]*huma.Response{
-			"200": {Description: "Catalog"},
-			"401": {Description: "Missing/invalid key"},
+		} else {
+			o.Security = nil
+			o.Responses = map[string]*huma.Response{
+				"200": {Description: "Catalog (public)"},
+			}
 		}
 	})
 

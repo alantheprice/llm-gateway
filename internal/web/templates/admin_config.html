@@ -1,0 +1,160 @@
+{{define "title"}}Config — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+let CFG = null;
+
+function field(label, input, hint) {
+  return '<label class="cfgfield"><span class="cfglabel">' + esc(label) + '</span>' + input +
+    (hint ? '<span class="cfghint">' + esc(hint) + '</span>' : '') + '</label>';
+}
+function num(id, v, step) {
+  return '<input id="' + id + '" type="number" step="' + (step||'any') + '" value="' + (v ?? 0) + '">';
+}
+function txt(id, v, ph) {
+  return '<input id="' + id + '" type="text" value="' + escAttr(v ?? '') + '" placeholder="' + escAttr(ph||'') + '">';
+}
+function chk(id, v) {
+  return '<label class="cfgtoggle"><input id="' + id + '" type="checkbox"' + (v ? ' checked' : '') + '><span>' + (v ? 'on' : 'off') + '</span></label>';
+}
+
+function render(c) {
+  CFG = c;
+  const g = c.gateway || {};
+  const d = c.discovery || {};
+  const m = c.metrics || {};
+  const ca = c.cache || {};
+
+  document.getElementById('authgrid').innerHTML =
+    field('trust_local_networks', chk('g_tln', g.trust_local_networks),
+      'LAN hosts call inference without a key. 127.0.0.1 is NEVER trusted (tunnel path).') +
+    field('models_require_auth', chk('g_mra', g.models_require_auth),
+      'Off (default): GET /v1/models is public. On: the catalog needs a key like every other /v1 surface.') +
+    field('local_networks (one CIDR per line)', '<textarea id="g_nets" rows="3">' + esc((c.local_networks||[]).join('\n')) + '</textarea>',
+      'Applies instantly on save.');
+
+  document.getElementById('cachegrid').innerHTML =
+    field('discovery cache ttl (seconds)', num('c_ttl', ca.ttl, 1), 'How long model/backend discovery is cached.');
+
+  document.getElementById('metricsgrid').innerHTML =
+    field('poll_interval (s)', num('m_poll', m.poll_interval, 1)) +
+    field('stale_threshold (s)', num('m_stale', m.stale_threshold, 1),
+      'Backends with older metrics score 0 (dump everything there is safe).') +
+    field('default_max_seqs', num('m_seqs', m.default_max_seqs, 1), 'Fallback concurrency for non-NInfer backends (vLLM scoring).') +
+    field('ninfer_lane_weight', num('m_lane', m.ninfer_lane_weight, 0.05), 'NInfer score = lane*W + queue*W + kv_pressure*W.') +
+    field('ninfer_queue_weight', num('m_queue', m.ninfer_queue_weight, 0.05)) +
+    field('ninfer_pressure_weight', num('m_press', m.ninfer_pressure_weight, 0.05)) +
+    field('backend_max_seqs (JSON: url → concurrency)', '<textarea id="m_bms" rows="3">' + esc(JSON.stringify(m.backend_max_seqs||{}, null, 1)) + '</textarea>',
+      'Used by vLLM-style scoring and capacity math.');
+
+  document.getElementById('discgrid').innerHTML =
+    field('remote_host', txt('d_host', d.remote_host, '192.168.1.100'), 'Second GPU box (scanned at discovery).') +
+    field('local_ports (comma-separated)', txt('d_lports', (d.local_ports||[]).join(', '))) +
+    field('remote_ports (comma-separated)', txt('d_rports', (d.remote_ports||[]).join(', ')));
+
+  document.getElementById('poolsjson').value = JSON.stringify(
+    {model_pools: c.model_pools || {}, overflow_pairs: c.overflow_pairs || {}, public_models: c.public_models || []},
+    null, 2);
+}
+
+function collect() {
+  const nets = document.getElementById('g_nets').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const list = s => s.split(',').map(x=>parseInt(x.trim(),10)).filter(n=>!isNaN(n)&&n>0);
+  let bms = {};
+  try { bms = JSON.parse(document.getElementById('m_bms').value || '{}'); } catch(e) {
+    flash('backend_max_seqs is not valid JSON: ' + e.message, true); throw e; }
+  let pools; try { pools = JSON.parse(document.getElementById('poolsjson').value); } catch(e) {
+    flash('pools JSON is not valid: ' + e.message, true); throw e; }
+  return {
+    gateway: {
+      port: CFG.gateway.port, // port edits need a restart; not editable here
+      trust_local_networks: document.getElementById('g_tln').checked,
+      models_require_auth: document.getElementById('g_mra').checked,
+    },
+    local_networks: nets,
+    cache: {ttl: parseInt(document.getElementById('c_ttl').value,10)||60},
+    discovery: {
+      local_ports: list(document.getElementById('d_lports').value),
+      remote_host: document.getElementById('d_host').value.trim(),
+      remote_ports: list(document.getElementById('d_rports').value),
+    },
+    metrics: {
+      poll_interval: parseInt(document.getElementById('m_poll').value,10)||10,
+      stale_threshold: parseInt(document.getElementById('m_stale').value,10)||30,
+      default_max_seqs: parseInt(document.getElementById('m_seqs').value,10)||3,
+      ninfer_lane_weight: parseFloat(document.getElementById('m_lane').value)||0,
+      ninfer_queue_weight: parseFloat(document.getElementById('m_queue').value)||0,
+      ninfer_pressure_weight: parseFloat(document.getElementById('m_press').value)||0,
+      backend_max_seqs: bms,
+    },
+    model_pools: pools.model_pools || {},
+    overflow_pairs: pools.overflow_pairs || {},
+    public_models: pools.public_models || [],
+  };
+}
+
+document.getElementById('save').addEventListener('click', async () => {
+  let body;
+  try { body = JSON.stringify(collect()); } catch(e) { return; }
+  const r = await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'}, body});
+  if (r.status === 401) { location = '/'; return; }
+  flash(r.ok ? 'Saved — live now, persisted to the conf file.' : (r.data.error || 'save failed'), !r.ok);
+  if (r.ok) load();
+});
+document.getElementById('reloadbtn').addEventListener('click', async () => {
+  const r = await api('/config/reload', {method:'POST'});
+  if (r.status === 401) { location = '/'; return; }
+  flash(r.ok ? ('Config file re-read: ' + (r.data.status||'ok')) : (r.data.error||'failed'), !r.ok);
+  load();
+});
+document.getElementById('resetbtn').addEventListener('click', load);
+
+async function load() {
+  const r = await api('/admin/config');
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; }
+    flash(r.data.error || 'failed to load config', true); return; }
+  render(r.data.config);
+  document.getElementById('confpath').textContent = 'file: ' + r.data.confPath;
+}
+load();
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Gateway Config</h1>
+    <span id="confpath" class="muted" style="font-size:12px"></span>
+  </div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Auth &amp; access</h2>
+    <div class="cfggrid" id="authgrid"></div>
+  </div>
+
+  <div class="card">
+    <h2>Discovery &amp; cache</h2>
+    <div class="cfggrid" id="discgrid"></div>
+    <div class="cfggrid" id="cachegrid" style="margin-top:8px"></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Changes to discovery take effect on the next discovery cycle / restart. Metrics poll picks up new backends within poll_interval.</p>
+  </div>
+
+  <div class="card">
+    <h2>Metrics &amp; scoring</h2>
+    <div class="cfggrid" id="metricsgrid"></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Lane/queue/pressure weights only apply to NInfer engines reporting /slots + /usage — that's the specialized fork. Other engines fall back to a vLLM-metrics heuristic (see README "Engine metrics").</p>
+  </div>
+
+  <div class="card">
+    <h2>Pools &amp; overflow (JSON)</h2>
+    <textarea id="poolsjson" rows="14" style="font-family:monospace;font-size:12.5px;width:100%"></textarea>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">model_pools members: {model_id, backend, large_context?, capacity_weight?}. Pool MEMBER model ids are hidden from /v1/models; the pool name is what clients call.</p>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-top:4px">
+    <button class="btn primary" id="save">Save (live + persist)</button>
+    <button class="btn" id="reloadbtn">Re-read file</button>
+    <button class="btn" id="resetbtn">Discard edits</button>
+  </div>
+</div>
+{{end}}

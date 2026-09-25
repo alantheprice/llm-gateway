@@ -61,7 +61,7 @@ Rules:
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
 | GET | `/health` | none | `200 "OK"` text/plain |
-| GET | `/v1/models` | key or LAN-trust | catalog; pool member ids hidden, virtual names synthesized (`public_models` accepted but not applied) |
+| GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized (`public_models` accepted but not applied) |
 | POST | `/v1/chat/completions` | key or LAN-trust | route (pool or direct); stream-aware proxy |
 | POST | `/v1/completions` | key or LAN-trust | direct to resolved backend |
 | POST | `/v1/embeddings` | key or LAN-trust | direct to embedding backend |
@@ -74,6 +74,10 @@ Rules:
 - **Auth modes** (`_auth_required` semantics): if `gateway.trust_local_networks`
   is true AND source IP ∈ `local_networks` → no key needed. Else Bearer key
   required. **127.0.0.1 is NEVER trusted** (it's the tunnel path).
+- **Exception — model catalog:** `GET /v1/models` is public by default
+  (`gateway.models_require_auth: false`): OpenAI-compatible clients probe
+  the catalog before they hold a key. Set the knob to `true` to gate it
+  like every other `/v1` surface.
 - Missing/invalid key → `401 {"error":{"message":"Invalid or missing API key","type":"unauthorized"}}`.
 
 ## 3. Client IP resolution (rate-limit keys ONLY)
@@ -142,11 +146,17 @@ Loop guard: each member tried at most once.
 
 ## 6. Metrics polling
 - Every `metrics.poll_interval` (10s): for each discovered backend, GET
-  /slots + /usage (1s timeout), detect engine.
+  /slots + /usage (1s timeout), detect engine. **The /slots + /usage shape
+  is specific to the NInfer fork** (`alantheprice/ninfer-4090`,
+  `nvfp4-upstream-master`): stock engines don't serve it, and energy/cost
+  reporting is fork-only (NVML + `--electricity-rate`, persisted via
+  `--metrics-state`).
   - ninfer: lanes/running/waiting from /slots; spills_total/evictions_total
     from /usage; engine="ninfer".
   - vLLM: running/waiting/kv_usage from /metrics Prometheus text
     (`vllm:num_requests_running` etc.); engine="vllm".
+  - Neither shape: backend stays discoverable/routable but load scores
+    remain 0.0 (no overflow, no lane math).
 - Scoring staleness: metrics older than `metrics.stale_threshold` (30s)
   → score 0.0.
 
@@ -182,11 +192,18 @@ retry on fallback backend with `fallback_model_id`. (Pool path supersedes
 this when model_pools configured; kept for compat.)
 
 ## 10. Config file (same format as llm_gateway.conf)
-Single JSON file, keys: gateway{port,trust_local_networks,api_keys_file,
-internal_api_key_file}, discovery{local_ports,remote_host,remote_ports},
+Single JSON file (strict JSON — no comments), keys: gateway{port,
+trust_local_networks, models_require_auth, api_keys_file,
+internal_api_key_file, users_file, usage_file},
+discovery{local_ports,remote_host,remote_ports},
 local_networks[], metrics{...}, backend_max_seqs{}, model_pools{},
 overflow_pairs{}, public_models[], cache{ttl}.
 - Auto-reload on mtime change (like the Python conf watcher).
+- Admin UI (`/admin/config/page` → GET/POST `/admin/config`) reads and
+  writes this file: POST overlays onto the current config, validates,
+  persists atomically, and hot-swaps (tracker weights + networks re-derived;
+  port + identity-plane file paths are load-time only). The write-back means
+  UI edits survive restarts.
 - Env overrides: `LLM_GATEWAY_CONF` (path), `PORT` (listen port).
 
 ## 11. Explicitly out of scope for Go v1 (stays on Python instance)

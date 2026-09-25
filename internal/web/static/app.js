@@ -5,6 +5,14 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// escAttr: escape for embedding inside a double-quoted HTML attribute
+// (value="..."). Escapes quotes and angle brackets.
+function escAttr(s) {
+  return String(s == null ? '' : s)
+    .replaceAll('&', '&amp;').replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
 function flash(msg, isErr, id = 'flash') {
   const f = document.getElementById(id);
   if (!f) return;

@@ -235,6 +235,15 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
 .axis-text, .chart-tick { font-size: 10.5px; fill: var(--muted); }
 .grid-line { stroke: var(--border2); stroke-width: 1; stroke-dasharray: 3 3; }
 
+/* ---- admin config editor ---- */
+.cfggrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 20px; }
+.cfgfield { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.cfglabel { color: var(--muted); font-size: 12px; font-weight: 500; }
+.cfghint { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.cfgtoggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0; }
+.cfgtoggle input { width: auto; }
+.cfgtoggle span { font-size: 12.5px; font-weight: 600; color: var(--text); }
+
 /* ---------- login ---------- */
 body.auth { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
 .auth-card {

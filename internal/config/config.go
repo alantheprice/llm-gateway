@@ -10,8 +10,13 @@ import (
 )
 
 type GatewayCfg struct {
-	Port               int    `json:"port"`
-	TrustLocalNetworks bool   `json:"trust_local_networks"`
+	Port               int  `json:"port"`
+	TrustLocalNetworks bool `json:"trust_local_networks"`
+	// ModelsRequireAuth gates GET /v1/models. Default false: the catalog is
+	// public (OpenAI-compatible servers list models unauthenticated; some
+	// client UIs probe /v1/models before sending a key). Set true to gate it
+	// behind key/session/LAN trust like every other /v1 surface.
+	ModelsRequireAuth  bool   `json:"models_require_auth"`
 	APIKeysFile        string `json:"api_keys_file"`
 	InternalAPIKeyFile string `json:"internal_api_key_file"`
 	UsersFile          string `json:"users_file"`
@@ -75,6 +80,9 @@ type Config struct {
 	onReload []func(*Config)
 }
 
+// ApplyDefaults fills zero values the way the Python gateway defaults them.
+func (c *Config) ApplyDefaults() { c.applyDefaults() }
+
 // Defaults fill zero values the way the Python gateway defaults them.
 func (c *Config) applyDefaults() {
 	if c.Gateway.Port == 0 {
@@ -119,6 +127,56 @@ func Load(path string) (*Config, error) {
 	}
 	c.applyDefaults()
 	return &c, nil
+}
+
+// Save atomically persists the config to its file and updates the recorded
+// mtime so the hot-reload watcher doesn't re-apply our own write. 0600 like
+// the other runtime state files.
+func (c *Config) Save() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := c.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, c.path); err != nil {
+		return err
+	}
+	if st, err := os.Stat(c.path); err == nil {
+		c.mtime = st.ModTime()
+	}
+	return nil
+}
+
+// Path returns the config file path (admin UI write-back).
+func (c *Config) Path() string { return c.path }
+
+// Overlay deep-copies the config and merges rawJSON on top (partial-update
+// semantics: fields absent from rawJSON keep their values). The copy keeps
+// path/mtime so Save persists to the same file without tripping the
+// hot-reload watcher.
+func (c *Config) Overlay(rawJSON []byte) (*Config, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	blob, err := json.Marshal(c)
+	if err != nil {
+		return nil, err
+	}
+	nc := &Config{}
+	if err := json.Unmarshal(blob, nc); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(rawJSON, nc); err != nil {
+		return nil, err
+	}
+	nc.path = c.path
+	nc.mtime = c.mtime
+	nc.applyDefaults()
+	return nc, nil
 }
 
 // OnReload registers a callback fired after a successful hot reload.
