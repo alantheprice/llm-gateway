@@ -4,3 +4,4 @@ users.json
 usage.json
 *.log
 .tmp
+*.jar
