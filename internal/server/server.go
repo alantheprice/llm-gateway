@@ -96,6 +96,25 @@ func (s *Server) SetOps(ops OpsStore) {
 	s.muOps.Unlock()
 }
 
+// SyncUsageToOps mirrors the in-memory usage tallies (lifetime users map
+// + per-day buckets + per-key breakdowns) into the SQLite ops tables.
+// MAX()-merge makes it idempotent — call it every minute and at shutdown;
+// restarts then lose nothing. Best-effort: errors are returned, logged by
+// the caller.
+func (s *Server) SyncUsageToOps() error {
+	ops := s.Ops()
+	if ops == nil {
+		return nil
+	}
+	s.usage.Flush()
+	for _, r := range s.usage.OpsRows() {
+		if err := ops.UpsertUsageDaily(r.Day, r.User, r.Kind, r.Requests, r.Prompt, r.Cached, r.Output); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Ops returns the current ops store (or nil).
 func (s *Server) Ops() OpsStore {
 	s.muOps.RLock()

@@ -156,6 +156,54 @@ func (u *UsageStore) flushLocked() {
 	if !u.dirty {
 		return
 	}
+	// Merge the on-disk file's tallies into our map before writing: the
+	// in-memory map only holds users seen since boot, and a blind
+	// overwrite erased historical users on every restart (the "where did
+	// my per-key usage go" bug). MAX-merge keeps both sides' maxima —
+	// counters are monotone so this is exact.
+	if data, err := os.ReadFile(u.path); err == nil {
+		var disk UsageFile
+		if json.Unmarshal(data, &disk) == nil {
+			mergeUserUsage := func(mu, du *UserUsage) {
+				if du == nil || mu == nil || du == mu {
+					return
+				}
+				if du.Requests > mu.Requests {
+					mu.Requests = du.Requests
+				}
+				if du.PromptTokens > mu.PromptTokens {
+					mu.PromptTokens = du.PromptTokens
+				}
+				if du.OutputTokens > mu.OutputTokens {
+					mu.OutputTokens = du.OutputTokens
+				}
+				if du.CachedTokens > mu.CachedTokens {
+					mu.CachedTokens = du.CachedTokens
+				}
+			}
+			for name, du := range disk.Users {
+				if du == nil {
+					continue
+				}
+				mu, ok := u.Data.Users[name]
+				if !ok {
+					u.Data.Users[name] = du
+					continue
+				}
+				mergeUserUsage(mu, du)
+			}
+			for day, users := range disk.Daily {
+				dm := u.Data.Daily[day]
+				if dm == nil {
+					u.Data.Daily[day] = users
+					continue
+				}
+				for name, du := range users {
+					mergeUserUsage(dm[name], du)
+				}
+			}
+		}
+	}
 	data, err := json.MarshalIndent(u.Data, "", "  ")
 	if err == nil {
 		tmp := u.path + ".tmp"
@@ -171,6 +219,60 @@ func (u *UsageStore) flushLocked() {
 func lower(s string) string { return strings.ToLower(s) }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+// OpsRow: one flattened tally for the SQLite ops mirror.
+type OpsRow struct {
+	Day, User, Kind string
+	Requests        int
+	Prompt, Cached  int
+	Output          int
+}
+
+// OpsRows flattens every tally the store holds: per-day per-user per-kind,
+// per-day per-user per-key (kind = "key:<id>"), and lifetime per-user
+// per-key (day = "lifetime"). MAX()-merge on the SQLite side makes this
+// fully idempotent.
+func (u *UsageStore) OpsRows() []OpsRow {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]OpsRow, 0, 256)
+	add := func(day, user, kind string, t *KindTally) {
+		if t == nil || (t.Requests == 0 && t.PromptTokens == 0 && t.OutputTokens == 0) {
+			return
+		}
+		out = append(out, OpsRow{Day: day, User: user, Kind: kind,
+			Requests: t.Requests, Prompt: t.PromptTokens, Cached: t.CachedTokens, Output: t.OutputTokens})
+	}
+	today := time.Now().Format("2006-01-02")
+	// Lifetime per user: kinds + per-key.
+	for user, usr := range u.Data.Users {
+		if usr == nil {
+			continue
+		}
+		for kind, kt := range usr.Kinds {
+			add("lifetime", user, kind, kt)
+		}
+		for kid, kt := range usr.Keys {
+			add("lifetime", user, "key:"+kid, kt)
+		}
+	}
+	// Per-day per-user: kinds + per-key.
+	for day, users := range u.Data.Daily {
+		for user, usr := range users {
+			if usr == nil {
+				continue
+			}
+			for kind, kt := range usr.Kinds {
+				add(day, user, kind, kt)
+			}
+			for kid, kt := range usr.Keys {
+				add(day, user, "key:"+kid, kt)
+			}
+			_ = today
+		}
+	}
+	return out
+}
 
 // KeyUsage snapshots the per-key tallies for a username (auth.ListKeys merge).
 func (u *UsageStore) KeyUsage(username string) map[string]map[string]int {
