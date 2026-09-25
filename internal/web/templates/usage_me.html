@@ -31,7 +31,7 @@ async function load() {
     const labels = days.map(d => d.slice(5));
     const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
     if (mine.some(v => v > 0)) {
-      document.getElementById('mychart').innerHTML = Charts.barsMulti({
+      document.getElementById('mychart').innerHTML = Charts.linesMulti({
         series: [{name: 'tokens', color: c.trim(), values: labels.map((l, i) => ({label: l, value: mine[i]}))}],
         height: 180, format: Charts.fmtShort, yLabel: 'tokens per day'});
     } else {

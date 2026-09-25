@@ -61,6 +61,45 @@ const Charts = (() => {
     return legend + `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${g}</svg></div>`;
   }
 
+  // Multi-series line chart. series: [{name,color,values:[{label,value}]}]
+  // Points connected left→right; nulls/0-value gaps still plotted (continuity
+  // matters more than honesty at daily granularity). Hover = per-point title.
+  function linesMulti({ series, height = 220, format = fmtShort, yLabel = '' }) {
+    const W = 640, H = height, padL = 44, padB = 24;
+    const n = Math.max(...series.map(s => s.values.length), 2);
+    const max = niceMax(Math.max(1, ...series.flatMap(s => s.values.map(p => p.value))));
+    const step = (W - padL - 14) / (n - 1);
+    const yFor = v => H - padB - (v / max) * (H - padB - 10);
+    let g = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = 10 + (i / 4) * (H - padB - 10);
+      g += `<line class="grid-line" x1="${padL}" y1="${y}" x2="${W-10}" y2="${y}"/>`;
+      g += `<text x="${padL-6}" y="${y+4}" text-anchor="end" class="chart-tick">${fmtShort(max * (1 - i/4))}</text>`;
+    }
+    const labels = series[0] && series[0].values.map(p => p.label) || [];
+    const lblEvery = Math.ceil(n / 8);
+    labels.forEach((l, i) => {
+      if (i % lblEvery !== 0 && i !== n - 1) return;
+      const x = padL + i * step;
+      g += `<text x="${x}" y="${H-6}" text-anchor="middle" class="chart-tick">${esc(l)}</text>`;
+    });
+    for (const s of series) {
+      const pts = s.values.map((p, i) => `${padL + i*step},${yFor(p.value)}`).join(' ');
+      g += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" ` +
+           `stroke-linejoin="round" stroke-linecap="round"/>`;
+      s.values.forEach((p, i) => {
+        const x = padL + i * step, y = yFor(p.value);
+        g += `<circle cx="${x}" cy="${y}" r="2.5" fill="${s.color}"><title>${esc(s.name)} — ${esc(p.label)}: ${format(p.value)}</title></circle>`;
+      });
+    }
+    let legend = '<div class="chart-legend">';
+    for (const s of series) {
+      legend += `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)}</span>`;
+    }
+    legend += (yLabel ? `<span style="margin-left:auto">${esc(yLabel)}</span>` : '') + '</div>';
+    return legend + `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${g}</svg></div>`;
+  }
+
   // Single-metric sparkline (area + line)
   function sparkline({ values, color = '#3fb950', height = 60, format = fmtShort }) {
     const pts = values.filter(v => v != null);
@@ -74,5 +113,5 @@ const Charts = (() => {
       `</svg><div class="muted">max ${format(max)}</div></div>`;
   }
 
-  return { barsMulti, sparkline, fmtShort };
+  return { barsMulti, linesMulti, sparkline, fmtShort };
 })();

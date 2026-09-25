@@ -74,7 +74,7 @@ async function loadCharts() {
   // Energy: kWh bars
   const kwh = days.map(d => (r.data.energy_by_day[d] || {}).kwh || 0);
   const c1 = getComputedStyle(document.documentElement).getPropertyValue('--chart-1') || '#3fb950';
-  document.getElementById('energychart').innerHTML = Charts.barsMulti({
+  document.getElementById('energychart').innerHTML = Charts.linesMulti({
     series: [{name: 'kWh', color: c1.trim(),
               values: days.map((d, i) => ({label: labels[i], value: kwh[i]}))}],
     height: 220, format: v => v.toFixed(2), yLabel: 'kWh per day'});
@@ -93,7 +93,7 @@ async function loadCharts() {
     name: u, color: palette[i % palette.length],
     values: days.map(d => ({label: d.slice(5), value: (r.data.tokens_by_day[d] || {})[u] || 0}))
   }));
-  document.getElementById('tokenchart').innerHTML = Charts.barsMulti({
+  document.getElementById('tokenchart').innerHTML = Charts.linesMulti({
     series, height: 220, format: Charts.fmtShort, yLabel: 'tokens per day'});
 }
 

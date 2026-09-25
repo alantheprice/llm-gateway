@@ -143,6 +143,25 @@ func (u *UsageStore) KeyUsage(username string) map[string]map[string]int {
 	return out
 }
 
+// UsersSnapshot returns (all_time, today) per-user usage maps.
+func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsage) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	today := time.Now().Format("2006-01-02")
+	all := make(map[string]*UserUsage, len(u.Data.Users))
+	for k, v := range u.Data.Users {
+		cp := *v
+		all[k] = &cp
+	}
+	todays := u.Data.Daily[today]
+	out := make(map[string]*UserUsage, len(todays))
+	for k, v := range todays {
+		cp := *v
+		out[k] = &cp
+	}
+	return all, out
+}
+
 // User returns the caller's usage record (nil if unknown).
 func (u *UsageStore) User(username string) *UserUsage {
 	u.mu.Lock()

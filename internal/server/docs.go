@@ -209,6 +209,37 @@ func (s *Server) registerInferenceDocs() {
 				"401": {Description: "Missing/invalid key"},
 			},
 		},
+		{
+			OperationID: "usage-users", Method: http.MethodGet, Path: "/usage/users",
+			Summary:     "Per-user token accounting (admin)",
+			Description: "All-time and today per-user requests/tokens with per-key and per-kind breakdowns. Deliberately no per-user energy: NVML meters whole-GPU power.",
+			Tags:        []string{"observability"},
+			Security:    secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "Usage by user"},
+				"403": {Description: "Admin only"},
+			},
+		},
+		{
+			OperationID: "get-config", Method: http.MethodGet, Path: "/config",
+			Summary:  "Show current configuration (admin)",
+			Tags:     []string{"admin"},
+			Security: secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "Active config JSON"},
+				"403": {Description: "Admin only"},
+			},
+		},
+		{
+			OperationID: "reload-config", Method: http.MethodPost, Path: "/config/reload",
+			Summary:  "Reload configuration from disk (admin)",
+			Tags:     []string{"admin"},
+			Security: secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "reloaded or unchanged"},
+				"403": {Description: "Admin only"},
+			},
+		},
 	} {
 		op := op
 		s.registerBare(op)
