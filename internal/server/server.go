@@ -60,6 +60,8 @@ type Server struct {
 
 	peaks *PeakStore // per-backend high-water throughput (pricing basis)
 
+	costHistory *CostHistory // per-day actual cost + value (chart)
+
 	huma         huma.API
 	docHandler   http.Handler
 	uiKeys       map[string]string // username -> plaintext ui key (session lifetime)
@@ -86,6 +88,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		leader:       map[string]string{},
 		usage:        NewUsageStore(usagePath(cfg)),
 		peaks:        NewPeakStore(peaksPath(usagePath(cfg))),
+		costHistory:  NewCostHistory(costHistoryPath(usagePath(cfg))),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},

@@ -43,50 +43,28 @@ async function load() {
     ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'
     : '';
 
-  // Capacity basis strip.
-  const cb = d.capacity_basis;
-  if (cb) {
-    const pk = d.peaks || {};
-    const peakRows = Object.entries(pk).map(([url, b]) => {
-      const buckets = Object.entries(b.tg_by_context || {}).map(([k, v]) => k + ': ' + Math.round(v)).join(' · ');
-      return '<tr><td data-label="Backend"><code>' + esc(url) + '</code></td>' +
-        '<td data-label="Peak tg">' + (b.tg_tok_per_s_peak||0).toFixed(0) + ' tok/s</td>' +
-        '<td data-label="Peak pp">' + (b.pp_tok_per_s_peak||0).toFixed(0) + ' tok/s</td>' +
-        '<td data-label="Peaks by context" class="muted">' + (buckets || '—') + '</td></tr>';
-    }).join('');
-    document.getElementById('capacitybox').innerHTML =
-      '<div class="statgrid">' +
-      '<div class="stat"><div class="v">' + (cb.peak_fleet_tg_tok_per_s||0).toFixed(0) + ' tok/s</div><div class="l">measured fleet peak (decode)</div></div>' +
-      '<div class="stat"><div class="v">' + (cb.assumed_utilization_pct||33.3).toFixed(0) + '%</div><div class="l">assumed utilization (1/3 of peak)</div></div>' +
-      '<div class="stat"><div class="v">' + Math.round((cb.expected_tokens_per_day||0)/1e6) + 'M/day</div><div class="l">pricing volume basis</div></div>' +
-      '<div class="stat"><div class="v">' + Math.round((cb.avg_7d_daily_tokens||0)/1e6) + 'M/day</div><div class="l">trailing 7-day actual</div></div>' +
-      '</div>' +
-      (peakRows ? '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Peak decode</th><th>Peak prefill</th><th>Decode peak by context</th></tr></thead><tbody>' + peakRows + '</tbody></table></div>' : '') +
-      '<p class="muted" style="font-size:12px;margin:8px 0 0">Peaks are high-water marks from engine timings (per context bucket — decode slows as context fills), halving weekly when not re-observed. Fixed costs are amortized over 1/3 of peak sustained 24/7, floored at 25% of the 7-day actual.</p>';
-  }
+  // Price book + value-vs-cost chart + user value.
+  const pb = d.price_book || {};
+  document.getElementById('bookgrid').innerHTML =
+    '<div class="statgrid">' +
+    '<div class="stat"><div class="v">' + (pb.prompt_usd_per_m != null ? usd(pb.prompt_usd_per_m, 2) : 'not set') + '</div><div class="l">your price / 1M prompt</div></div>' +
+    '<div class="stat"><div class="v">' + (pb.cached_usd_per_m != null ? usd(pb.cached_usd_per_m, 2) : 'not set') + '</div><div class="l">your price / 1M cached</div></div>' +
+    '<div class="stat"><div class="v">' + (pb.output_usd_per_m != null ? usd(pb.output_usd_per_m, 2) : 'not set') + '</div><div class="l">your price / 1M generated</div></div>' +
+    '<div class="stat"><div class="v">' + usd(d.value_today, 2) + '</div><div class="l">value generated today (at your prices)</div></div>' +
+    '</div>';
 
-  // Recommended pricing + value attribution.
-  const p = d.recommended_pricing || {};
-  if (p.prompt_per_m_usd != null || p.output_per_m_usd != null) {
-    document.getElementById('pricingbox').innerHTML =
-      '<div class="statgrid">' +
-      '<div class="stat"><div class="v">' + usd(p.prompt_per_m_usd, 2) + '</div><div class="l">$ / 1M prompt (pp) — usage</div></div>' +
-      '<div class="stat"><div class="v">' + usd(p.output_per_m_usd, 2) + '</div><div class="l">$ / 1M generated (tg) — usage</div></div>' +
-      '<div class="stat"><div class="v">' + usd(p.cached_per_m_usd, 2) + '</div><div class="l">$ / 1M cached — usage</div></div>' +
-      '<div class="stat"><div class="v">' + usd(p.fixed_cost_usd_month, 0) + '/mo</div><div class="l">capacity fee (standing)</div></div>' +
-      '</div>' +
-      '<table class="mini"><tr><td></td><th>marginal = usage price</th><th>all-in reference at basis</th></tr>' +
-      '<tr><th>prompt</th><td><strong>' + usd(p.prompt_per_m_usd, 2) + '</strong></td><td>' + usd(p.prompt_per_m_usd + (p.fixed_prompt_per_m_usd||0), 2) + '</td></tr>' +
-      '<tr><th>generated</th><td><strong>' + usd(p.output_per_m_usd, 2) + '</strong></td><td>' + usd(p.output_per_m_usd + (p.fixed_output_per_m_usd||0), 2) + '</td></tr>' +
-      '</table>' +
-      '<p class="muted" style="font-size:12px;margin:8px 0 0">Usage prices = marginal cost (' +
-      'GPU energy above idle; pp at ~' + Math.round(p.fleet_pp_tok_per_s||0).toLocaleString() + ' tok/s, tg at ~' + Math.round(p.fleet_tg_tok_per_s||0).toLocaleString() +
-      ' tok/s, split by GPU-time — generated tokens hold the card far longer). Margin: ' + (p.margin_pct > 0 ? '+' + p.margin_pct + '%' : 'break-even') + '. ' +
-      'Fixed cost (capex + overhead + idle, ' + usd(p.fixed_cost_usd_today, 2) + '/day) accrues per HOUR, not per token, so it is recovered as a standing ' +
-      'capacity fee — NOT baked into the per-token price. For cloud-comparison only: all-in $/M at the basis volume is usage + ' + usd(p.fixed_prompt_per_m_usd, 2) +
-      '/M; that add-on is hyperbolic in utilization (halves if volume doubles). Cached tokens: usage prompt −' + (p.cache_discount_pct||75) + '%.</p>';
+  const h = d.cost_history || {};
+  const hd = h.days || [];
+  if (hd.length) {
+    const labels = hd.map(r => r.day.slice(5));
+    const costSeries = { name: 'actual cost', color: '#f85149',
+      values: hd.map(r => ({label: r.day.slice(5), value: Math.round((r.total_usd)*1000)/1000})) };
+    const valSeries = { name: 'value (your prices)', color: '#3fb950',
+      values: hd.map(r => ({label: r.day.slice(5), value: Math.round((r.value_usd)*1000)/1000})) };
+    document.getElementById('valuechart').innerHTML = Charts.linesMulti({
+      series: [costSeries, valSeries], height: 240, format: Charts.fmtShort, yLabel: 'USD/day'});
   } else {
-    document.getElementById('pricingbox').innerHTML = '<p class="muted">No tokens served today — no price to recommend yet.</p>';
+    document.getElementById('valuechart').innerHTML = '<p class="muted">History builds once a day completes — first row lands tonight.</p>';
   }
 
   const uv = Object.entries(d.user_value_today || {}).sort((a,b) => b[1]-a[1]);
@@ -144,13 +122,15 @@ document.addEventListener('DOMContentLoaded', load);
   <div class="statgrid" id="fleetstats"></div>
 
   <div class="card">
-    <h2>Capacity basis</h2>
-    <div id="capacitybox"><p class="muted">Loading…</p></div>
+    <h2>Your price book</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">What the service is worth, in your judgment — set in Config → Costs &amp; hosts. The gateway never derives these.</p>
+    <div id="bookgrid"><p class="muted">Loading…</p></div>
   </div>
 
   <div class="card">
-    <h2>Recommended pricing</h2>
-    <div id="pricingbox"><p class="muted">Loading…</p></div>
+    <h2>Value vs actual cost — daily</h2>
+    <div id="valuechart"><p class="muted">Loading…</p></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Red: what the fleet actually cost that day (GPU energy + host overhead + capex accrual). Green: what the day's traffic would have cost at your prices. Green above red = the system is paying for itself.</p>
   </div>
 
   <div class="card">

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"llmgateway/internal/config"
 )
 
 // limitTestServer: server + a bob key, no backends (resolve 404s after the
@@ -109,70 +112,42 @@ func TestDailyLimitExemptions(t *testing.T) {
 	_ = key
 }
 
-func TestComputePricingV2MarginalFixed(t *testing.T) {
-	// One host: 10 kWh GPU today, 12h elapsed, 40W idle (0.48 kWh idle).
-	// Rate 0.125 -> marginal = (10-0.48)*0.125 = $1.19.
-	// Fixed today = $10 (capital+overhead+idle energy).
-	in := PricingInputs{
-		GPUKwhToday: []float64{10}, GPUIdleWatts: []float64{40},
-		RateUSDPerKwh: 0.125, DayElapsedHours: 12,
-		FixedToday: 10,
-		PPtokPerS:  4000, TGtokPerS: 500,
-		PromptTokens: 1_000_000, OutputTokens: 1_000_000,
-		ExpectedTokensPerDay: 50_000_000,
-		CacheDiscountPct:     75,
+func TestApplyBookPrices(t *testing.T) {
+	pb := config.PriceBook{PromptUSDPerM: 0.25, CachedUSDPerM: 0.05, OutputUSDPerM: 2.0}
+	// 1M computed prompt + 1M cached + 1M output
+	v := applyBookPrices(pb, 2_000_000, 1_000_000, 1_000_000)
+	want := 0.25*1 + 0.05*1 + 2.0*1 // cached carved out of prompt at the cached rate
+	if math.Abs(v-want) > 1e-9 {
+		t.Fatalf("value = %v, want %v", v, want)
 	}
-	p := ComputePricingV2(in)
-	if p.MarginalToday < 1.18 || p.MarginalToday > 1.20 {
-		t.Fatalf("marginal = %v, want 1.19", p.MarginalToday)
-	}
-	// GPU-time: pp 250s, tg 2000s -> pp share 1/9.
-	// marginal pp = 1.19*(1/9)/1M*1e6 = $0.13/M; tg = 1.19*(8/9) = $1.06/M.
-	if p.MarginalPPPerM < 0.12 || p.MarginalPPPerM > 0.14 {
-		t.Fatalf("marginal pp = %v, want 0.13", p.MarginalPPPerM)
-	}
-	if p.MarginalTGPerM < 1.05 || p.MarginalTGPerM > 1.07 {
-		t.Fatalf("marginal tg = %v, want 1.06", p.MarginalTGPerM)
-	}
-	// Usage price = marginal (+ margin). Fixed is NOT in the per-token
-	// price — it's a capacity fee, time-based like the cost itself.
-	if p.PromptPerM != 0.13 || p.OutputPerM != 1.06 {
-		t.Fatalf("usage prices pp=%v tg=%v, want 0.13/1.06 (marginal only)", p.PromptPerM, p.OutputPerM)
-	}
-	// Fixed reference add-on at basis volume ($10 / 50M = $0.20/M) — a
-	// REFERENCE, not part of the price. Hyperbolic: halves if volume
-	// doubles.
-	if p.FixedPPPerM != 0.2 || p.FixedTGPerM != 0.2 {
-		t.Fatalf("fixed reference pp=%v tg=%v, want 0.20/0.20", p.FixedPPPerM, p.FixedTGPerM)
-	}
-	if p.FixedMonthly != 300 {
-		t.Fatalf("fixed monthly = %v, want 300", p.FixedMonthly)
-	}
-	// Additivity of the REFERENCE all-in: usage price + fixed reference
-	// equals the all-in at basis volume (marginal unaffected by volume).
-	if math.Abs((p.PromptPerM+p.FixedPPPerM)-(p.MarginalPPPerM+p.FixedPPPerM)) > 0.011 {
-		t.Fatal("usage price must equal marginal")
-	}
-	// Cached = usage prompt price − 75% (0.13 × 0.25 = 0.03).
-	if p.CachedPerM < 0.02 || p.CachedPerM > 0.04 {
-		t.Fatalf("cached = %v, want 0.03", p.CachedPerM)
-	}
-	if p.FixedMonthly != 300 {
-		t.Fatalf("fixed monthly = %v, want 300", p.FixedMonthly)
+	// Cached > prompt would be odd but must not go negative.
+	v = applyBookPrices(pb, 500_000, 800_000, 0) // computed = -300k clamps? no — operator's problem, but value must not be NaN
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		t.Fatal("book prices must not produce NaN/Inf")
 	}
 }
 
-func TestExpectedVolume(t *testing.T) {
-	if ExpectedVolume(0, 42e6) != 42e6 {
-		t.Fatal("auto should use 7-day avg")
+func TestCostHistoryFreezesTodayOnly(t *testing.T) {
+	dir := t.TempDir()
+	ch := NewCostHistory(filepath.Join(dir, "cost_history.json"))
+	today := time.Now().Format("2006-01-02")
+	ch.RecordDay(today, CostDay{EnergyUSD: 1.0, Tokens: 100, ValueUSD: 2.0})
+	ch.RecordDay("2020-01-01", CostDay{EnergyUSD: 99}) // past day: rejected
+	if got := ch.Days[today]; got.EnergyUSD != 1.0 {
+		t.Fatalf("today not recorded: %+v", got)
 	}
-	if ExpectedVolume(10e6, 42e6) != 10e6 {
-		t.Fatal("explicit config must win")
+	if _, ok := ch.Days["2020-01-01"]; ok {
+		t.Fatal("past day must be frozen out")
 	}
-	if ExpectedVolume(0, 0) != 1e6 {
-		t.Fatal("empty history should floor at 1M")
+	// Reload from disk.
+	ch2 := NewCostHistory(filepath.Join(dir, "cost_history.json"))
+	if got := ch2.Days[today]; got.ValueUSD != 2.0 {
+		t.Fatalf("persisted row lost: %+v", got)
 	}
-	if ExpectedVolume(0, 500e3) != 1e6 {
-		t.Fatal("tiny avg should floor at 1M")
+	// Series is sorted and capped.
+	days, m := ch.Series()
+	if len(days) != 1 || days[0] != today || m[today].Tokens != 100 {
+		t.Fatalf("series = %v", days)
 	}
 }
+

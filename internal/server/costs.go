@@ -12,9 +12,14 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"llmgateway/internal/config"
 )
 
 // HostCost is the computed cost picture for one configured host.
@@ -248,14 +253,8 @@ func (s *Server) usageCostsPayload() map[string]any {
 			idleByHost[ip] = w
 		}
 	}
-	margin := s.cfg.PricingMarginPct
-	expCfg := s.cfg.PricingExpectedTokensPerDay
-	cacheDisc := s.cfg.PricingCacheDiscountPct
-	if cacheDisc <= 0 {
-		cacheDisc = 75
-	}
+	book := s.cfg.PriceBook
 	s.mu.Unlock()
-	_ = margin
 
 	gpuKwhToday := make([]float64, len(hosts))
 	gpuCostToday := make([]float64, len(hosts))
@@ -325,42 +324,23 @@ func (s *Server) usageCostsPayload() map[string]any {
 		fleetPerM = math.Round(totalToday/tokens*1e6*100) / 100
 	}
 
-	// Recommended pricing: two-layer model. Marginal = GPU energy above
-	// idle (per-host idle allowance), split pp/tg by GPU-time. Fixed =
-	// capex + overhead + idle energy, spread over expected daily volume
-	// (config knob, else trailing 7-day average, floor 1M).
+	// Value at the operator's book prices vs actual cost today.
 	todays := s.usage.TodaySnapshot()
-	var pTok, oTok, cTok float64
-	for _, t := range todays {
-		pTok += float64(t.PromptTokens)
-		oTok += float64(t.OutputTokens)
-		cTok += float64(t.CachedTokens)
-	}
-	s.mu.Lock()
-	var ppTPS, tgTPS float64
-	for _, u := range backends {
-		if payload, ok := s.lastMetrics[u]; ok {
-			ppTPS += usageNum(payload, "throughput", "prefill_tok_per_s")
-			tgTPS += usageNum(payload, "throughput", "decode_tok_per_s")
+	var pTok, oTok, cTok int
+	var valueToday float64
+	userValue := map[string]float64{}
+	for name, t := range todays {
+		pTok += t.PromptTokens
+		oTok += t.OutputTokens
+		cTok += t.CachedTokens
+		v := applyBookPrices(book, t.PromptTokens, t.CachedTokens, t.OutputTokens)
+		valueToday += v
+		if v > 0 {
+			userValue[name] = math.Round(v*1000) / 1000
 		}
 	}
-	s.mu.Unlock()
-	// Throughput windows are 5s snapshots — idle windows read ~0 and near-
-	// idle reads a few tok/s, either of which wrecks the GPU-time split.
-	// Use peak capacity instead: per-request high-water × lanes = the
-	// fleet's measured ceiling (decayed), the same basis the expected-
-	// volume calculation uses below. (peakCapacity takes s.mu itself —
-	// must run unlocked.)
-	ppPeak, tgPeak := s.peakCapacity()
-	if tgPeak > 0 {
-		ppTPS, tgTPS = ppPeak, tgPeak
-	} else {
-		ppTPS, tgTPS = s.lastGoodPP, s.lastGoodTG
-	}
 
-	// Fixed = total all-in today minus marginal GPU energy (capital +
-	// overhead + idle energy). Idle-kWh already moves to fixed inside
-	// ComputePricingV2, so pass totals and let it do the split.
+	// Freeze today's row into the cost history (chart accumulates daily).
 	var gpuCost, overhead, capital float64
 	for _, h := range hostCosts {
 		gpuCost += h.GPUCostToday
@@ -368,48 +348,13 @@ func (s *Server) usageCostsPayload() map[string]any {
 		capital += h.CapitalToday
 	}
 	now := time.Now()
-	hoursElapsed := float64(now.Hour()) + float64(now.Minute())/60 + float64(now.Second())/3600
-
-	// Trailing 7-day average daily tokens for the auto expected-volume.
-	avg7 := s.usage.AvgDailyTokens(7)
-	// Capacity basis: 1/3 of measured peak capacity sustained 24/7 —
-	// per-request peak decode × lanes × 86400 ÷ 3.
-	ppPeak, tgPeak = s.peakCapacity()
-	peakDaily := tgPeak * 86400 / 3
-	// The explicit config knob still wins; otherwise capacity basis,
-	// floored at 25% of the 7-day actual so a quiet week doesn't over-amortize.
-	auto := math.Max(peakDaily, avg7*0.25)
-	if auto < 1e6 {
-		auto = 1e6
-	}
-	expected := ExpectedVolume(expCfg, auto)
-
-	pricing := ComputePricingV2(PricingInputs{
-		GPUKwhToday: gpuKwh, GPUIdleWatts: idleW, RateUSDPerKwh: rate,
-		DayElapsedHours: hoursElapsed,
-		FixedToday:      gpuCost + overhead + capital,
-		PPtokPerS:       ppTPS, TGtokPerS: tgTPS,
-		PromptTokens:         pTok - cTok, // computed prompt only (cached used no prefill compute)
-		CachedTokens:         cTok,
-		OutputTokens:         oTok,
-		ExpectedTokensPerDay: expected,
-		CacheDiscountPct:     cacheDisc,
-		MarginPct:            margin,
+	s.costHistory.RecordDay(now.Format("2006-01-02"), CostDay{
+		EnergyUSD:   math.Round(gpuCost*10000) / 10000,
+		OverheadUSD: math.Round(overhead*10000) / 10000,
+		CapitalUSD:  math.Round(capital*10000) / 10000,
+		Tokens:      int64(pTok + oTok),
+		ValueUSD:    math.Round(valueToday*10000) / 10000,
 	})
-
-	// Value attribution at floor prices (cached at the cached rate).
-	userValue := map[string]float64{}
-	if pricing.PromptPerM > 0 || pricing.OutputPerM > 0 {
-		pp := pricing.PromptPerM / (1 + margin/100)
-		tg := pricing.OutputPerM / (1 + margin/100)
-		cc := pricing.CachedPerM / (1 + margin/100)
-		for name, t := range todays {
-			v := pp*float64(t.PromptTokens-t.CachedTokens)/1e6 + cc*float64(t.CachedTokens)/1e6 + tg*float64(t.OutputTokens)/1e6
-			if v > 0 {
-				userValue[name] = math.Round(v*1000) / 1000
-			}
-		}
-	}
 
 	// Unmatched backends (visible so admins notice uncounted GPU hosts).
 	configured := map[string]bool{}
@@ -438,18 +383,32 @@ func (s *Server) usageCostsPayload() map[string]any {
 			"projected_monthly_usd":     math.Round(totalToday*30*100) / 100,
 			"gpu_only_usd_per_m_tokens": gpuOnlyPerM(hostCosts, tokens),
 		},
-		"recommended_pricing": pricing,
-		"user_value_today":    userValue,
-		"capacity_basis": map[string]any{
-			"peak_fleet_tg_tok_per_s": math.Round(tgPeak*10) / 10,
-			"peak_daily_tokens":       math.Round(peakDaily),
-			"assumed_utilization_pct": 33.3,
-			"avg_7d_daily_tokens":     math.Round(avg7),
-			"expected_tokens_per_day": math.Round(expected),
-		},
-		"peaks":        s.peaks.Snapshot(),
-		"gateway_port": port,
+		"price_book":       book,
+		"user_value_today": userValue,
+		"value_today":      math.Round(valueToday*100) / 100,
+		"cost_history":     s.costHistorySeries(),
+		"peaks":            s.peaks.Snapshot(),
+		"gateway_port":     port,
 	}
+}
+
+// costHistorySeries: ordered days with cost + value for the chart.
+func (s *Server) costHistorySeries() map[string]any {
+	days, m := s.costHistory.Series()
+	rows := make([]map[string]any, 0, len(days))
+	for _, d := range days {
+		c := m[d]
+		rows = append(rows, map[string]any{
+			"day":          d,
+			"energy_usd":   c.EnergyUSD,
+			"overhead_usd": c.OverheadUSD,
+			"capital_usd":  c.CapitalUSD,
+			"total_usd":    c.EnergyUSD + c.OverheadUSD + c.CapitalUSD,
+			"tokens":       c.Tokens,
+			"value_usd":    c.ValueUSD,
+		})
+	}
+	return map[string]any{"days": rows}
 }
 
 func gpuOnlyPerM(hosts []HostCost, tokens float64) any {
@@ -466,156 +425,101 @@ func gpuOnlyPerM(hosts []HostCost, tokens float64) any {
 	return math.Round(gpu/tokens*1e6*100) / 100
 }
 
-// PricingRecommendation: what to charge per 1M prompt (pp), generated (tg),
-// and cached tokens so revenue covers cost. Two-layer model:
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// ---- value-vs-cost: operator's price book ----
 //
-//   - Marginal: GPU energy above idle — the true incremental cost of the
-//     tokens actually processed today — split pp/tg by measured GPU-time.
-//   - Fixed: capex amortization + host overhead + idle GPU power. These
-//     accrue whether or not tokens flow, so they're spread over an
-//     EXPECTED daily volume (config pricing_expected_tokens_per_day; 0 =
-//     trailing 7-day average, floor 1M) — not today's actuals, which made
-//     the price swing wildly with light days.
-//
-// Cached tokens bypass prefill compute (≈no marginal energy) but occupy KV
-// memory — they're priced as prompt-minus-discount
-// (pricing_cache_discount_pct, default 75 → cached costs 25% of prompt).
-type PricingRecommendation struct {
-	// Recommended (what to charge).
-	PromptPerM float64 `json:"prompt_per_m_usd"`
-	OutputPerM float64 `json:"output_per_m_usd"`
-	CachedPerM float64 `json:"cached_per_m_usd"`
-	// Marginal layer (energy above idle, GPU-time split).
-	MarginalPPPerM float64 `json:"marginal_prompt_per_m_usd"`
-	MarginalTGPerM float64 `json:"marginal_output_per_m_usd"`
-	MarginalToday  float64 `json:"marginal_cost_usd_today"`
-	// Fixed layer.
-	FixedToday     float64 `json:"fixed_cost_usd_today"`
-	FixedMonthly   float64 `json:"fixed_cost_usd_month"`
-	ExpectedTokDay float64 `json:"expected_tokens_per_day"`
-	FixedPPPerM    float64 `json:"fixed_prompt_per_m_usd"`
-	FixedTGPerM    float64 `json:"fixed_output_per_m_usd"`
-	// Basis.
-	PPtokPerS     float64 `json:"fleet_pp_tok_per_s"`
-	TGtokPerS     float64 `json:"fleet_tg_tok_per_s"`
-	PromptTokens  float64 `json:"prompt_tokens_today"`
-	CachedTokens  float64 `json:"cached_tokens_today"`
-	OutputTokens  float64 `json:"output_tokens_today"`
-	CacheDiscount float64 `json:"cache_discount_pct"`
-	MarginPct     float64 `json:"margin_pct"`
-	Note          string  `json:"note"`
+// The gateway never derives prices. The operator sets prompt/cached/output
+// prices ($/1M) in the config; "value" = what traffic would have cost at
+// those prices, charted against actual daily cost (energy + overhead +
+// capex). The judgement of what the service is worth stays with the
+// operator; the gateway just does the accounting.
+
+// applyBookPrices prices one day's token tallies at book rates.
+func applyBookPrices(pb config.PriceBook, prompt, cached, output int) float64 {
+	return pb.PromptUSDPerM*float64(prompt-cached)/1e6 +
+		pb.CachedUSDPerM*float64(cached)/1e6 +
+		pb.OutputUSDPerM*float64(output)/1e6
 }
 
-// PricingInputs bundles the facts ComputePricing needs (pure, testable).
-type PricingInputs struct {
-	// GPU energy + rate for the marginal split.
-	GPUKwhToday     []float64 // per host
-	GPUIdleWatts    []float64 // per host
-	RateUSDPerKwh   float64
-	DayElapsedHours float64
-	// Fixed costs (from ComputeCosts totals).
-	FixedToday float64 // capital + overhead + idle energy
-	// Throughput + volumes.
-	PPtokPerS, TGtokPerS float64
-	PromptTokens         float64 // computed (non-cached) prompt tokens today
-	CachedTokens         float64
-	OutputTokens         float64
-	ExpectedTokensPerDay float64 // 0 = caller resolved the auto value
-	CacheDiscountPct     float64 // share OFF the prompt price for cached
-	MarginPct            float64
+// CostHistory: per-day actual cost + value, persisted. Engines keep only
+// 31 days of energy buckets and nothing for overhead/capex, so the gateway
+// freezes each day's numbers once the day completes — that's what makes
+// the value-vs-cost chart cumulative over time.
+type CostHistory struct {
+	mu       sync.Mutex
+	path     string
+	Days     map[string]CostDay `json:"days"`
+	lastSave time.Time
 }
 
-// ExpectedVolume resolves the expected-daily-volume knob: explicit config,
-// else the trailing 7-day average (floor 1M so fixed cost doesn't explode
-// on an empty week).
-func ExpectedVolume(configured, avg7d float64) float64 {
-	if configured > 0 {
-		return configured
-	}
-	if avg7d > 1e6 {
-		return avg7d
-	}
-	return 1e6
+// CostDay is one frozen day of fleet actuals.
+type CostDay struct {
+	EnergyUSD   float64 `json:"energy_usd"`   // GPU energy (engine NVML)
+	OverheadUSD float64 `json:"overhead_usd"` // host watts x rate
+	CapitalUSD  float64 `json:"capital_usd"`  // capex accrual
+	Tokens      int64   `json:"tokens"`
+	ValueUSD    float64 `json:"value_usd"` // at the book prices in force that day
 }
 
-func ComputePricingV2(in PricingInputs) PricingRecommendation {
-	p := PricingRecommendation{
-		PPtokPerS: in.PPtokPerS, TGtokPerS: in.TGtokPerS,
-		PromptTokens: in.PromptTokens, CachedTokens: in.CachedTokens,
-		OutputTokens:  in.OutputTokens,
-		CacheDiscount: in.CacheDiscountPct, MarginPct: in.MarginPct,
-		ExpectedTokDay: in.ExpectedTokensPerDay,
-		Note: "Marginal = GPU energy above idle (what each extra token truly costs), split pp/tg by measured GPU-time. " +
-			"Fixed = capex + host overhead + idle power, spread over the expected daily volume — not today's actuals. " +
-			"Cached tokens skip prefill compute but hold KV memory, so they price at prompt minus the cache discount.",
-	}
-
-	// --- marginal layer ---
-	var marginal float64
-	for i, kwh := range in.GPUKwhToday {
-		idle := 40.0
-		if i < len(in.GPUIdleWatts) {
-			idle = in.GPUIdleWatts[i]
-		}
-		idleKwh := idle / 1000 * in.DayElapsedHours
-		if over := kwh - idleKwh; over > 0 {
-			marginal += over * in.RateUSDPerKwh
+func NewCostHistory(path string) *CostHistory {
+	c := &CostHistory{path: path, Days: map[string]CostDay{}}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, c)
+		if c.Days == nil {
+			c.Days = map[string]CostDay{}
 		}
 	}
-	p.MarginalToday = round2(marginal)
-
-	// GPU-time split of marginal between prefill and decode.
-	ppSecs, tgSecs := 0.0, 0.0
-	if in.PPtokPerS > 0 {
-		ppSecs = in.PromptTokens / in.PPtokPerS
-	}
-	if in.TGtokPerS > 0 {
-		tgSecs = in.OutputTokens / in.TGtokPerS
-	}
-	mult := 1 + in.MarginPct/100
-	if ppSecs+tgSecs > 0 {
-		ppShare := ppSecs / (ppSecs + tgSecs)
-		if in.PromptTokens > 0 {
-			p.MarginalPPPerM = round2(marginal * ppShare / in.PromptTokens * 1e6 * mult)
-		}
-		if in.OutputTokens > 0 {
-			p.MarginalTGPerM = round2(marginal * (1 - ppShare) / in.OutputTokens * 1e6 * mult)
-		}
-	}
-
-	// --- usage prices + capacity fee: two separate billing axes ---
-	//
-	// Fixed cost (capex + overhead + idle) accrues per HOUR, not per
-	// token — expressed per 1M tokens it's hyperbolic in utilization
-	// (÷140M tok/day at peak = +$0.09/M; ÷14M at 10% = +$0.86/M), so a
-	// flat per-token fixed add is the wrong shape. The scheme is:
-	//   usage price = marginal (+ margin)      — recovers the cost of
-	//                                            actually serving tokens
-	//   capacity fee = fixed per day/month     — recovers having the
-	//                                            hardware available, time-
-	//                                            based like the cost itself
-	// All-in $/M at an assumed utilization stays available as a REFERENCE
-	// (FixedPPPerM/FixedTGPerM = the add-on at the basis volume) for
-	// one-number comparisons against cloud pricing.
-	p.FixedToday = round2(in.FixedToday)
-	p.FixedMonthly = round2(in.FixedToday * 30)
-	p.PromptPerM = p.MarginalPPPerM
-	p.OutputPerM = p.MarginalTGPerM
-	if in.MarginPct > 0 {
-		p.PromptPerM = round2(p.MarginalPPPerM * mult)
-		p.OutputPerM = round2(p.MarginalTGPerM * mult)
-	}
-	// Cached: usage prompt price minus the cache discount (default 75%).
-	p.CachedPerM = round2(p.PromptPerM * (1 - in.CacheDiscountPct/100))
-	if in.ExpectedTokensPerDay > 0 {
-		ref := round2(in.FixedToday / in.ExpectedTokensPerDay * 1e6)
-		p.FixedPPPerM = ref
-		p.FixedTGPerM = ref
-	}
-	return p
+	return c
 }
 
-func round2(v float64) float64 { return math.Round(v*100) / 100 } // peakCapacity: fleet throughput ceiling = per-request peak decode/prefill
+func (c *CostHistory) saveLocked() {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := c.path + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		os.Rename(tmp, c.path)
+	}
+}
+
+// RecordDay upserts a day's row. Past days are frozen (only today writes).
+func (c *CostHistory) RecordDay(day string, d CostDay) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if day != time.Now().Format("2006-01-02") {
+		return
+	}
+	c.Days[day] = d
+	if time.Since(c.lastSave) > 30*time.Second {
+		c.saveLocked()
+		c.lastSave = time.Now()
+	}
+}
+
+// Series returns the last 90 days in order.
+func (c *CostHistory) Series() ([]string, map[string]CostDay) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	days := make([]string, 0, len(c.Days))
+	for d := range c.Days {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	if len(days) > 90 {
+		days = days[len(days)-90:]
+	}
+	out := make(map[string]CostDay, len(days))
+	for _, d := range days {
+		out[d] = c.Days[d]
+	}
+	return days, out
+}
+
+func costHistoryPath(usagePath string) string {
+	return filepath.Join(filepath.Dir(usagePath), "cost_history.json")
+} // peakCapacity: fleet throughput ceiling = per-request peak decode/prefill
 // × the backend's lane count, summed over backends. A 6-lane GPU decoding
 // ~160 tok/s per stream delivers ~960 tok/s; that's the number a
 // utilization assumption applies to.

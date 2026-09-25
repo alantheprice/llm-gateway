@@ -64,6 +64,14 @@ type CacheCfg struct {
 	TTL int `json:"ttl"`
 }
 
+// PriceBook: operator-set prices ($/1M tokens) for value-vs-cost
+// reporting. These are YOUR numbers — the gateway never derives them.
+type PriceBook struct {
+	PromptUSDPerM float64 `json:"prompt_usd_per_m"` // non-cached prompt
+	CachedUSDPerM float64 `json:"cached_usd_per_m"` // cached prompt tokens
+	OutputUSDPerM float64 `json:"output_usd_per_m"` // generated tokens
+}
+
 // HostCfg describes one physical box (1 IP = 1 box) for full-cost
 // accounting: GPU energy comes from the engines' NVML; overhead watts and
 // capex amortization are declared here (SPEC §11).
@@ -89,14 +97,10 @@ type Config struct {
 	// Full-cost accounting (admin /usage/costs):
 	ElectricityRate float64   `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
 	Hosts           []HostCfg `json:"hosts"`
-	// Recommended-pricing margin (% over the cost floor; 0 = break-even).
-	PricingMarginPct float64 `json:"pricing_margin_pct"`
-	// Expected daily volume for fixed-cost amortization. 0 = auto
-	// (trailing 7-day average, floor 1M tokens/day).
-	PricingExpectedTokensPerDay float64 `json:"pricing_expected_tokens_per_day"`
-	// Share OFF the prompt price for cached tokens (default 75 → cached
-	// costs 25% of prompt).
-	PricingCacheDiscountPct float64 `json:"pricing_cache_discount_pct"`
+	// PriceBook: the operator's own per-token prices ($/1M) — what the
+	// service is "worth" for value-vs-cost reporting. Not derived; you
+	// set these. 0 = unpriced (value chart reads zero until set).
+	PriceBook PriceBook `json:"price_book"`
 
 	path     string
 	mtime    time.Time

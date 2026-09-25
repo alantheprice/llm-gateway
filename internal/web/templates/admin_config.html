@@ -137,15 +137,16 @@ function render(c) {
     field('remote_ports (comma-separated)', txt('d_rports', (d.remote_ports||[]).join(', ')));
 
   // Costs & hosts.
+  const pbook = c.price_book || {};
   document.getElementById('rategrid').innerHTML =
     field('electricity_rate_usd_per_kwh', num('e_rate', c.electricity_rate_usd_per_kwh ?? 0.125, 0.005),
       'Used for overhead energy; engines carry their own rate for GPU energy.') +
-    field('pricing_expected_tokens_per_day', num('e_expected', c.pricing_expected_tokens_per_day ?? 0, 1e6),
-      'Fixed-cost amortization volume. 0 = auto (7-day average, floor 1M/day).') +
-    field('pricing_cache_discount_pct', num('e_cachedisc', c.pricing_cache_discount_pct ?? 75, 5),
-      'Share OFF the prompt price for cached tokens (they skip compute, but hold KV memory).') +
-    field('pricing_margin_pct', num('e_margin', c.pricing_margin_pct ?? 0, 5),
-      'Markup over cost floor. 0 = break-even pricing.');
+    field('price_book.prompt_usd_per_m', num('e_pb_pp', pbook.prompt_usd_per_m ?? 0, 0.05),
+      'Your price for non-cached prompt tokens ($/1M) — for the value-vs-cost chart.') +
+    field('price_book.cached_usd_per_m', num('e_pb_cached', pbook.cached_usd_per_m ?? 0, 0.05),
+      'Your price for cached prompt tokens ($/1M).') +
+    field('price_book.output_usd_per_m', num('e_pb_tg', pbook.output_usd_per_m ?? 0, 0.05),
+      'Your price for generated tokens ($/1M).');
   document.getElementById('hostsbox').innerHTML = (c.hosts||[]).map(hostRow).join('') ||
     '<p class="muted">No hosts configured — the Costs page shows GPU energy only.</p>';
   wireHostDels();
@@ -249,9 +250,11 @@ function collect() {
       backend_max_seqs: bms,
     },
     electricity_rate_usd_per_kwh: parseFloat(val('e_rate')) || 0.125,
-    pricing_expected_tokens_per_day: parseFloat(val('e_expected')) || 0,
-    pricing_cache_discount_pct: parseFloat(val('e_cachedisc')) || 75,
-    pricing_margin_pct: parseFloat(val('e_margin')) || 0,
+    price_book: {
+      prompt_usd_per_m: parseFloat(val('e_pb_pp')) || 0,
+      cached_usd_per_m: parseFloat(val('e_pb_cached')) || 0,
+      output_usd_per_m: parseFloat(val('e_pb_tg')) || 0,
+    },
     hosts,
     model_pools,
     overflow_pairs,

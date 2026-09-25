@@ -6,3 +6,4 @@ usage.json
 .tmp
 *.jar
 peaks.json
+cost_history.json
