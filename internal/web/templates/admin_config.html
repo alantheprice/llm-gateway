@@ -30,6 +30,8 @@ function hostRow(h) {
     field('hardware_cost_usd', num('hardware_cost_usd', h.hardware_cost_usd ?? 0, 10), 'Original purchase price.') +
     field('purchased', '<input name="purchased" type="date" value="' + escAttr(h.purchased||'') + '">') +
     field('amortize_years', num('amortize_years', h.amortize_years ?? 3, 0.5), 'Straight-line term.') +
+    field('gpu_idle_watts', num('gpu_idle_watts', h.gpu_idle_watts ?? 40, 10),
+      'Idle draw per GPU — the part of GPU energy that runs whether or not tokens flow (fixed layer).') +
     '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('host') + '</div>' +
     '</div></div>';
 }
@@ -137,7 +139,13 @@ function render(c) {
   // Costs & hosts.
   document.getElementById('rategrid').innerHTML =
     field('electricity_rate_usd_per_kwh', num('e_rate', c.electricity_rate_usd_per_kwh ?? 0.125, 0.005),
-      'Used for overhead energy; engines carry their own rate for GPU energy.');
+      'Used for overhead energy; engines carry their own rate for GPU energy.') +
+    field('pricing_expected_tokens_per_day', num('e_expected', c.pricing_expected_tokens_per_day ?? 0, 1e6),
+      'Fixed-cost amortization volume. 0 = auto (7-day average, floor 1M/day).') +
+    field('pricing_cache_discount_pct', num('e_cachedisc', c.pricing_cache_discount_pct ?? 75, 5),
+      'Share OFF the prompt price for cached tokens (they skip compute, but hold KV memory).') +
+    field('pricing_margin_pct', num('e_margin', c.pricing_margin_pct ?? 0, 5),
+      'Markup over cost floor. 0 = break-even pricing.');
   document.getElementById('hostsbox').innerHTML = (c.hosts||[]).map(hostRow).join('') ||
     '<p class="muted">No hosts configured — the Costs page shows GPU energy only.</p>';
   wireHostDels();
@@ -174,6 +182,7 @@ function collect() {
       hardware_cost_usd: parseFloat(g('hardware_cost_usd')) || 0,
       purchased: g('purchased') || '',
       amortize_years: parseFloat(g('amortize_years')) || 0,
+      gpu_idle_watts: parseFloat(g('gpu_idle_watts')) || 0,
     };
   }).filter(h => h.ips.length);
 
@@ -240,6 +249,9 @@ function collect() {
       backend_max_seqs: bms,
     },
     electricity_rate_usd_per_kwh: parseFloat(val('e_rate')) || 0.125,
+    pricing_expected_tokens_per_day: parseFloat(val('e_expected')) || 0,
+    pricing_cache_discount_pct: parseFloat(val('e_cachedisc')) || 75,
+    pricing_margin_pct: parseFloat(val('e_margin')) || 0,
     hosts,
     model_pools,
     overflow_pairs,

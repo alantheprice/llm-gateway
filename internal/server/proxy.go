@@ -113,13 +113,13 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				break
 			}
 		}
-		pt, ot := usageFromSSE(captured, est)
-		s.usage.Record(user, keyID, model, pt, ot)
+		pt, ot, cached := usageFromSSE(captured, est)
+		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
 		return
 	}
 	w.Write(buffered)
-	pt, ot := usageFromJSON(buffered, est)
-	s.usage.Record(user, keyID, model, pt, ot)
+	pt, ot, cached := usageFromJSON(buffered, est)
+	s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
 }
 
 func copyHeader(dst, src http.Header) {
@@ -133,24 +133,28 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-// usageFromJSON extracts prompt/completion tokens from a non-stream response.
-func usageFromJSON(body []byte, est int) (int, int) {
+// usageFromJSON extracts prompt/completion tokens (and engine-reported
+// cache reuse) from a non-stream response.
+func usageFromJSON(body []byte, est int) (int, int, int) {
 	var resp struct {
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			PromptDetails    struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal(body, &resp) == nil && resp.Usage.PromptTokens > 0 {
-		return resp.Usage.PromptTokens, resp.Usage.CompletionTokens
+		return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.PromptDetails.CachedTokens
 	}
-	return est, 0
+	return est, 0, 0
 }
 
 // usageFromSSE scans captured SSE text for the OpenAI usage chunk; falls
 // back to counting completion tokens from delta content + est prompt.
-func usageFromSSE(captured []byte, est int) (int, int) {
-	pt, ot := 0, 0
+func usageFromSSE(captured []byte, est int) (int, int, int) {
+	pt, ot, cached := 0, 0, 0
 	for _, line := range strings.Split(string(captured), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "data:") {
@@ -164,6 +168,9 @@ func usageFromSSE(captured []byte, est int) (int, int) {
 			Usage *struct {
 				PromptTokens     int `json:"prompt_tokens"`
 				CompletionTokens int `json:"completion_tokens"`
+				PromptDetails    struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 			Choices []struct {
 				Delta struct {
@@ -176,6 +183,7 @@ func usageFromSSE(captured []byte, est int) (int, int) {
 		}
 		if chunk.Usage != nil {
 			pt, ot = chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens
+			cached = chunk.Usage.PromptDetails.CachedTokens
 		}
 		for _, ch := range chunk.Choices {
 			ot4 := len([]rune(ch.Delta.Content)) // rough if usage absent
@@ -187,7 +195,7 @@ func usageFromSSE(captured []byte, est int) (int, int) {
 	if pt == 0 {
 		pt = est
 	}
-	return pt, ot
+	return pt, ot, cached
 }
 
 // proxy handles non-pool direct requests (SPEC §2) with usage recording.
@@ -229,8 +237,6 @@ func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model strin
 
 // --- observability (SPEC §12) ---
 
-
-
 func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.checkAuth(w, r); !ok {
 		return
@@ -250,7 +256,6 @@ func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
-
 
 // backendSnapshot polls fresh and returns per-backend score/load info.
 func (s *Server) backendSnapshot() map[string]map[string]any {

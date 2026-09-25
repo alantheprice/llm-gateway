@@ -52,6 +52,11 @@ type Server struct {
 	leader      map[string]string // pool -> leader url
 	usage       *UsageStore
 	lastMetrics map[string]map[string]any // url -> raw /usage payload for merge
+	// last sane (clearly-busy) fleet throughput reading — pricing's
+	// GPU-time split needs a stable pp/tg ratio; defaults are a typical
+	// prefill/decode pair until the engines are seen working.
+	lastGoodPP float64
+	lastGoodTG float64
 
 	huma         huma.API
 	docHandler   http.Handler
@@ -79,7 +84,8 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		leader:       map[string]string{},
 		usage:        NewUsageStore(usagePath(cfg)),
 		lastMetrics:  map[string]map[string]any{},
-		uiKeys:       map[string]string{},
+		lastGoodPP:   3000, lastGoodTG: 300,
+		uiKeys: map[string]string{},
 	}
 	s.pb = pb.New(pbURL(cfg))
 	s.pb.SetSuperuser(pbSuperuserIdent(), pbSuperuserPass(cfg))

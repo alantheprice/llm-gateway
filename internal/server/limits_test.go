@@ -108,28 +108,59 @@ func TestDailyLimitExemptions(t *testing.T) {
 	_ = key
 }
 
-func TestComputePricingSplitsByGPUTime(t *testing.T) {
-	// Equal token counts: prefill 1M/4000 = 250s of GPU time, decode
-	// 1M/500 = 2000s → tg carries 2000/2250 = 88.9% of cost.
-	p := ComputePricing(100, 4000, 500, 1_000_000, 1_000_000, 0)
-	if p.CostPPShare+p.CostTGShare < 99.99 || p.CostPPShare+p.CostTGShare > 100.01 {
-		t.Fatalf("shares must sum to total: %v + %v", p.CostPPShare, p.CostTGShare)
+func TestComputePricingV2MarginalFixed(t *testing.T) {
+	// One host: 10 kWh GPU today, 12h elapsed, 40W idle (0.48 kWh idle).
+	// Rate 0.125 -> marginal = (10-0.48)*0.125 = $1.19.
+	// Fixed today = $10 (capital+overhead+idle energy).
+	in := PricingInputs{
+		GPUKwhToday: []float64{10}, GPUIdleWatts: []float64{40},
+		RateUSDPerKwh: 0.125, DayElapsedHours: 12,
+		FixedToday: 10,
+		PPtokPerS:  4000, TGtokPerS: 500,
+		PromptTokens: 1_000_000, OutputTokens: 1_000_000,
+		ExpectedTokensPerDay: 50_000_000,
+		CacheDiscountPct:     75,
 	}
-	if p.CostTGShare < 88.8 || p.CostTGShare > 89.0 {
-		t.Fatalf("tg share = %v, want 88.9", p.CostTGShare)
+	p := ComputePricingV2(in)
+	if p.MarginalToday < 1.18 || p.MarginalToday > 1.20 {
+		t.Fatalf("marginal = %v, want 1.19", p.MarginalToday)
 	}
-	// pp: 11.11$/1M tok, tg: 88.89$/1M tok (rounded to cents).
-	if p.PromptPerM != 11.11 || p.OutputPerM != 88.89 {
-		t.Fatalf("pricing pp=%v tg=%v, want 11.11/88.89", p.PromptPerM, p.OutputPerM)
+	// GPU-time: pp 250s, tg 2000s -> pp share 1/9.
+	// marginal pp = 1.19*(1/9)/1M*1e6 = $0.13/M; tg = 1.19*(8/9) = $1.06/M.
+	if p.MarginalPPPerM < 0.12 || p.MarginalPPPerM > 0.14 {
+		t.Fatalf("marginal pp = %v, want 0.13", p.MarginalPPPerM)
 	}
-	// Margin multiplies both (x1.5). Half-cent rounding drift is expected.
-	m := ComputePricing(100, 4000, 500, 1_000_000, 1_000_000, 50)
-	if m.PromptPerM < 16.66 || m.PromptPerM > 16.68 || m.OutputPerM < 133.32 || m.OutputPerM > 133.35 {
-		t.Fatalf("margin pricing pp=%v tg=%v, want ~16.67/~133.33", m.PromptPerM, m.OutputPerM)
+	if p.MarginalTGPerM < 1.05 || p.MarginalTGPerM > 1.07 {
+		t.Fatalf("marginal tg = %v, want 1.06", p.MarginalTGPerM)
 	}
-	// Zero token guard.
-	z := ComputePricing(100, 4000, 500, 0, 0, 0)
-	if z.PromptPerM != 0 || z.OutputPerM != 0 {
-		t.Fatal("no tokens → no price")
+	// Fixed $10 over 50M expected = $0.20/M added to each class by mix
+	// (50/50 here) -> recommended pp 0.13+0.10=0.23, tg 1.06+0.10=1.16.
+	if p.PromptPerM < 0.22 || p.PromptPerM > 0.24 {
+		t.Fatalf("recommended pp = %v, want 0.23", p.PromptPerM)
+	}
+	if p.OutputPerM < 1.15 || p.OutputPerM > 1.17 {
+		t.Fatalf("recommended tg = %v, want 1.16", p.OutputPerM)
+	}
+	// Cached = prompt - 75%.
+	if p.CachedPerM < 0.05 || p.CachedPerM > 0.06 {
+		t.Fatalf("cached = %v, want 0.06", p.CachedPerM)
+	}
+	if p.FixedMonthly != 300 {
+		t.Fatalf("fixed monthly = %v, want 300", p.FixedMonthly)
+	}
+}
+
+func TestExpectedVolume(t *testing.T) {
+	if ExpectedVolume(0, 42e6) != 42e6 {
+		t.Fatal("auto should use 7-day avg")
+	}
+	if ExpectedVolume(10e6, 42e6) != 10e6 {
+		t.Fatal("explicit config must win")
+	}
+	if ExpectedVolume(0, 0) != 1e6 {
+		t.Fatal("empty history should floor at 1M")
+	}
+	if ExpectedVolume(0, 500e3) != 1e6 {
+		t.Fatal("tiny avg should floor at 1M")
 	}
 }

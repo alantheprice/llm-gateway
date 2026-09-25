@@ -74,6 +74,7 @@ type HostCfg struct {
 	HardwareCostUSD float64  `json:"hardware_cost_usd"` // original purchase price
 	Purchased       string   `json:"purchased"`         // ISO date
 	AmortizeYears   float64  `json:"amortize_years"`    // straight-line term
+	GPUIdleWatts    float64  `json:"gpu_idle_watts"`    // per-GPU idle draw; 0 → 40 (fixed-cost layer)
 }
 
 type Config struct {
@@ -90,6 +91,12 @@ type Config struct {
 	Hosts           []HostCfg `json:"hosts"`
 	// Recommended-pricing margin (% over the cost floor; 0 = break-even).
 	PricingMarginPct float64 `json:"pricing_margin_pct"`
+	// Expected daily volume for fixed-cost amortization. 0 = auto
+	// (trailing 7-day average, floor 1M tokens/day).
+	PricingExpectedTokensPerDay float64 `json:"pricing_expected_tokens_per_day"`
+	// Share OFF the prompt price for cached tokens (default 75 → cached
+	// costs 25% of prompt).
+	PricingCacheDiscountPct float64 `json:"pricing_cache_discount_pct"`
 
 	path     string
 	mtime    time.Time

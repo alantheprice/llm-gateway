@@ -34,6 +34,7 @@ func withTotal(in map[string]*UserUsage) map[string]map[string]any {
 			"requests":      u.Requests,
 			"prompt_tokens": u.PromptTokens,
 			"output_tokens": u.OutputTokens,
+			"cached_tokens": u.CachedTokens,
 			"total_tokens":  u.PromptTokens + u.OutputTokens,
 			"keys":          u.Keys,
 			"kinds":         u.Kinds,

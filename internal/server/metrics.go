@@ -226,17 +226,17 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"gateway": map[string]any{"port": port, "poll_interval_seconds": poll},
 		"totals": map[string]any{
-			"tokens_input":                  ti,
-			"tokens_cached":                 tc,
-			"tokens_output":                 to,
-			"energy_kwh_today":              kwhT,
-			"energy_cost_usd_today":         costT,
-			"energy_kwh_30d":                kwh30,
-			"energy_cost_usd_30d":           cost30,
-			"decode_tok_per_s":              dec,
-			"prefill_tok_per_s":             pre,
-			"energy_cost_per_m_tokens_usd":  poolRate,
-			"energy_rate_note":              "blended NVML-measured energy cost across pool GPUs; NVML meters the whole GPU, so this is average cost per token today, not marginal cost",
+			"tokens_input":                 ti,
+			"tokens_cached":                tc,
+			"tokens_output":                to,
+			"energy_kwh_today":             kwhT,
+			"energy_cost_usd_today":        costT,
+			"energy_kwh_30d":               kwh30,
+			"energy_cost_usd_30d":          cost30,
+			"decode_tok_per_s":             dec,
+			"prefill_tok_per_s":            pre,
+			"energy_cost_per_m_tokens_usd": poolRate,
+			"energy_rate_note":             "blended NVML-measured energy cost across pool GPUs; NVML meters the whole GPU, so this is average cost per token today, not marginal cost",
 		},
 		"backends": perBackend,
 	})
@@ -495,9 +495,9 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"backends":                 out,
-		"poll_interval_seconds":    poll,
-		"stale_threshold_seconds":  stale,
-		"overflow_pairs":           overflowOut,
+		"backends":                out,
+		"poll_interval_seconds":   poll,
+		"stale_threshold_seconds": stale,
+		"overflow_pairs":          overflowOut,
 	})
 }

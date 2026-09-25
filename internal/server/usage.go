@@ -26,9 +26,13 @@ type UsageFile struct {
 }
 
 type UserUsage struct {
-	Requests     int                   `json:"requests"`
-	PromptTokens int                   `json:"prompt_tokens"`
-	OutputTokens int                   `json:"output_tokens"`
+	Requests     int `json:"requests"`
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	// CachedTokens: prompt tokens served from KV reuse (no prefill
+	// compute). Populated from prompt_tokens_details.cached_tokens when
+	// the engine reports it; 0 for older records.
+	CachedTokens int                   `json:"cached_tokens,omitempty"`
 	Keys         map[string]*KindTally `json:"keys"`
 	Kinds        map[string]*KindTally `json:"kinds"`
 }
@@ -37,6 +41,7 @@ type KindTally struct {
 	Requests     int `json:"requests"`
 	PromptTokens int `json:"prompt_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 func NewUsageStore(path string) *UsageStore {
@@ -68,6 +73,11 @@ func kindFor(model string) string {
 }
 
 func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
+	u.RecordDetailed(user, keyID, model, prompt, output, 0)
+}
+
+// RecordDetailed is Record with engine-reported cache reuse.
+func (u *UsageStore) RecordDetailed(user, keyID, model string, prompt, output, cached int) {
 	kind := kindFor(model)
 	today := time.Now().Format("2006-01-02")
 	u.mu.Lock()
@@ -77,7 +87,7 @@ func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
 		usr = &UserUsage{Keys: map[string]*KindTally{}, Kinds: map[string]*KindTally{}}
 		u.Data.Users[user] = usr
 	}
-	applyTally(usr, keyID, kind, prompt, output)
+	applyTally(usr, keyID, kind, prompt, output, cached)
 	// Per-day buckets (history charts + daily quotas). Python parity:
 	// local-date keys, full UserUsage shape.
 	day := u.Data.Daily[today]
@@ -90,15 +100,18 @@ func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
 		du = &UserUsage{Keys: map[string]*KindTally{}, Kinds: map[string]*KindTally{}}
 		day[user] = du
 	}
-	applyTally(du, keyID, kind, prompt, output)
+	applyTally(du, keyID, kind, prompt, output, cached)
 	u.dirty = true
 	u.flushIfDue()
 }
 
-func applyTally(usr *UserUsage, keyID, kind string, prompt, output int) {
+func applyTally(usr *UserUsage, keyID, kind string, prompt, output, cached int) {
 	usr.Requests++
 	usr.PromptTokens += prompt
 	usr.OutputTokens += output
+	if cached > 0 {
+		usr.CachedTokens += cached
+	}
 	if usr.Kinds == nil {
 		usr.Kinds = map[string]*KindTally{}
 	}
@@ -106,12 +119,12 @@ func applyTally(usr *UserUsage, keyID, kind string, prompt, output int) {
 		if usr.Keys == nil {
 			usr.Keys = map[string]*KindTally{}
 		}
-		tally(usr.Keys, keyID, prompt, output)
+		tally(usr.Keys, keyID, prompt, output, cached)
 	}
-	tally(usr.Kinds, kind, prompt, output)
+	tally(usr.Kinds, kind, prompt, output, cached)
 }
 
-func tally(m map[string]*KindTally, name string, p, o int) {
+func tally(m map[string]*KindTally, name string, p, o, c int) {
 	t, ok := m[name]
 	if !ok {
 		t = &KindTally{}
@@ -120,6 +133,9 @@ func tally(m map[string]*KindTally, name string, p, o int) {
 	t.Requests++
 	t.PromptTokens += p
 	t.OutputTokens += o
+	if c > 0 {
+		t.CachedTokens += c
+	}
 }
 
 const flushInterval = 60 * time.Second
@@ -203,6 +219,40 @@ func (u *UsageStore) TodaySnapshot() map[string]*UserUsage {
 		out[k] = &cp
 	}
 	return out
+}
+
+// AvgDailyTokens returns the mean total tokens (prompt+output) per day over
+// the last n recorded days (excluding today — today's partials would bias
+// it down).
+func (u *UsageStore) AvgDailyTokens(n int) float64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if n <= 0 {
+		n = 7
+	}
+	today := time.Now().Format("2006-01-02")
+	days := make([]string, 0, len(u.Data.Daily))
+	for d := range u.Data.Daily {
+		if d != today {
+			days = append(days, d)
+		}
+	}
+	sort.Strings(days)
+	if len(days) > n {
+		days = days[len(days)-n:]
+	}
+	if len(days) == 0 {
+		return 0
+	}
+	var total float64
+	for _, d := range days {
+		for _, t := range u.Data.Daily[d] {
+			if t != nil {
+				total += float64(t.PromptTokens + t.OutputTokens)
+			}
+		}
+	}
+	return total / float64(len(days))
 }
 
 // User returns the caller's usage record (nil if unknown).
