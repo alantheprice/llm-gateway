@@ -1,0 +1,157 @@
+// Package config loads the gateway JSON configuration (same format as the
+// Python gateway's llm_gateway.conf). See docs/SPEC.md §10.
+package config
+
+import (
+	"encoding/json"
+	"os"
+	"sync"
+	"time"
+)
+
+type GatewayCfg struct {
+	Port               int    `json:"port"`
+	TrustLocalNetworks bool   `json:"trust_local_networks"`
+	APIKeysFile        string `json:"api_keys_file"`
+	InternalAPIKeyFile string `json:"internal_api_key_file"`
+	UsersFile          string `json:"users_file"`
+	UsageFile          string `json:"usage_file"`
+}
+
+type DiscoveryCfg struct {
+	LocalPorts  []int  `json:"local_ports"`
+	RemoteHost  string `json:"remote_host"`
+	RemotePorts []int  `json:"remote_ports"`
+}
+
+type MetricsCfg struct {
+	PollInterval      int            `json:"poll_interval"`
+	StaleThreshold    int            `json:"stale_threshold"`
+	DefaultMaxSeqs    int            `json:"default_max_seqs"`
+	NinferLaneWeight  float64        `json:"ninfer_lane_weight"`
+	NinferQueueWeight float64        `json:"ninfer_queue_weight"`
+	NinferPressureWt  float64        `json:"ninfer_pressure_weight"`
+	BackendMaxSeqs    map[string]int `json:"backend_max_seqs"`
+}
+
+type PoolMemberCfg struct {
+	ModelID        string `json:"model_id"`
+	Backend        string `json:"backend"`
+	LargeContext   bool   `json:"large_context"`
+	CapacityWeight int    `json:"capacity_weight"`
+}
+
+type PoolCfg struct {
+	Members           []PoolMemberCfg `json:"members"`
+	OverflowThreshold float64         `json:"overflow_threshold"`
+	StickyBias        float64         `json:"sticky_bias"`
+	LargePromptTokens int             `json:"large_prompt_tokens"`
+	CapacityBias      float64         `json:"capacity_bias"`
+}
+
+type OverflowPair struct {
+	FallbackModelID string  `json:"fallback_model_id"`
+	FallbackBackend string  `json:"fallback_backend"`
+	Threshold       float64 `json:"overflow_threshold"`
+}
+
+type CacheCfg struct {
+	TTL int `json:"ttl"`
+}
+
+type Config struct {
+	Gateway       GatewayCfg              `json:"gateway"`
+	Discovery     DiscoveryCfg            `json:"discovery"`
+	LocalNetworks []string                `json:"local_networks"`
+	Metrics       MetricsCfg              `json:"metrics"`
+	ModelPools    map[string]PoolCfg      `json:"model_pools"`
+	OverflowPairs map[string]OverflowPair `json:"overflow_pairs"`
+	PublicModels  []string                `json:"public_models"`
+	Cache         CacheCfg                `json:"cache"`
+
+	path     string
+	mtime    time.Time
+	mu       sync.Mutex
+	onReload []func(*Config)
+}
+
+// Defaults fill zero values the way the Python gateway defaults them.
+func (c *Config) applyDefaults() {
+	if c.Gateway.Port == 0 {
+		c.Gateway.Port = 8033
+	}
+	if c.Metrics.PollInterval == 0 {
+		c.Metrics.PollInterval = 10
+	}
+	if c.Metrics.StaleThreshold == 0 {
+		c.Metrics.StaleThreshold = 30
+	}
+	if c.Metrics.DefaultMaxSeqs == 0 {
+		c.Metrics.DefaultMaxSeqs = 3
+	}
+	if c.Metrics.NinferLaneWeight == 0 {
+		c.Metrics.NinferLaneWeight = 0.75
+	}
+	if c.Metrics.NinferQueueWeight == 0 {
+		c.Metrics.NinferQueueWeight = 0.15
+	}
+	if c.Metrics.NinferPressureWt == 0 {
+		c.Metrics.NinferPressureWt = 0.10
+	}
+	if c.Cache.TTL == 0 {
+		c.Cache.TTL = 60
+	}
+}
+
+// Load reads and parses the config file at path.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	c.path = path
+	if st, err := os.Stat(path); err == nil {
+		c.mtime = st.ModTime()
+	}
+	c.applyDefaults()
+	return &c, nil
+}
+
+// OnReload registers a callback fired after a successful hot reload.
+func (c *Config) OnReload(fn func(*Config)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onReload = append(c.onReload, fn)
+}
+
+// PollWatch checks the file mtime once; returns the new config if it changed.
+// (Called from a ticker in main — no goroutine in the library.)
+func (c *Config) PollWatch() (*Config, bool) {
+	st, err := os.Stat(c.path)
+	if err != nil || !st.ModTime().After(c.mtime) {
+		return nil, false
+	}
+	nc, err := Load(c.path)
+	if err != nil {
+		return nil, false // keep old config on parse error
+	}
+	c.mu.Lock()
+	fns := append([]func(*Config){}, c.onReload...)
+	c.mu.Unlock()
+	for _, fn := range fns {
+		fn(nc)
+	}
+	return nc, true
+}
+
+// MaxSeqsFor returns the configured max concurrent seqs for a backend.
+func (c *Config) MaxSeqsFor(backend string) int {
+	if v, ok := c.Metrics.BackendMaxSeqs[backend]; ok && v > 0 {
+		return v
+	}
+	return c.Metrics.DefaultMaxSeqs
+}

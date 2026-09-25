@@ -1,0 +1,96 @@
+{{define "title"}}Account — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+let currentEmail = '';
+
+document.getElementById('saveprofile').addEventListener('click', async () => {
+  const name = document.getElementById('pname').value.trim();
+  const email = document.getElementById('pemail').value.trim();
+  const pw = document.getElementById('ppw').value;
+  if (!pw) { flash('Enter your current password to confirm changes.', true); return; }
+  if (!name && !email) { flash('Nothing to change.', true); return; }
+  const r = await api('/account/update', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, email, password: pw})});
+  if (r.ok) {
+    flash('Profile updated.');
+    document.getElementById('profile-name').textContent = r.data.name || name;
+    document.getElementById('ppw').value = '';
+  } else {
+    const M = {wrong_password: 'Password incorrect.', bad_email: 'That email address looks invalid.',
+               email_taken: 'That email is already in use.'};
+    flash(M[r.data.code] || r.data.error || 'Update failed.', true);
+  }
+});
+
+document.getElementById('chpw').addEventListener('click', async () => {
+  const o = document.getElementById('opw').value;
+  const n = document.getElementById('npw').value;
+  const n2 = document.getElementById('npw2').value;
+  if (!o || !n || !n2) { flash('Fill all password fields.', true); return; }
+  if (n.length < 8) { flash('New password must be at least 8 characters.', true); return; }
+  if (n !== n2) { flash('New passwords do not match.', true); return; }
+  const r = await api('/chat/password', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({old_password:o, new_password:n})});
+  flash(r.ok ? 'Password updated.' : (r.data.error || 'failed'), !r.ok);
+  if (r.ok) { document.getElementById('opw').value=''; document.getElementById('npw').value=''; document.getElementById('npw2').value=''; }
+});
+
+document.getElementById('wipe').addEventListener('click', () => {
+  if (!confirm('Delete ALL chat history stored in this browser? This cannot be undone.')) return;
+  localStorage.removeItem('llmgw_sessions');
+  localStorage.removeItem('llmgw_active');
+  flash('Local chat history deleted.');
+});
+
+(async function load() {
+  const r = await api('/me');
+  if (!r.ok) return;
+  document.getElementById('pname').value = r.data.name || '';
+  document.getElementById('pemail').value = r.data.email || '';
+  currentEmail = r.data.email || '';
+})();
+</script>
+{{end}}
+{{define "content"}}
+<div class="page" style="max-width:640px">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Account</h1></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Profile</h2>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+      <span class="avatar" style="width:44px;height:44px;font-size:20px" id="avatar">{{.Avatar}}</span>
+      <div>
+        <div style="font-weight:600" id="profile-name">{{.Username}}</div>
+        <div class="muted">username: {{.Username}} · role: {{.Role}} · managed by PocketBase</div>
+      </div>
+    </div>
+    <label style="display:block;font-size:13px;color:var(--muted);margin:4px 0 4px">Display name</label>
+    <input id="pname" style="width:100%" maxlength="80" placeholder="Your name">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Email (used for future password-reset)</label>
+    <input id="pemail" type="email" style="width:100%" placeholder="you@example.com">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Confirm with current password</label>
+    <input id="ppw" type="password" autocomplete="current-password" style="width:100%">
+    <button class="btn primary" id="saveprofile" style="margin-top:14px">Save profile</button>
+  </div>
+
+  <div class="card">
+    <h2>Change password</h2>
+    <label style="display:block;font-size:13px;color:var(--muted);margin:4px 0 4px">Current password</label>
+    <input id="opw" type="password" autocomplete="current-password" style="width:100%">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">New password (min 8 characters)</label>
+    <input id="npw" type="password" autocomplete="new-password" style="width:100%">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Confirm new password</label>
+    <input id="npw2" type="password" autocomplete="new-password" style="width:100%">
+    <button class="btn primary" id="chpw" style="margin-top:14px">Update password</button>
+  </div>
+
+  <div class="card">
+    <h2>Local chat storage</h2>
+    <p class="muted" style="margin:0 0 10px">Chat history lives only in this browser (localStorage). Signing out keeps it; clearing browser data removes it permanently.</p>
+    <button class="btn danger" id="wipe">Delete all local chat history</button>
+  </div>
+</div>
+{{end}}

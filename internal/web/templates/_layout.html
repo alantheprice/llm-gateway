@@ -1,0 +1,110 @@
+{{define "head"}}{{end}}
+{{define "bodyclass"}}{{end}}
+{{define "title"}}LLM Gateway{{end}}
+{{define "scripts"}}{{end}}
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}}</title>
+<link rel="stylesheet" href="/static/app.css?v={{$.StaticVer}}">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="#0d1117">
+{{template "head" .}}
+</head>
+<body class="{{template "bodyclass" .}}">
+{{if .Chrome}}{{template "chrome" .}}{{end}}
+{{end}}
+{{define "chrome"}}<div class="backdrop" id="backdrop"></div>
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="brand-mark">⚡</span><span class="brand-name">LLM Gateway</span></div>
+    <nav class="nav">
+      <a href="/chat" class="nav-item {{if eq .Nav "chat"}}active{{end}}">{{Icon "message-square"}}<span>Chat</span></a>
+      <a href="/keys" class="nav-item {{if eq .Nav "keys"}}active{{end}}">{{Icon "key-round"}}<span>API Keys</span></a>
+      <a href="/account" class="nav-item {{if eq .Nav "account"}}active{{end}}">{{Icon "shield"}}<span>Account</span></a>
+      <a href="/usage/me" class="nav-item {{if eq .Nav "myusage"}}active{{end}}">{{Icon "bar-chart-3"}}<span>My Usage</span></a>
+      {{if eq .Role "admin"}}
+      <div class="nav-section">Admin</div>
+      <a href="/admin/users/page" class="nav-item {{if eq .Nav "admin_users"}}active{{end}}">{{Icon "users"}}<span>Users</span></a>
+      <a href="/admin/system" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "activity"}}<span>System</span></a>
+      {% endif %}
+      <div class="nav-section">Settings</div>
+      <button class="nav-item" id="themeToggle" type="button" title="Switch between light and dark theme">
+        <span id="themeIcon">{{IconSize "sun" 18}}</span><span id="themeLabel">Light mode</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="identity">
+        <span class="avatar">{{.Avatar}}</span>
+        <span class="id-text">
+          <span class="id-name">{{.Username}}</span>
+          <span class="id-role role-{{.Role}}">{{.Role}}</span>
+        </span>
+      </div>
+      <a href="/logout" class="nav-item small" title="Sign out">{{Icon "log-out"}}<span>Sign out</span></a>
+    </div>
+  </aside>
+  <main class="main">
+    {{template "content" .}}
+  </main>
+</div>
+<script src="/static/icons.js?v={{$.StaticVer}}"></script>
+<script src="/static/charts.js?v={{$.StaticVer}}"></script>
+<script src="/static/app.js?v={{$.StaticVer}}"></script>
+<script>
+(function () {
+  // Mobile drawer
+  const sb = document.getElementById('sidebar');
+  const bd = document.getElementById('backdrop');
+  const ham = document.getElementById('hamburger');
+  if (ham) ham.addEventListener('click', () => {
+    sb.classList.toggle('open');
+    bd.classList.toggle('show');
+  });
+  if (bd) bd.addEventListener('click', () => {
+    sb.classList.remove('open');
+    bd.classList.remove('show');
+  });
+  // close drawer after tapping a nav link (mobile)
+  sb.querySelectorAll('a.nav-item').forEach(a =>
+    a.addEventListener('click', () => { sb.classList.remove('open'); bd.classList.remove('show'); }));
+})();
+</script>
+<script>
+(function () {
+  // Theme (persisted per browser)
+  const saved = localStorage.getItem('llmgw_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  const apply = t => {
+    const el = document.getElementById('themeIcon');
+    const lb = document.getElementById('themeLabel');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (el) el.innerHTML = t === 'light' ? (ICONS['moon'] || '') : (ICONS['sun'] || '');
+    if (lb) lb.textContent = t === 'light' ? 'Dark mode' : 'Light mode';
+    if (meta) meta.content = t === 'light' ? '#f6f8fa' : '#0d1117';
+  };
+  apply(saved);
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.addEventListener('click', () => {
+    const next = (localStorage.getItem('llmgw_theme') || 'dark') === 'light' ? 'dark' : 'light';
+    localStorage.setItem('llmgw_theme', next);
+    document.documentElement.setAttribute('data-theme', next);
+    apply(next);
+  });
+
+  // PWA service worker (root scope registration)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+})();
+</script>
+{{template "scripts" .}}
+</body>
+</html>
+{{end}}
+
+{{end}}

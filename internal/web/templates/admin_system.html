@@ -1,0 +1,158 @@
+{{define "title"}}System — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+async function load() {
+  const [usageR, usersR] = await Promise.all([api('/usage'), api('/usage/users')]);
+  if (!usageR.ok || !usersR.ok) { location = '/'; return; }
+  const t = usageR.data.totals;
+
+  document.getElementById('energystats').innerHTML =
+    '<div class="stat"><div class="v">' + (t.energy_kwh_today||0).toFixed(3) + ' kWh</div><div class="l">energy today</div></div>' +
+    '<div class="stat"><div class="v">$' + (t.energy_cost_usd_today||0).toFixed(4) + '</div><div class="l">cost today</div></div>' +
+    '<div class="stat"><div class="v">$' + (t.energy_cost_per_m_tokens_usd != null ? t.energy_cost_per_m_tokens_usd.toFixed(4) : '—') + '</div><div class="l">per 1M tokens (avg today)</div></div>' +
+    '<div class="stat"><div class="v">' + (t.energy_kwh_30d||0).toFixed(1) + ' kWh</div><div class="l">30-day energy</div></div>' +
+    '<div class="stat"><div class="v">$' + (t.energy_cost_usd_30d||0).toFixed(2) + '</div><div class="l">30-day cost</div></div>';
+
+  const gr = document.getElementById('gpurows');
+  const gpus = Object.entries(usageR.data.backends || {}).filter(([u,b]) => b.reachable);
+  gr.innerHTML = gpus.map(([url, b]) => {
+    const rate = b.rate_usd_per_m_tokens != null ? ('$' + b.rate_usd_per_m_tokens.toFixed(4)) : '—';
+    const kwh = ((b.energy || {}).today || {}).kwh || 0;
+    const cost = ((b.energy || {}).today || {}).cost_usd || 0;
+    const thr = b.throughput || {};
+    const lanes = b.lanes || {};
+    return '<tr><td><code>' + esc(url) + '</code></td>' +
+      '<td>' + (lanes.capacity || '—') + '</td><td>' + (lanes.processing || 0) + '</td>' +
+      '<td>' + Math.round(thr.decode_tok_per_s || 0) + '</td>' +
+      '<td>' + Math.round(thr.prefill_tok_per_s || 0) + '</td>' +
+      '<td>' + kwh.toFixed(3) + ' kWh</td><td>$' + cost.toFixed(4) + '</td>' +
+      '<td>' + rate + '</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="muted">No reachable NInfer backends.</td></tr>';
+
+  const tk = usageR.data.totals;
+  document.getElementById('tokstats').innerHTML =
+    '<div class="stat"><div class="v">' + fmtNum(tk.tokens_input) + '</div><div class="l">prompt tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tk.tokens_cached) + '</div><div class="l">cached (prefix hits)</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tk.tokens_output) + '</div><div class="l">output tokens</div></div>';
+
+  const ur = document.getElementById('userrows');
+  const users = Object.entries((usersR.data.all_time || {}));
+  ur.innerHTML = users.map(([name, u]) =>
+    '<tr>' +
+    '<td data-label="User"><strong>' + esc(name) + '</strong></td>' +
+    '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
+    '<td data-label="Prompt">' + fmtNum(u.prompt_tokens) + '</td>' +
+    '<td data-label="Output">' + fmtNum(u.output_tokens) + '</td>' +
+    '<td data-label="Total">' + fmtNum(u.total_tokens) + '</td></tr>'
+  ).join('') || '<tr><td colspan="5" class="muted">No usage recorded yet.</td></tr>';
+
+  const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
+  const kr = document.getElementById('kindrows');
+  const kindRows = [];
+  for (const [name, u] of users) {
+    const kinds = u.kinds || {};
+    for (const k of Object.keys(KINDS)) {
+      if (kinds[k]) kindRows.push(
+        '<tr>' +
+        '<td data-label="User"><strong>' + esc(name) + '</strong></td>' +
+        '<td data-label="Type">' + KINDS[k] + '</td>' +
+        '<td data-label="Requests">' + fmtNum(kinds[k].requests) + '</td>' +
+        '<td data-label="Prompt">' + fmtNum(kinds[k].prompt_tokens) + '</td>' +
+        '<td data-label="Output">' + fmtNum(kinds[k].output_tokens) + '</td></tr>');
+    }
+  }
+  kr.innerHTML = kindRows.join('') || '<tr><td colspan="5" class="muted">No usage recorded yet.</td></tr>';
+}
+
+async function loadCharts() {
+  const r = await api('/api/usage/history');
+  if (!r.ok) return;
+  const days = r.data.days || [];
+  if (!days.length) return;
+  const labels = days.map(d => d.slice(5));  // MM-DD
+
+  // Energy: kWh bars
+  const kwh = days.map(d => (r.data.energy_by_day[d] || {}).kwh || 0);
+  const c1 = getComputedStyle(document.documentElement).getPropertyValue('--chart-1') || '#3fb950';
+  document.getElementById('energychart').innerHTML = Charts.barsMulti({
+    series: [{name: 'kWh', color: c1.trim(),
+              values: days.map((d, i) => ({label: labels[i], value: kwh[i]}))}],
+    height: 220, format: v => v.toFixed(2), yLabel: 'kWh per day'});
+  const costLine = days.map((d, i) => {
+    const e = r.data.energy_by_day[d] || {};
+    return e.cost_usd != null ? `${d.slice(5)}: $${(+e.cost_usd).toFixed(2)}` : '';
+  }).filter(Boolean).join(' · ');
+  document.getElementById('energychart').insertAdjacentHTML('beforeend',
+    '<p class="muted">Cost per day: ' + costLine + '</p>');
+
+  // Tokens per day per user
+  const users = new Set();
+  days.forEach(d => Object.keys(r.data.tokens_by_day[d] || {}).forEach(u => users.add(u)));
+  const palette = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149', '#39c5cf'];
+  const series = [...users].map((u, i) => ({
+    name: u, color: palette[i % palette.length],
+    values: days.map(d => ({label: d.slice(5), value: (r.data.tokens_by_day[d] || {})[u] || 0}))
+  }));
+  document.getElementById('tokenchart').innerHTML = Charts.barsMulti({
+    series, height: 220, format: Charts.fmtShort, yLabel: 'tokens per day'});
+}
+
+document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); });
+load(); setInterval(load, 30000);
+loadCharts(); setInterval(loadCharts, 60000);
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>System</h1>
+    <span class="muted">energy is whole-GPU (NVML) — a system metric, not per-user</span>
+    <span style="flex:1"></span>
+    <button class="btn" id="refresh">Refresh</button>
+  </div>
+  <div class="flash" id="flash"></div>
+
+  <div class="statgrid" id="energystats"></div>
+  <div style="height:18px"></div>
+
+  <div class="card">
+    <h2>Energy &amp; cost — last 30 days</h2>
+    <div id="energychart"></div>
+  </div>
+
+  <div class="card">
+    <h2>Tokens per day — by user</h2>
+    <div id="tokenchart"></div>
+  </div>
+
+  <div class="card">
+    <h2>GPU pool</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Backend</th><th>Lanes</th><th>Busy</th><th>Decode tok/s</th><th>Prefill tok/s</th><th>Energy today</th><th>Cost today</th><th>$ / 1M tok</th></tr></thead>
+      <tbody id="gpurows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Tokens (all engines, lifetime)</h2>
+    <div class="statgrid" id="tokstats"></div>
+  </div>
+
+  <div class="card">
+    <h2>Usage by model type (per user)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>User</th><th>Type</th><th>Requests</th><th>Prompt</th><th>Output</th></tr></thead>
+      <tbody id="kindrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Users (token consumption)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>Total</th></tr></thead>
+      <tbody id="userrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+{{end}}

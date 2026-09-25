@@ -1,0 +1,107 @@
+{{define "title"}}Users — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+function showSecret(label, secret) {
+  flash(label + ' (shown only once — copy now):', false);
+  const div = document.createElement('div');
+  div.className = 'secret';
+  div.textContent = secret;
+  document.getElementById('flash').after(div);
+}
+async function load() {
+  const r = await api('/admin/users');
+  if (!r.ok) { location = '/'; return; }
+  document.getElementById('pbstatus').textContent =
+    r.data.pocketbase_reachable ? 'PocketBase: connected' : 'PocketBase: UNREACHABLE (provisioning disabled)';
+  const tb = document.getElementById('userrows');
+  const users = Object.entries(r.data.users || {});
+  if (!users.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No users.</td></tr>'; return; }
+  tb.innerHTML = users.map(([name, u]) => {
+    const nk = (u.keys || []).filter(k => k.active).length;
+    return '<tr>' +
+      '<td data-label="User"><strong>' + esc(name) + '</strong></td>' +
+      '<td data-label="Email" class="muted">' + esc(u.email || '') + '</td>' +
+      '<td data-label="Role"><span class="badge ' + (u.role === 'admin' ? 'role-admin' : 'off') + '">' + esc(u.role || 'user') + '</span></td>' +
+      '<td data-label="Keys">' + nk + ' active</td>' +
+      '<td data-label="Actions" style="white-space:nowrap">' +
+      '<button class="btn sm" data-act="role" data-u="' + esc(name) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' +
+      (u.role === 'admin' ? 'Demote' : 'Promote') + '</button> ' +
+      '<button class="btn sm" data-act="reset" data-u="' + esc(name) + '">Reset pw</button> ' +
+      '<button class="btn sm danger" data-act="delete" data-u="' + esc(name) + '">Delete</button></td></tr>';
+  }).join('');
+  tb.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
+    const u = b.dataset.u, act = b.dataset.act;
+    if (act === 'role') {
+      const role = b.dataset.role;
+      if (!confirm((role === 'admin' ? 'Promote ' : 'Demote ') + u + '?')) return;
+      const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'set_role', username:u, role})});
+      flash(r2.ok ? 'Role updated.' : (r2.data.error || 'failed'), !r2.ok); load();
+    } else if (act === 'reset') {
+      if (!confirm('Reset password for ' + u + '? They will need the new temp password to log in.')) return;
+      const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'reset_password', username:u})});
+      if (!r2.ok) { flash(r2.data.error || 'failed', true); return; }
+      flash('New temporary password for ' + u + ' (shown below — hand it over):', false);
+      showSecret(r2.data.password);
+      load();
+    } else if (act === 'delete') {
+      const typed = prompt('Type the username "' + u + '" to confirm PERMANENT deletion (PocketBase account + all API keys):');
+      if (typed !== u) { flash('Deletion cancelled — username did not match.', true); return; }
+      const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'delete_user', username:u})});
+      flash(r2.ok ? (r2.data.note || 'Deleted.') : (r2.data.error || 'failed'), !r2.ok); load();
+    }
+  }));
+}
+document.getElementById('invite').addEventListener('click', async () => {
+  const u = prompt('Username for the new user:');
+  if (!u) return;
+  const email = prompt('Email (optional, used for future password-reset):') || '';
+  const r = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'create_user', username:u.trim(), email})});
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; }
+      flash(r.data.error || 'failed', true); return; }
+  flash('Account created. Hand these credentials to the user — they must set a new password on first login.', false);
+  showSecret('Temporary password for ' + u, r.data.password);
+  load();
+});
+document.getElementById('rp-go').addEventListener('click', async () => {
+  const u = document.getElementById('rp-user').value.trim();
+  if (!u) { flash('Enter a username', true); return; }
+  if (!confirm('Reset password for ' + u + '?')) return;
+  const r = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'reset_password', username:u})});
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; }
+      flash(r.data.error || 'failed', true); return; }
+  showSecret('New temporary password for ' + u, r.data.password);
+});
+load();
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Users</h1>
+    <span id="pbstatus" class="muted"></span>
+    <button class="btn primary" id="invite">Invite user</button>
+  </div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <div class="tablewrap"><table>
+      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Keys</th><th style="text-align:right">Actions</th></tr></thead>
+      <tbody id="userrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Reset a user's password (generates a new temporary password)</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="rp-user" placeholder="username" style="flex:1;min-width:160px">
+      <button class="btn" id="rp-go">Generate temp password</button>
+    </div>
+  </div>
+</div>
+{{end}}

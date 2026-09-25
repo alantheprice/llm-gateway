@@ -1,0 +1,6 @@
+llm-gateway
+*.test
+users.json
+usage.json
+*.log
+.tmp

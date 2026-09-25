@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — LLM Gateway</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth">
+  <div class="auth-card">
+    <h1><span style="color:#e3b341">⚡</span> LLM Gateway</h1>
+    <p class="sub">Sign in to chat and manage your API keys.</p>
+    <form method="post" action="/login">
+      <label>Username</label>
+      <input name="username" autofocus autocomplete="username" required>
+      <label>Password</label>
+      <input name="password" type="password" autocomplete="current-password" required>
+      <button>Sign in</button>
+      {{if .Error}}<div class="auth-error">{{.Error}}</div>{{end}}
+    </form>
+    <p class="sub" style="margin:16px 0 0">Accounts are issued by invitation.</p>
+  </div>
+</body>
+</html>

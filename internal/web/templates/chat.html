@@ -1,0 +1,33 @@
+{{define "title"}}Chat — LLM Gateway{{end}}
+{{define "bodyclass"}}chatpage{{end}}
+{{define "scripts"}}
+<script src="/static/chat.js?v={{$.StaticVer}}"></script>
+{{end}}
+{{define "content"}}
+<div class="chat-main">
+  <div class="chat-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>{{if .Title}}{{.Title}}{{else}}Chat{{end}}</h1>
+    <span style="flex:1"></span>
+    <select id="model"></select>
+    <button class="btn primary" id="newchat">{{Icon "plus"}}<span class="btn-label"> New</span></button>
+  </div>
+  <div id="msgs">
+    <div id="landing"></div>
+  </div>
+  <div id="promptwrap">
+    <div id="promptbar">
+      <textarea id="prompt" placeholder="Message…  (Enter to send, Shift+Enter for newline)"></textarea>
+      <div class="composer-tools">
+        <label class="tool-toggle" id="toolsLabel" title="Let the model search the web">
+          <input type="checkbox" id="toolsToggle">
+          <span class="globe">🌐</span><span class="tool-label">Web</span>
+        </label>
+        <span style="flex:1"></span>
+        <button class="btn primary" id="send">{{Icon "send"}}<span class="btn-label">Send</span></button>
+      </div>
+    </div>
+    <p class="composer-hint">LLMs can make mistakes. Web results are cited when used.</p>
+  </div>
+</div>
+{{end}}

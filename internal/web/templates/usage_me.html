@@ -1,0 +1,87 @@
+{{define "title"}}My Usage — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+async function load() {
+  const [keysR, usageR] = await Promise.all([api('/api/keys'), api('/api/usage/me')]);
+  if (!keysR.ok || !usageR.ok) { location = '/'; return; }
+  const me = usageR.data;
+  const tot = me.totals || {};
+  document.getElementById('stats').innerHTML =
+    '<div class="stat"><div class="v">' + fmtNum(tot.requests) + '</div><div class="l">requests</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tot.prompt_tokens) + '</div><div class="l">prompt tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tot.output_tokens) + '</div><div class="l">output tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tot.total_tokens) + '</div><div class="l">total tokens</div></div>';
+  const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
+  const kinds = tot.kinds || {};
+  const kr = document.getElementById('kindrows');
+  const kindNames = Object.keys(KINDS).filter(k => kinds[k]);
+  kr.innerHTML = kindNames.length
+    ? kindNames.map(k =>
+      '<tr>' +
+      '<td data-label="Type">' + KINDS[k] + '</td>' +
+      '<td data-label="Requests">' + fmtNum(kinds[k].requests) + '</td>' +
+      '<td data-label="Prompt">' + fmtNum(kinds[k].prompt_tokens) + '</td>' +
+      '<td data-label="Output">' + fmtNum(kinds[k].output_tokens) + '</td></tr>').join('')
+    : '<tr><td colspan="4" class="muted">No usage yet.</td></tr>';
+
+  const hr = await api('/api/usage/history');
+  if (hr.ok) {
+    const days = hr.data.days || [];
+    const mine = days.map(d => ((hr.data.tokens_by_day[d] || {})[me.username]) || 0);
+    const labels = days.map(d => d.slice(5));
+    const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
+    if (mine.some(v => v > 0)) {
+      document.getElementById('mychart').innerHTML = Charts.barsMulti({
+        series: [{name: 'tokens', color: c.trim(), values: labels.map((l, i) => ({label: l, value: mine[i]}))}],
+        height: 180, format: Charts.fmtShort, yLabel: 'tokens per day'});
+    } else {
+      document.getElementById('mychart').innerHTML = '<p class="muted">No daily usage recorded yet.</p>';
+    }
+  }
+  const tb = document.getElementById('keyrows');
+  const keys = keysR.data.keys || [];
+  if (!keys.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No keys yet.</td></tr>'; return; }
+  tb.innerHTML = keys.map(k => {
+    const u = k.usage || {};
+    const tot2 = (u.prompt_tokens||0) + (u.output_tokens||0);
+    return '<tr>' +
+      '<td data-label="Key">' + esc(k.key_id) + (k.active ? '' : ' <span class="badge off">inactive</span>') + '</td>' +
+      '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
+      '<td data-label="Prompt">' + fmtNum(u.prompt_tokens) + '</td>' +
+      '<td data-label="Output">' + fmtNum(u.output_tokens) + '</td>' +
+      '<td data-label="Total">' + fmtNum(tot2) + '</td></tr>';
+  }).join('');
+}
+load();
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>My Usage</h1></div>
+  <div class="flash" id="flash"></div>
+  <div class="statgrid" id="stats"></div>
+  <div style="height:18px"></div>
+  <div class="card">
+    <h2>Your tokens per day</h2>
+    <div id="mychart"></div>
+  </div>
+
+  <div class="card">
+    <h2>By model type</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Type</th><th>Requests</th><th>Prompt tokens</th><th>Output tokens</th></tr></thead>
+      <tbody id="kindrows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>Consumption per key (all time)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Key</th><th>Requests</th><th>Prompt tokens</th><th>Output tokens</th><th>Total</th></tr></thead>
+      <tbody id="keyrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+    <p class="muted" style="margin-bottom:0">Tokens are attributable per key; energy/cost is a full-system metric (see the System page, admins only).</p>
+  </div>
+</div>
+{{end}}

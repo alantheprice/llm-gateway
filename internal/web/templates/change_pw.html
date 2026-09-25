@@ -1,0 +1,33 @@
+{{define "title"}}Set your password — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+document.getElementById('go').addEventListener('click', async () => {
+  const o = document.getElementById('opw').value, n = document.getElementById('npw').value;
+  if (!o || !n) { flash('Fill both fields', true); return; }
+  if (n.length < 8) { flash('New password must be at least 8 characters.', true); return; }
+  const r = await api('/chat/password', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({old_password:o, new_password:n})});
+  if (r.ok) { location = '/chat'; return; }
+  const M = {
+    wrong_current_password: 'That temporary password doesn\u2019t match. Copy it exactly from the message you received (it may end with punctuation).',
+    weak_password: 'Choose at least 8 characters.',
+    pb_down: 'The account service is briefly unavailable — wait a moment and try again.'
+  };
+  flash(M[r.data.code] || r.data.error || 'Password update failed — try again.', true);
+});
+</script>
+{{end}}
+{{define "content"}}
+<div class="page" style="max-width:460px;margin:0 auto;padding-top:60px">
+  <div class="card">
+    <h1 style="font-size:17px;margin:0 0 4px">🔐 Set your password</h1>
+    <p class="muted" style="margin:.25rem 0 1rem">Welcome! Your account was created with a temporary password. Choose a new one to continue.</p>
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Temporary password</label>
+    <input id="opw" type="password" style="width:100%" autocomplete="current-password">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">New password (min 8 characters)</label>
+    <input id="npw" type="password" style="width:100%" autocomplete="new-password">
+    <button class="btn primary" id="go" style="width:100%;margin-top:18px;justify-content:center">Save and continue</button>
+    <div class="flash" id="flash"></div>
+  </div>
+</div>
+{{end}}

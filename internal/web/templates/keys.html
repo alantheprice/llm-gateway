@@ -1,0 +1,96 @@
+{{define "title"}}API Keys — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+function badge(k) {
+  if (k.rotating) return '<span class="badge grace">grace until ' + esc((k.grace_until||'').replace('T',' ')) + '</span>';
+  return k.active ? '<span class="badge ok">active</span>' : '<span class="badge off">inactive</span>';
+}
+function showSecret(res) {
+  flash('COPY IT NOW — shown only once:', false);
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;margin-top:8px;align-items:stretch';
+  const div = document.createElement('div');
+  div.className = 'secret';
+  div.style.flex = '1';
+  div.style.marginTop = '0';
+  div.textContent = res.key;
+  const cp = document.createElement('button');
+  cp.className = 'btn primary';
+  cp.textContent = 'Copy';
+  cp.addEventListener('click', () => {
+    navigator.clipboard.writeText(res.key).then(() => {
+      cp.textContent = 'Copied!';
+      setTimeout(() => cp.textContent = 'Copy', 2000);
+    });
+  });
+  row.appendChild(div); row.appendChild(cp);
+  document.getElementById('flash').after(row);
+}
+async function load() {
+  const r = await api('/api/keys');
+  if (!r.ok) { location = '/'; return; }
+  const tb = document.getElementById('keyrows');
+  if (!r.data.keys.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No keys yet — create one below.</td></tr>'; return; }
+  tb.innerHTML = r.data.keys.map(k => {
+    const u = k.usage || {requests:0, prompt_tokens:0, output_tokens:0};
+    return '<tr>' +
+      '<td data-label="Name">' + esc(k.key_id) + '</td>' +
+      '<td data-label="Prefix"><code>' + esc(k.prefix) + '…</code></td>' +
+      '<td data-label="Status">' + badge(k) + '</td>' +
+      '<td data-label="Reqs">' + fmtNum(u.requests) + '</td>' +
+      '<td data-label="Tokens">In ' + fmtNum(u.prompt_tokens) + ' · Out ' + fmtNum(u.output_tokens) + '</td>' +
+      '<td data-label="Actions" style="white-space:nowrap">' +
+      (k.active ? '<button class="btn sm" data-act="rotate" data-id="' + esc(k.key_id) + '">Rotate</button> ' : '') +
+      '<button class="btn sm danger" data-act="revoke" data-id="' + esc(k.key_id) + '">Revoke</button></td></tr>';
+  }).join('');
+  tb.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.id, act = b.dataset.act;
+    if (act === 'rotate') {
+      if (!confirm('Rotate "' + id + '"? The old key keeps working for 1 hour, then dies.')) return;
+      const r2 = await api('/api/keys', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'rotate_key', key_id:id})});
+      if (!r2.ok) { flash(r2.data.error || 'failed', true); return; }
+      load(); showSecret(r2.data);
+    } else {
+      if (!confirm('Revoke "' + id + '"? Clients using it stop working immediately.')) return;
+      const r2 = await api('/api/keys', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'revoke_key', key_id:id})});
+      if (!r2.ok) { flash(r2.data.error || 'failed', true); return; }
+      flash('Revoked ' + id); load();
+    }
+  }));
+}
+document.getElementById('create').addEventListener('click', async () => {
+  const name = document.getElementById('newname').value.trim();
+  if (!name) { flash('Give the key a name first', true); return; }
+  const r = await api('/api/keys', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'create_key', key_id:name})});
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; }
+      flash(r.data.error || 'failed', true); return; }
+  document.getElementById('newname').value = '';
+  load(); showSecret(r.data);
+});
+load();
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>API Keys</h1></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Keys authenticate requests to <code>/v1/chat/completions</code> — one per machine or client. The full key is shown once.</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Name</th><th>Prefix</th><th>Status</th><th>Reqs</th><th>Tokens (in/out)</th><th style="text-align:right">Actions</th></tr></thead>
+      <tbody id="keyrows"><tr><td colspan="6">Loading…</td></tr></tbody>
+    </table></div>
+    <div class="row" style="display:flex;gap:8px;margin-top:14px">
+      <input id="newname" placeholder="Key name (e.g. laptop, phone, ci)" style="flex:1" maxlength="40">
+      <button class="btn primary" id="create">Create key</button>
+    </div>
+  </div>
+
+</div>
+{{end}}

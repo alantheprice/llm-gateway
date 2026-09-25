@@ -1,0 +1,29 @@
+{
+ "pbkdf2": [
+  {
+   "secret": "sk-hello",
+   "salt": "abcdef123456",
+   "want": "732cc512c3dd68cfdd02c078a0c67f10d0442d3a4234791f915147089a2574dd"
+  },
+  {
+   "secret": "sk-test",
+   "salt": "salt-42",
+   "want": "1a53cf820640d1a1905421512ab9eabc51d7e1715e6d7d9de91829b0ca1700d0"
+  },
+  {
+   "secret": "üñí",
+   "salt": "s$al+t",
+   "want": "5125a1794c2859d3a5f1eead818d80f4580bd00c25fb9f4f8f254311e33fc5dd"
+  }
+ ],
+ "session": {
+  "secret": "golden-session-secret-0123456789abcdef",
+  "claims": {
+   "u": "bob",
+   "role": "user",
+   "ep": 3
+  },
+  "exp": 1800000000,
+  "token": "eyJ1IjogImJvYiIsICJyb2xlIjogInVzZXIiLCAiZXAiOiAzfXwxODAwMDAwMDAw.70be1face42c69f7dc2fd470e97e305b0faf70f73151ff785f36dca82e49677d"
+ }
+}
