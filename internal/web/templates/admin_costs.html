@@ -1,0 +1,108 @@
+{{define "title"}}Costs — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+function usd(v, digits = 4) {
+  if (v == null) return '—';
+  return '$' + Number(v).toFixed(digits);
+}
+function pct(v) { return (v == null ? '—' : Number(v).toFixed(1) + '%'); }
+
+async function load() {
+  const r = await api('/usage/costs');
+  if (!r.ok) { location = '/'; return; }
+  const d = r.data;
+  const t = d.totals;
+
+  document.getElementById('fleetstats').innerHTML =
+    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_today, 2) + '</div><div class="l">all-in cost today</div></div>' +
+    '<div class="stat"><div class="v">' + usd(t.projected_monthly_usd, 0) + '</div><div class="l">projected / month (today ×30)</div></div>' +
+    '<div class="stat"><div class="v">' + (t.all_in_usd_per_m_tokens != null ? usd(t.all_in_usd_per_m_tokens) : '—') + '</div><div class="l">all-in $ / 1M tokens</div></div>' +
+    '<div class="stat"><div class="v">' + (t.gpu_only_usd_per_m_tokens != null ? usd(t.gpu_only_usd_per_m_tokens) : '—') + '</div><div class="l">GPU-energy-only $ / 1M (no capex)</div></div>' +
+    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_30d, 2) + '</div><div class="l">all-in 30-day</div></div>';
+
+  const hr = document.getElementById('hostrows');
+  hr.innerHTML = (d.hosts || []).map(h => {
+    const am = h.fully_amortized
+      ? '<span class="muted">fully amortized</span>'
+      : (h.hardware_cost_usd > 0
+        ? pct(h.pct_depreciated) + ' · ' + Number(h.months_remaining).toFixed(1) + ' mo left'
+        : '<span class="muted">no capex configured</span>');
+    return '<tr>' +
+      '<td data-label="Host"><strong>' + esc(h.label) + '</strong><br><span class="muted">' + esc((h.ips || []).join(', ')) + '</span></td>' +
+      '<td data-label="GPU today">' + (h.gpu_kwh_today||0).toFixed(3) + ' kWh<br>' + usd(h.gpu_cost_usd_today, 4) + '</td>' +
+      '<td data-label="Overhead today">' + (h.overhead_kwh_today||0).toFixed(2) + ' kWh<br>' + usd(h.overhead_cost_usd_today, 4) + '</td>' +
+      '<td data-label="Capex today">' + usd(h.capital_usd_today, 4) + '</td>' +
+      '<td data-label="Total today">' + usd(h.total_cost_usd_today, 4) + '</td>' +
+      '<td data-label="All-in $/M">' + (h.all_in_usd_per_m_tokens_today != null ? usd(h.all_in_usd_per_m_tokens_today) : '—') + '</td>' +
+      '<td data-label="Amortization">' + am + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="7" class="muted">No hosts configured — add a "hosts" section to the gateway config.</td></tr>';
+
+  const un = document.getElementById('unmatched');
+  un.innerHTML = (d.unmatched_backends || []).length
+    ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'
+    : '';
+
+  // Per-host forward schedule chart: capital remaining over time.
+  const series = (d.hosts || []).filter(h => (h.schedule||[]).length).map((h, i) => {
+    const colors = ['#58a6ff', '#3fb950', '#d29922', '#f778ba'];
+    return {
+      name: h.label,
+      color: colors[i % colors.length],
+      values: h.schedule.map(row => ({label: row.month, value: row.capital_cumulative_usd}))
+    };
+  });
+  if (series.length) {
+    document.getElementById('schedulechart').innerHTML = Charts.linesMulti({
+      series, height: 220, format: Charts.fmtShort, yLabel: 'capital paid (USD)'});
+  } else {
+    document.getElementById('schedulechart').innerHTML = '<p class="muted">No amortization schedules — set hardware_cost_usd / amortize_years in the hosts config.</p>';
+  }
+
+  // Schedule tables per host.
+  const holder = document.getElementById('schedules');
+  holder.innerHTML = (d.hosts || []).filter(h => (h.schedule||[]).length).map(h =>
+    '<div class="card"><h2>' + esc(h.label) + ' — forward schedule</h2>' +
+    '<div class="tablewrap"><table>' +
+    '<thead><tr><th>Month</th><th>Capital</th><th>Energy est.</th><th>All-in</th><th>Cumulative paid</th></tr></thead><tbody>' +
+    h.schedule.map(row =>
+      '<tr><td data-label="Month">' + row.month + '</td>' +
+      '<td data-label="Capital">' + usd(row.capital_usd, 2) + '</td>' +
+      '<td data-label="Energy">' + usd(row.energy_est_usd, 2) + '</td>' +
+      '<td data-label="All-in">' + usd(row.total_usd, 2) + '</td>' +
+      '<td data-label="Cumulative">' + usd(row.capital_cumulative_usd, 2) + '</td></tr>').join('') +
+    '</tbody></table></div></div>').join('');
+}
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Costs</h1>
+    <span class="muted">GPU energy (NVML) + whole-system overhead + capex amortization</span>
+    <span style="flex:1"></span>
+    <button class="btn" id="refresh">Refresh</button>
+  </div>
+  <div class="flash" id="flash"></div>
+  <p class="muted" id="unmatched"></p>
+
+  <div class="statgrid" id="fleetstats"></div>
+
+  <div class="card">
+    <h2>Per-host breakdown — today</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Host</th><th>GPU energy</th><th>System overhead</th><th>Capex</th><th>Total today</th><th>All-in $ / 1M tok</th><th>Amortization</th></tr></thead>
+      <tbody id="hostrows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Amortization progress</h2>
+    <div id="schedulechart"></div>
+  </div>
+
+  <div id="schedules"></div>
+</div>
+{{end}}

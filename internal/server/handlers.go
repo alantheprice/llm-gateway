@@ -140,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)
 	mux.HandleFunc("/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/admin/system", s.handleAdminSystemPage)
+	mux.HandleFunc("/admin/costs", s.handleAdminCostsPage)
+	mux.HandleFunc("/usage/costs", s.handleUsageCosts)
 
 	// Embedded UI assets.
 	mux.Handle("/static/", web.StaticHandler(staticVerValue))

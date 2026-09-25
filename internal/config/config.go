@@ -64,6 +64,18 @@ type CacheCfg struct {
 	TTL int `json:"ttl"`
 }
 
+// HostCfg describes one physical box (1 IP = 1 box) for full-cost
+// accounting: GPU energy comes from the engines' NVML; overhead watts and
+// capex amortization are declared here (SPEC §11).
+type HostCfg struct {
+	Label          string   `json:"label"`
+	IPs            []string `json:"ips"` // backend URL hosts on this box
+	OverheadWatts  float64  `json:"overhead_watts"`      // CPU/RAM/fans/PSU, GPU excluded
+	HardwareCostUSD float64 `json:"hardware_cost_usd"`  // original purchase price
+	Purchased      string   `json:"purchased"`           // ISO date
+	AmortizeYears  float64  `json:"amortize_years"`      // straight-line term
+}
+
 type Config struct {
 	Gateway       GatewayCfg              `json:"gateway"`
 	Discovery     DiscoveryCfg            `json:"discovery"`
@@ -73,6 +85,9 @@ type Config struct {
 	OverflowPairs map[string]OverflowPair `json:"overflow_pairs"`
 	PublicModels  []string                `json:"public_models"`
 	Cache         CacheCfg                `json:"cache"`
+	// Full-cost accounting (admin /usage/costs):
+	ElectricityRate float64  `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
+	Hosts           []HostCfg `json:"hosts"`
 
 	path     string
 	mtime    time.Time
@@ -108,6 +123,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Cache.TTL == 0 {
 		c.Cache.TTL = 60
+	}
+	if c.ElectricityRate <= 0 {
+		c.ElectricityRate = 0.125
 	}
 }
 
