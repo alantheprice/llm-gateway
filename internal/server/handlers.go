@@ -108,8 +108,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Identity plane (SPEC parity with Python gateway)
 	mux.HandleFunc("/login", s.methodSwitch(map[string]http.HandlerFunc{
-		http.MethodGet:  s.handleLoginPage,
-		http.MethodPost: s.handleLogin,
+		http.MethodPost: s.handleLogin, // GET /login = 405, Python parity (login page lives at /)
 	}))
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/chat", s.handleChatPage)
@@ -119,8 +118,11 @@ func (s *Server) Handler() http.Handler {
 		http.MethodGet:  s.handleChangePWPage,
 		http.MethodPost: s.handleChangePWSubmit,
 	}))
-	mux.HandleFunc("/keys", s.handleKeys)
-	mux.HandleFunc("/api/keys", s.handleKeys) // UI JS calls /api/keys; same handler
+	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
+		http.MethodGet:  s.handleKeysPage, // page (Python parity)
+		http.MethodPost: s.handleKeys,     // API action
+	}))
+	mux.HandleFunc("/api/keys", s.handleKeys) // UI JS calls /api/keys; same API handler
 	mux.HandleFunc("/account", s.handleAccountPage)
 	mux.HandleFunc("/account/update", s.handleAccountUpdate)
 	mux.HandleFunc("/me", s.handleMe)
@@ -166,8 +168,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprint(w, "llm-gateway (go)")
+	s.handleLoginPage(w, r)
 }
 
 // checkAuth: key-or-LAN (the /v1 inference-plane contract; sessions do NOT
