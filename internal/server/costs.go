@@ -355,6 +355,10 @@ func (s *Server) usageCostsPayload() map[string]any {
 		Tokens:      int64(pTok + oTok),
 		ValueUSD:    math.Round(valueToday*10000) / 10000,
 	})
+	if ops := s.Ops(); ops != nil {
+		_ = ops.UpsertCostDay(now.Format("2006-01-02"),
+			gpuCost, overhead, capital, valueToday, int64(pTok+oTok))
+	}
 
 	// Unmatched backends (visible so admins notice uncounted GPU hosts).
 	configured := map[string]bool{}
@@ -393,7 +397,25 @@ func (s *Server) usageCostsPayload() map[string]any {
 }
 
 // costHistorySeries: ordered days with cost + value for the chart.
+// Prefers SQLite (source of truth once imported); JSON store is fallback.
 func (s *Server) costHistorySeries() map[string]any {
+	if ops := s.Ops(); ops != nil {
+		if rows, err := ops.CostSeries(90); err == nil && len(rows) > 0 {
+			out := make([]map[string]any, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, map[string]any{
+					"day":          r.Day,
+					"energy_usd":   r.EnergyUSD,
+					"overhead_usd": r.OverheadUSD,
+					"capital_usd":  r.CapitalUSD,
+					"total_usd":    r.Total(),
+					"tokens":       r.Tokens,
+					"value_usd":    r.ValueUSD,
+				})
+			}
+			return map[string]any{"days": out, "source": "sqlite"}
+		}
+	}
 	days, m := s.costHistory.Series()
 	rows := make([]map[string]any, 0, len(days))
 	for _, d := range days {
@@ -408,7 +430,7 @@ func (s *Server) costHistorySeries() map[string]any {
 			"value_usd":    c.ValueUSD,
 		})
 	}
-	return map[string]any{"days": rows}
+	return map[string]any{"days": rows, "source": "json"}
 }
 
 func gpuOnlyPerM(hosts []HostCost, tokens float64) any {
@@ -517,7 +539,7 @@ func (c *CostHistory) Series() ([]string, map[string]CostDay) {
 	return days, out
 }
 
-func costHistoryPath(usagePath string) string {
+func CostHistoryPath(usagePath string) string {
 	return filepath.Join(filepath.Dir(usagePath), "cost_history.json")
 } // peakCapacity: fleet throughput ceiling = per-request peak decode/prefill
 // × the backend's lane count, summed over backends. A 6-lane GPU decoding

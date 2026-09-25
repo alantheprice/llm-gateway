@@ -150,4 +150,3 @@ func TestCostHistoryFreezesTodayOnly(t *testing.T) {
 		t.Fatalf("series = %v", days)
 	}
 }
-
