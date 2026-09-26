@@ -5,10 +5,10 @@ the Python gateway (llm_gateway.py @ 523feab) as observed in production, NOT
 by copying its code. Tests are written against THIS document; the Go
 implementation is written to pass the tests.
 
-Goal: a **drop-in replacement** for the Python gateway's *inference plane*:
-same endpoints, same config file, same users.json/usage.json formats, same
-routing decisions. The web UI/identity plane (PocketBase login, invites,
-admin pages) is explicitly OUT of scope for v1 — see §11.
+Goal: a **drop-in replacement** for the Python gateway: same endpoints,
+same config file, same users.json/usage.json formats, same routing
+decisions. §11 documents the identity plane (since embedded into this
+binary via the PocketBase framework — see docs/start.md).
 
 ## 1. Identity & Formats (compat-critical)
 

@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Render embedded guide
+        run: |
+          cd internal/server
+          DOCS_DIR=../../docs OUT_DIR=guide go run generate_guide.go
+
+      - name: Build linux binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -ldflags "$LDFLAGS" -o dist/llm-gateway-linux-$arch ./cmd/gateway
+          done
+          # copy raw docs alongside (optional reading material)
+          cp -r docs dist/docs
+          rm -rf dist/docs/.git 2>/dev/null || true
+
+      - name: Package + checksums
+        run: |
+          cd dist
+          for arch in amd64 arm64; do
+            tar czf llm-gateway-${{ github.ref_name }}-linux-$arch.tar.gz \
+              llm-gateway-linux-$arch docs
+          done
+          rm -f llm-gateway-linux-*
+          sha256sum *.tar.gz > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
