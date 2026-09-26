@@ -18,7 +18,7 @@ func TestDayCapital(t *testing.T) {
 }
 
 func TestCapitalState(t *testing.T) {
-	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.Local)
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	// Purchased exactly 365 days before `now` — same wall-clock time, so
 	// no timezone/parse skew. 2025-09-25→2026-09-25 spans 365 days
 	// (no Feb 29 in between).
@@ -51,7 +51,7 @@ func TestCapitalState(t *testing.T) {
 }
 
 func TestComputeCostsAllIn(t *testing.T) {
-	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.Local) // 12h elapsed
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) // 12h elapsed (UTC day)
 	hosts := []HostConfig{{
 		Label: "box1", IPs: []string{"10.0.0.1"},
 		OverheadWatts: 100, HardwareUSD: 4380, AmortizeYears: 3,
@@ -90,7 +90,7 @@ func TestComputeCostsAllIn(t *testing.T) {
 }
 
 func TestComputeCostsSchedule(t *testing.T) {
-	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.Local)
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	hosts := []HostConfig{{
 		Label: "box1", IPs: []string{"10.0.0.1"},
 		OverheadWatts: 100, HardwareUSD: 1200, AmortizeYears: 2,
