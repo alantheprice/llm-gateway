@@ -29,9 +29,24 @@ async function load() {
     const days = hr.data.days || [];
     const labels = days.map(d => TZ.dayLabel(d));
     const palette = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149', '#39c5cf'];
-    if (hr.data.tokens_by_day_key && Object.keys(hr.data.tokens_by_day_key).length) {
-      // Per-key series (labeled, color legend) — falls back to a single
-      // line when only one key exists.
+
+    // Overall (all keys): always shown.
+    const mine = days.map(d => ((hr.data.tokens_by_day[d] || {})[me.username]) || 0);
+    const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
+    if (mine.some(v => v > 0)) {
+      document.getElementById('mychart').innerHTML = Charts.linesMulti({
+        series: [{name: 'total tokens', color: c.trim(), values: labels.map((l, i) => ({label: l, value: mine[i]}))}],
+        height: 200, format: Charts.fmtShort, yLabel: 'tokens per day'});
+    } else {
+      document.getElementById('mychart').innerHTML = '<p class="muted">No daily usage recorded yet.</p>';
+    }
+
+    // Per-key breakdown: separate chart below.
+    const hasKeys = hr.data.tokens_by_day_key && Object.keys(hr.data.tokens_by_day_key).length;
+    const kc = document.getElementById('keychartcard');
+    if (!hasKeys) { kc.style.display = 'none'; }
+    else {
+      kc.style.display = '';
       const kDays = hr.data.key_days || days;
       const keyIds = new Set();
       kDays.forEach(d => Object.keys(hr.data.tokens_by_day_key[d] || {}).forEach(k => keyIds.add(k)));
@@ -39,18 +54,8 @@ async function load() {
         name: k, color: palette[i % palette.length],
         values: kDays.map(d => ({label: TZ.dayLabel(d), value: (hr.data.tokens_by_day_key[d] || {})[k] || 0}))
       }));
-      document.getElementById('mychart').innerHTML = Charts.linesMulti({
+      document.getElementById('keychart').innerHTML = Charts.linesMulti({
         series: kSeries, height: 200, format: Charts.fmtShort, yLabel: 'tokens per day'});
-    } else {
-      const mine = days.map(d => ((hr.data.tokens_by_day[d] || {})[me.username]) || 0);
-      const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
-      if (mine.some(v => v > 0)) {
-        document.getElementById('mychart').innerHTML = Charts.linesMulti({
-          series: [{name: 'tokens', color: c.trim(), values: labels.map((l, i) => ({label: l, value: mine[i]}))}],
-          height: 180, format: Charts.fmtShort, yLabel: 'tokens per day'});
-      } else {
-        document.getElementById('mychart').innerHTML = '<p class="muted">No daily usage recorded yet.</p>';
-      }
     }
     const mn = document.getElementById('mynote');
     if (mn && days.length) mn.textContent = TZ.bucketNote(days[days.length - 1]);
@@ -81,9 +86,14 @@ load();
   <div class="statgrid" id="stats"></div>
   <div style="height:18px"></div>
   <div class="card">
-    <h2>Your tokens per day (by key)</h2>
+    <h2>Your tokens per day</h2>
     <div id="mychart"></div>
     <p class="muted" id="mynote" style="font-size:12px;margin:6px 0 0"></p>
+  </div>
+
+  <div class="card" id="keychartcard" style="display:none">
+    <h2>Tokens per day by key</h2>
+    <div id="keychart"></div>
   </div>
 
   <div class="card">
