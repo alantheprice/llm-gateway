@@ -22,7 +22,7 @@ func (s *Server) CountUsers() (int64, error) {
 // to login with a success note.
 func (s *Server) handleBootstrapPage(w http.ResponseWriter, r *http.Request) {
 	app := s.EmbeddedPB()
-	if app == nil {
+	if app == nil || !s.embeddedPBHealthy() {
 		errBody(w, 503, "bootstrap unavailable (embedded PocketBase not attached)")
 		return
 	}

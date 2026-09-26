@@ -187,13 +187,29 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	// (only while the users collection is empty; disappears after use).
 	// Uses the embedded app directly — the PB HTTP client would need a
 	// superuser, which a fresh install doesn't have yet.
-	if app := s.EmbeddedPB(); app != nil {
-		if n, err := app.CountUsers(); err == nil && n == 0 {
+	// MUST be panic-safe: a broken embedded PB (DB closed mid-life, port
+	// stolen at boot) previously nil-deref'd here and 502'd every "/"
+	// request through the tunnel. Degrade to the login page instead.
+	if app := s.EmbeddedPB(); app != nil && s.embeddedPBHealthy() {
+		empty := func() (ok bool) {
+			defer func() { _ = recover() }()
+			n, err := app.CountUsers()
+			return err == nil && n == 0
+		}()
+		if empty {
 			s.handleBootstrapPage(w, r)
 			return
 		}
 	}
 	s.handleLoginPage(w, r)
+}
+
+// embeddedPBHealthy: the attached app has open DB handles (safe to query).
+func (s *Server) embeddedPBHealthy() bool {
+	app := s.EmbeddedPB()
+	type readier interface{ OpsReady() bool }
+	r, ok := app.(readier)
+	return ok && r.OpsReady()
 }
 
 // checkAuth: key-or-LAN (the /v1 inference-plane contract; sessions do NOT
