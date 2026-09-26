@@ -25,7 +25,8 @@ overhead + capex only.
 ## Per-user quotas
 
 Admins → Users → set a daily token limit per user. Exceeding it returns
-`429` with a retry hint until midnight UTC. Admins and LAN-trusted
+`429` with a retry hint until midnight in the gateway host's local
+time zone (the same day boundary usage history uses). Admins and LAN-trusted
 unkeyed traffic are exempt by design.
 
 ## Users, keys, sessions
@@ -78,7 +79,7 @@ session cookies with per-user epochs, per-IP rate limits, login backoff,
 | `energy` columns are 0 | Engine lacks `--electricity-rate` or is vLLM (no NVML reporting) |
 | `bind: address already in use` (8090) at gateway boot | A standalone PocketBase is running — `sudo systemctl disable --now pocketbase` |
 | `/usage/costs` shows `source: json` | SQLite ops not attached; check boot logs for `ops tables` errors |
-| User hit 429 | Daily quota — raise it in Admins → Users, or wait for UTC midnight |
+| User hit 429 | Daily quota — raise it in Admins → Users, or wait for midnight (gateway host local time) |
 | Cache hit rates dropped after a config change | New pool name or member set = new affinity table; warms up over subsequent turns (see `cache-affinity depth=` in the journal) |
 
 ## Upgrading

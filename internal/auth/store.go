@@ -97,11 +97,14 @@ type Store struct {
 	LegacyKeysFile string
 	legacyKeys     []string
 	legacyAt       time.Time
+
+	// verified: sha256(plaintext) → record that passed PBKDF2 (see LookupKey).
+	verified map[[32]byte]verifiedKey
 }
 
 // UserSettings carries per-user service policy.
 type UserSettings struct {
-	DailyTokenLimit int `json:"daily_token_limit"` // prompt+output per UTC day; 0 = unlimited
+	DailyTokenLimit int `json:"daily_token_limit"` // prompt+output per server-local day; 0 = unlimited
 }
 
 func Open(path string) (*Store, error) {
@@ -328,21 +331,82 @@ func (s *Store) CountActiveKeys(username string) int {
 
 // LookupKey resolves a plaintext key to (username, record). Expired rotations
 // are lazily expired (SPEC §1.2). Returns ok=false when unknown/disabled.
+//
+// PBKDF2 is ~9ms per attempt, so the hot path avoids it: only records whose
+// stored prefix matches the plaintext are candidates (a random bad key costs
+// zero hashes), hashing runs outside s.mu, and verified keys are cached by
+// sha256(plaintext). A cache hit is re-validated against the live record, so
+// revoke/rotate/disable/reload take effect without explicit invalidation.
 func (s *Store) LookupKey(plain string) (string, *KeyRecord, bool) {
+	digest := sha256.Sum256([]byte(plain))
+	type candidate struct {
+		username string
+		rec      *KeyRecord
+		salt     string
+		hash     string
+	}
+	var cands []candidate
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now()
+	if hit, ok := s.verified[digest]; ok {
+		if s.liveLocked(hit.username, hit.rec, hit.hash, now) {
+			s.mu.Unlock()
+			return hit.username, hit.rec, true
+		}
+		delete(s.verified, digest)
+	}
 	for username, keys := range s.LocalKeys {
 		for _, k := range keys {
 			if !k.usable(now) {
 				continue
 			}
-			if hashEq(k.KeyHash, HashSecret(plain, k.Salt)) {
-				return username, k, true
+			// Records without a prefix (hand-edited users.json) stay checkable.
+			if k.Prefix != "" && !strings.HasPrefix(plain, k.Prefix) {
+				continue
 			}
+			cands = append(cands, candidate{username, k, k.Salt, k.KeyHash})
 		}
 	}
+	s.mu.Unlock()
+
+	for _, c := range cands {
+		if !hashEq(c.hash, HashSecret(plain, c.salt)) {
+			continue
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.liveLocked(c.username, c.rec, c.hash, time.Now()) {
+			return "", nil, false // revoked/rotated while we hashed
+		}
+		if s.verified == nil || len(s.verified) >= verifiedCacheMax {
+			s.verified = map[[32]byte]verifiedKey{}
+		}
+		s.verified[digest] = verifiedKey{c.username, c.rec, c.hash}
+		return c.username, c.rec, true
+	}
 	return "", nil, false
+}
+
+// verifiedCacheMax bounds the positive key cache; it is only populated by
+// keys that passed PBKDF2, so the bound is about churn, not abuse.
+const verifiedCacheMax = 4096
+
+type verifiedKey struct {
+	username string
+	rec      *KeyRecord
+	hash     string
+}
+
+// liveLocked reports whether rec is still one of username's records, still
+// carries hash, and is usable at now. Caller holds s.mu.
+func (s *Store) liveLocked(username string, rec *KeyRecord, hash string, now time.Time) bool {
+	for _, k := range s.LocalKeys[username] {
+		if k == rec {
+			return k.KeyHash == hash && k.usable(now)
+		}
+	}
+	return false
 }
 
 // RevokeKey removes a key by id (and any of its -retired- rotations).

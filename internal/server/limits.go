@@ -29,20 +29,21 @@ func (s *Server) enforceDailyLimit(w http.ResponseWriter, user string) bool {
 	if used < limit {
 		return true
 	}
-	// Over quota: retry after the UTC-day rollover (+1s of slack).
-	now := time.Now().UTC()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 24, 0, 0, 1, time.UTC)
+	// Over quota: retry after the day rollover (+1s of slack). Usage is
+	// bucketed by server-local date, so the quota day is the local day too.
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 24, 0, 0, 1, now.Location())
 	retry := int(time.Until(midnight).Seconds()) + 1
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", fmt.Sprint(retry))
 	w.WriteHeader(http.StatusTooManyRequests)
 	json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{
-			"message":       fmt.Sprintf("Daily token limit reached (%d of %d). Resets at UTC midnight.", used, limit),
+			"message":       fmt.Sprintf("Daily token limit reached (%d of %d). Resets at midnight server time.", used, limit),
 			"type":          "rate_limit_error",
 			"limit":         limit,
 			"used":          used,
-			"resets_at_utc": midnight.Format("15:04:05"),
+			"resets_at_utc": midnight.UTC().Format("15:04:05"),
 		}})
 	return false
 }
