@@ -65,6 +65,7 @@ type Server struct {
 	costHistory *CostHistory // per-day actual cost + value (chart)
 
 	cacheTable *routing.CacheTable // conversation-hash → GPU (content affinity)
+	dayShare   *routing.DayShare   // new-conversations-routed-today per member
 
 	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
 	// PocketBase's database. Nil in tests that don't embed PB — every
@@ -88,6 +89,8 @@ type OpsStore interface {
 	UpsertUsageDaily(day, user, kind string, requests, prompt, cached, output int) error
 	UpsertCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	CostSeries(days int) ([]embeddedpb.CostRow, error)
+	UpsertGPUDaily(day, backend string, tokens int64, kwh float64) error
+	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	PruneOlderThan(days int) (int64, error)
 }
 
@@ -167,6 +170,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		peaks:        NewPeakStore(peaksPath(UsagePath(cfg))),
 		costHistory:  NewCostHistory(CostHistoryPath(UsagePath(cfg))),
 		cacheTable:   routing.NewCacheTable(2*time.Hour, 8192),
+		dayShare:     routing.NewDayShare(),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},
@@ -523,6 +527,7 @@ func (s *Server) PollOnce() {
 				s.mu.Lock()
 				s.lastMetrics[u] = raw // raw /usage payload for /backends extras
 				s.mu.Unlock()
+				s.recordGPUDaily(u, raw)
 				return
 			}
 			if l := pollVLLM(s.client, u, s.cfg); l != nil {
@@ -531,6 +536,23 @@ func (s *Server) PollOnce() {
 		}(u)
 	}
 	wg.Wait()
+}
+
+// recordGPUDaily: persist a backend's engine-reported daily tokens + kWh
+// into the gpu_daily ops table (MAX-merge; engines are the source of
+// truth). Called on every poll — the upsert is idempotent, so the 10s
+// cadence just keeps the day's row current.
+func (s *Server) recordGPUDaily(backend string, raw map[string]any) {
+	ops := s.Ops()
+	if ops == nil {
+		return
+	}
+	tok := usageNum(raw, "energy", "today", "tokens")
+	kwh := usageNum(raw, "energy", "today", "kwh")
+	if tok == 0 && kwh == 0 {
+		return
+	}
+	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), kwh)
 }
 
 func getJSON(client *http.Client, url string, timeout time.Duration) (map[string]any, bool) {

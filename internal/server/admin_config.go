@@ -175,6 +175,9 @@ func validateConfig(c *config.Config) error {
 		if pool.CapacityBias < 0 {
 			pool.CapacityBias = 0
 		}
+		if pool.MaxPoolShare < 0 || pool.MaxPoolShare >= 1 {
+			pool.MaxPoolShare = 0
+		}
 		c.ModelPools[name] = pool
 	}
 	for model, pair := range c.OverflowPairs {

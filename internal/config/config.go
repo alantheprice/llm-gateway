@@ -59,6 +59,11 @@ type PoolCfg struct {
 	// CacheAffinity: route conversations to the GPU holding their KV
 	// prefix (content-hash table), falling back to score-based pick.
 	CacheAffinity bool `json:"cache_affinity"`
+	// MaxPoolShare (0..1, 0=off): soft fairness cap. When one member has
+	// handled more than this share of today's routed requests, NEW
+	// conversations (turn 1) prefer a less-loaded sibling. Existing
+	// conversations always keep their GPU — affinity is never broken.
+	MaxPoolShare float64 `json:"max_pool_share"`
 }
 
 type OverflowPair struct {

@@ -377,7 +377,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	}
 	sort.Strings(unmatched)
 
-	return map[string]any{
+	out := map[string]any{
 		"electricity_rate_usd_per_kwh": rate,
 		"hosts":                        hostCosts,
 		"unmatched_backends":           unmatched,
@@ -396,6 +396,12 @@ func (s *Server) usageCostsPayload() map[string]any {
 		"peaks":            s.peaks.Snapshot(),
 		"gateway_port":     port,
 	}
+	if ops := s.Ops(); ops != nil {
+		if rows, err := ops.GPUDaily(time.Now().UTC().Format("2006-01-02")); err == nil {
+			out["gpu_today"] = rows
+		}
+	}
+	return out
 }
 
 // costHistorySeries: ordered days with cost + value for the chart.

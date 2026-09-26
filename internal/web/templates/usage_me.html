@@ -8,7 +8,8 @@ async function load() {
   const tot = me.totals || {};
   document.getElementById('stats').innerHTML =
     '<div class="stat"><div class="v">' + fmtNum(tot.requests) + '</div><div class="l">requests</div></div>' +
-    '<div class="stat"><div class="v">' + fmtNum(tot.prompt_tokens) + '</div><div class="l">prompt tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tot.prompt_tokens) + '</div><div class="l">prompt tokens (incl. cached)</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tot.cached_tokens || 0) + '</div><div class="l">of which cached</div></div>' +
     '<div class="stat"><div class="v">' + fmtNum(tot.output_tokens) + '</div><div class="l">output tokens</div></div>' +
     '<div class="stat"><div class="v">' + fmtNum(tot.total_tokens) + '</div><div class="l">total tokens</div></div>';
   const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
@@ -21,8 +22,9 @@ async function load() {
       '<td data-label="Type">' + KINDS[k] + '</td>' +
       '<td data-label="Requests">' + fmtNum(kinds[k].requests) + '</td>' +
       '<td data-label="Prompt">' + fmtNum(kinds[k].prompt_tokens) + '</td>' +
+      '<td data-label="Cached">' + fmtNum(kinds[k].cached_tokens || 0) + '</td>' +
       '<td data-label="Output">' + fmtNum(kinds[k].output_tokens) + '</td></tr>').join('')
-    : '<tr><td colspan="4" class="muted">No usage yet.</td></tr>';
+    : '<tr><td colspan="5" class="muted">No usage yet.</td></tr>';
 
   const hr = await api('/api/usage/history');
   if (hr.ok) {
@@ -99,7 +101,7 @@ load();
   <div class="card">
     <h2>By model type</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Type</th><th>Requests</th><th>Prompt tokens</th><th>Output tokens</th></tr></thead>
+      <thead><tr><th>Type</th><th>Requests</th><th>Prompt tokens</th><th>Cached (subset of prompt)</th><th>Output tokens</th></tr></thead>
       <tbody id="kindrows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
     </table></div>
   </div>

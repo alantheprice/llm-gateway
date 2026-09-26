@@ -331,7 +331,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		users, err := s.pb.ListUsers()
 		if err != nil {
-			errBody(w, 503, "PocketBase unreachable")
+			errBody(w, 503, "account service unavailable, try again shortly")
 			return
 		}
 		out := map[string]any{}

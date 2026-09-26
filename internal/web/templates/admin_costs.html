@@ -38,6 +38,26 @@ async function load() {
       '</tr>';
   }).join('') || '<tr><td colspan="7" class="muted">No hosts configured — add a "hosts" section to the gateway config.</td></tr>';
 
+  // Per-GPU throughput today (tokens + kWh + share)
+  const gpuRows = d.gpu_today || [];
+  const gpuTotal = gpuRows.reduce((a, r) => a + (r.tokens || 0), 0);
+  const gsel = document.getElementById('gpuchart');
+  if (!gpuRows.length || !gpuTotal) {
+    gsel.innerHTML = '<p class="muted">No per-GPU telemetry yet (needs NInfer-fork engines).</p>';
+  } else {
+    const colors = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149'];
+    const maxT = Math.max(...gpuRows.map(r => r.tokens || 0));
+    gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) =>
+      '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
+      esc(r.backend.replace('http://', '')) + ' — ' + Charts.fmtShort(r.tokens) + ' tok · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
+      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '%</span>').join('') + '</div>' +
+      gpuRows.map((r, i) => {
+        const w = maxT ? Math.max(4, 100 * (r.tokens || 0) / maxT) : 0;
+        return '<div style="margin:6px 0"><div style="height:14px;background:var(--border,#30363d);border-radius:7px;overflow:hidden">' +
+               '<div style="height:100%;width:' + w + '%;background:' + colors[i % colors.length] + '"></div></div></div>';
+      }).join('');
+  }
+
   const un = document.getElementById('unmatched');
   un.innerHTML = (d.unmatched_backends || []).length
     ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'

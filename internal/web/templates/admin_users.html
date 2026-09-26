@@ -12,7 +12,7 @@ async function load() {
   const r = await api('/admin/users');
   if (!r.ok) { location = '/'; return; }
   document.getElementById('pbstatus').textContent =
-    r.data.pocketbase_reachable ? 'PocketBase: connected' : 'PocketBase: UNREACHABLE (provisioning disabled)';
+    r.data.pocketbase_reachable ? 'Account service: connected' : 'Account service: UNREACHABLE (provisioning disabled)';
   const tb = document.getElementById('userrows');
   const users = Object.entries(r.data.users || {});
   if (!users.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No users.</td></tr>'; return; }
@@ -63,7 +63,7 @@ async function load() {
       showSecret(r2.data.password);
       load();
     } else if (act === 'delete') {
-      const typed = prompt('Type the username "' + u + '" to confirm PERMANENT deletion (PocketBase account + all API keys):');
+      const typed = prompt('Type the username "' + u + '" to confirm PERMANENT deletion (account + all API keys):');
       if (typed !== u) { flash('Deletion cancelled — username did not match.', true); return; }
       const r2 = await api('/admin/users', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({action:'delete_user', username:u})});

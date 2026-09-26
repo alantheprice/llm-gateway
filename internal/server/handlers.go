@@ -471,6 +471,26 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 			s.relayPoolPick(w, r, modelName, pool, body, *cp, user, keyID, est, convMsgs)
 			return
 		}
+
+		// NEW conversation (no cache entry): apply the fairness cap before
+		// the classic picker. Scores for every member, once.
+		if pool.MaxPoolShare > 0 {
+			scores := map[string]float64{}
+			for _, m := range members {
+				scores[m.URL] = s.tracker.Score(m.URL)
+			}
+			if url := routing.PickNewConversation(s.dayShare, pool.MaxPoolShare, members, scores); url != "" {
+				for _, m := range members {
+					if m.URL == url {
+						s.dayShare.Inc(url)
+						s.relayPoolPick(w, r, modelName, pool, body, routing.PickResult{
+							URL: m.URL, ModelID: m.ModelID, Scores: scores,
+						}, user, keyID, est, convMsgs)
+						return
+					}
+				}
+			}
+		}
 	}
 
 	s.routePoolClassic(w, r, modelName, pool, body, user, keyID, est, convMsgs)

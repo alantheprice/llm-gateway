@@ -24,7 +24,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := s.pb.FindUser(sess.U)
 	if err != nil {
-		errBody(w, 503, "PocketBase unreachable")
+		errBody(w, 503, "account service unavailable, try again shortly")
 		return
 	}
 	if rec == nil {
@@ -158,6 +158,7 @@ func (s *Server) handleAPIUsageMe(w http.ResponseWriter, r *http.Request) {
 	tot := map[string]any{
 		"requests":      uint0(u),
 		"prompt_tokens": pint(u),
+		"cached_tokens": pcache(u),
 		"output_tokens": pout(u),
 		"total_tokens":  pint(u) + pout(u),
 		"kinds":         map[string]any{},
@@ -204,6 +205,13 @@ func pint(u *UserUsage) int {
 		return 0
 	}
 	return u.PromptTokens
+}
+
+func pcache(u *UserUsage) int {
+	if u == nil {
+		return 0
+	}
+	return u.CachedTokens
 }
 
 func pout(u *UserUsage) int {

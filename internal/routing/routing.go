@@ -140,6 +140,87 @@ type Member struct {
 	Lanes          int // resolved lane count for capacity math
 }
 
+// DayShare: rolling per-member count of NEW conversations routed today
+// (first turns only). Feeds the fairness cap.
+type DayShare struct {
+	mu     sync.Mutex
+	day    string
+	counts map[string]int
+}
+
+func NewDayShare() *DayShare {
+	return &DayShare{counts: map[string]int{}, day: time.Now().UTC().Format("2006-01-02")}
+}
+
+func (d *DayShare) rolloverLocked() {
+	today := time.Now().UTC().Format("2006-01-02")
+	if d.day != today {
+		d.day = today
+		d.counts = map[string]int{}
+	}
+}
+
+// Inc: count a new conversation on member.
+func (d *DayShare) Inc(member string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rolloverLocked()
+	d.counts[member]++
+}
+
+// Counts: today's per-member conversation counts.
+func (d *DayShare) Counts() map[string]int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rolloverLocked()
+	out := make(map[string]int, len(d.counts))
+	for k, v := range d.counts {
+		out[k] = v
+	}
+	return out
+}
+
+// PickNewConversation: pick where a NEW conversation starts, honoring the
+// fairness cap. A member over maxShare (share of new-conversations today)
+// is deprioritized unless every member is over (then least-bad wins).
+// Returns the chosen member URL or "" when the cap is not active.
+func PickNewConversation(share *DayShare, maxShare float64, members []Member, scores map[string]float64) string {
+	if share == nil || maxShare <= 0 || len(members) < 2 {
+		return ""
+	}
+	counts := share.Counts()
+	total := 0
+	for _, v := range counts {
+		total += v
+	}
+	if total == 0 {
+		return ""
+	}
+	over := func(url string) bool {
+		return float64(counts[url])/float64(total) > maxShare
+	}
+	var under []Member
+	for _, m := range members {
+		if !over(m.URL) {
+			under = append(under, m)
+		}
+	}
+	if len(under) == 0 {
+		return "" // everyone over: fall back to normal scoring
+	}
+	// Among under-cap members, lowest score wins (ties: fewer convos).
+	best := ""
+	bestScore := 2.0
+	bestCount := 1 << 30
+	for _, m := range under {
+		sc := scores[m.URL]
+		if sc < bestScore || (sc == bestScore && counts[m.URL] < bestCount) {
+			best, bestScore, bestCount = m.URL, sc, counts[m.URL]
+		}
+	}
+	return best
+}
+
 // PickResult is the selected member plus the score map used.
 type PickResult struct {
 	URL     string

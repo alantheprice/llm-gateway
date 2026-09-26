@@ -287,7 +287,7 @@ func (s *Server) registerIdentityDocs() {
 	// /login, /logout: bare ops (form POST/redirect + cookie on raw mux).
 	s.registerBare(huma.Operation{
 		OperationID: "login", Method: http.MethodPost, Path: "/login",
-		Summary:     "Web login (PocketBase-backed)",
+		Summary:     "Web login",
 		Description: "Form POST (username, password). Issues the llmgw_session cookie (HttpOnly, SameSite=Lax, 7d). Escalating per-IP+username backoff on failures.",
 		Tags:        []string{"identity"},
 		Responses: map[string]*huma.Response{
@@ -407,7 +407,7 @@ func (s *Server) registerAdminDocs() {
 		_ = role
 		users, err := s.pb.ListUsers()
 		if err != nil {
-			return nil, huma.Error503ServiceUnavailable("PocketBase unreachable")
+			return nil, huma.Error503ServiceUnavailable("account service unavailable, try again shortly")
 		}
 		out := &AdminListOutput{}
 		out.Body.PocketbaseReachable = true
@@ -427,7 +427,7 @@ func (s *Server) registerAdminDocs() {
 		o.Responses = map[string]*huma.Response{
 			"200": {Description: "Users + keys"},
 			"403": {Description: "Admin only"},
-			"503": {Description: "PocketBase unreachable"},
+			"503": {Description: "account service unavailable"},
 		}
 	})
 
