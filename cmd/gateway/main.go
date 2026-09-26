@@ -119,6 +119,7 @@ func main() {
 
 	srv := server.New(cfg, store)
 	srv.SetOps(pbApp)
+	srv.SetEmbeddedPB(pbApp)
 	srv.ParseNetworks()
 	if err := server.InitUI(); err != nil {
 		log.Fatalf("templates: %v", err)

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
@@ -36,7 +37,8 @@ type Config struct {
 
 // App wraps the pocketbase app instance.
 type App struct {
-	pb *pocketbase.PocketBase
+	pb      *pocketbase.PocketBase
+	dataDir string
 }
 
 // Start initializes PB and serves it on a goroutine. PB's RootCmd is
@@ -79,7 +81,7 @@ func Start(cfg Config) (*App, error) {
 		}
 	}()
 	log.Printf("embedded PocketBase starting on %s:%d (data: %s)", cfg.Bind, cfg.Port, cfg.DataDir)
-	return &App{pb: app}, nil
+	return &App{pb: app, dataDir: cfg.DataDir}, nil
 }
 
 // SuperuserCmd: passthrough to the embedded PocketBase superuser command
@@ -110,7 +112,7 @@ func BootstrapApp(dataDir string, port int) (*App, error) {
 	if err := app.Bootstrap(); err != nil {
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	return &App{pb: app}, nil
+	return &App{pb: app, dataDir: dataDir}, nil
 }
 
 // Close releases the app's DB handles (CLI short-lived processes).
@@ -278,6 +280,36 @@ func (a *App) ensureRoleField() (*core.Collection, error) {
 		return nil, err
 	}
 	return a.pb.FindCachedCollectionByNameOrId("users")
+}
+
+// SuperuserPass: current dashboard superuser password from the env file
+// (live read — the file appears after bootstrap-time provisioning).
+func (a *App) SuperuserPass() (string, bool) {
+	if a.dataDir == "" {
+		return "", false
+	}
+	data, err := os.ReadFile(filepath.Join(a.dataDir, ".superuser-env"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "SUPERUSER_PASS=") {
+			p := strings.TrimSpace(strings.TrimPrefix(line, "SUPERUSER_PASS="))
+			if p != "" {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// CountUsers: total records in the users collection (0 on fresh install).
+func (a *App) CountUsers() (int64, error) {
+	col, err := a.pb.FindCachedCollectionByNameOrId("users")
+	if err != nil {
+		return 0, err
+	}
+	return a.pb.CountRecords(col)
 }
 
 // OpsReady reports whether the app is bootstrapped (DB handles open).

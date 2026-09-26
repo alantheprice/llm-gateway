@@ -15,8 +15,9 @@ import (
 )
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	credsRefresh func() (string, string)
+	BaseURL      string
+	HTTP         *http.Client
 
 	mu       sync.Mutex
 	adminTok string
@@ -119,13 +120,28 @@ func (c *Client) Authenticate(username, password string) (*UserRecord, error) {
 
 // AdminToken returns a cached superuser auth token (refreshed every 20 min,
 // mirroring the Python gateway's _pb_admin_token TTL).
+// SetCredsRefresh registers a hook re-reading superuser credentials (used
+// when the env file appears after boot — fresh-install bootstrap).
+func (c *Client) SetCredsRefresh(fn func() (string, string)) {
+	c.mu.Lock()
+	c.credsRefresh = fn
+	c.mu.Unlock()
+}
+
 func (c *Client) AdminToken() (string, error) {
 	c.mu.Lock()
 	ident, pass := c.Ident, c.Pass
 	tok, at := c.adminTok, c.adminAt
+	refresh := c.credsRefresh
 	c.mu.Unlock()
 	if tok != "" && time.Since(at) < 20*time.Minute {
 		return tok, nil
+	}
+	if ident == "" && refresh != nil {
+		ident, pass = refresh()
+		c.mu.Lock()
+		c.Ident, c.Pass = ident, pass
+		c.mu.Unlock()
 	}
 	if ident == "" {
 		return "", fmt.Errorf("pb: superuser not configured")
@@ -135,7 +151,21 @@ func (c *Client) AdminToken() (string, error) {
 	}
 	err := c.do("POST", "/api/collections/_superusers/auth-with-password",
 		map[string]string{"identity": ident, "password": pass}, "", &out)
-	if err != nil {
+	if err != nil && refresh != nil {
+		// Credentials may have been provisioned after boot — refresh once.
+		if ident2, pass2 := refresh(); pass2 != "" && pass2 != pass {
+			c.mu.Lock()
+			c.Ident, c.Pass = ident2, pass2
+			c.mu.Unlock()
+			err = c.do("POST", "/api/collections/_superusers/auth-with-password",
+				map[string]string{"identity": ident2, "password": pass2}, "", &out)
+			if err == nil {
+				c.mu.Lock()
+				c.adminTok, c.adminAt = out.Token, time.Now()
+				c.mu.Unlock()
+				return out.Token, nil
+			}
+		}
 		return "", err
 	}
 	c.mu.Lock()
@@ -218,4 +248,20 @@ func (c *Client) DeleteUser(id string) error {
 func urlQueryEscape(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(
 		strings.ReplaceAll(s, "%", "%25"), " ", "%20"), "'", "%27")
+}
+
+// CountUsers: total records in the users collection (0 on fresh install).
+func (c *Client) CountUsers() (int64, error) {
+	tok, err := c.AdminToken()
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		TotalItems int64 `json:"totalItems"`
+	}
+	err = c.do("GET", "/api/collections/users/records?perPage=1", nil, tok, &out)
+	if err != nil {
+		return 0, err
+	}
+	return out.TotalItems, nil
 }

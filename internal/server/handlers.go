@@ -137,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/usage/me", s.handleMyUsagePage)
 	mux.HandleFunc("/api/usage/me", s.handleAPIUsageMe)
 	mux.HandleFunc("/api/usage/history", s.handleAPIUsageHistory)
+	mux.HandleFunc("/bootstrap", s.handleBootstrapPage)
 	mux.HandleFunc("/guide", s.guideHandler)
 	mux.HandleFunc("/guide/", s.guideHandler)
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)
@@ -179,6 +180,17 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
+	}
+	// First-run bootstrap: an install with zero PB accounts has no way to
+	// log in. Serve a one-time create-admin form instead of a dead login
+	// (only while the users collection is empty; disappears after use).
+	// Uses the embedded app directly — the PB HTTP client would need a
+	// superuser, which a fresh install doesn't have yet.
+	if app := s.EmbeddedPB(); app != nil {
+		if n, err := app.CountUsers(); err == nil && n == 0 {
+			s.handleBootstrapPage(w, r)
+			return
+		}
 	}
 	s.handleLoginPage(w, r)
 }

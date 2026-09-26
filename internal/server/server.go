@@ -72,6 +72,9 @@ type Server struct {
 	ops   OpsStore
 	muOps sync.RWMutex
 
+	// embeddedPB: the in-process PocketBase app (bootstrap flows).
+	embeddedPB PBAppStore
+
 	huma         huma.API
 	docHandler   http.Handler
 	uiKeys       map[string]string // username -> plaintext ui key (session lifetime)
@@ -86,6 +89,28 @@ type OpsStore interface {
 	UpsertCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	CostSeries(days int) ([]embeddedpb.CostRow, error)
 	PruneOlderThan(days int) (int64, error)
+}
+
+// PBAppStore: the embedded PocketBase app surface the server needs beyond
+// the HTTP client (bootstrap-time user count, direct record access).
+type 	PBAppStore interface {
+		CountUsers() (int64, error)
+		CreateAdminUser(username, password string) error
+		EnsureSuperuserEnv(dataDir string, ident, pass string) (string, error)
+		SuperuserPass() (string, bool)
+	}// SetEmbeddedPB attaches the embedded PB app (nil in tests that don't
+// embed PocketBase).
+func (s *Server) SetEmbeddedPB(app PBAppStore) {
+	s.muOps.Lock()
+	s.embeddedPB = app
+	s.muOps.Unlock()
+}
+
+// EmbeddedPB returns the attached app (or nil).
+func (s *Server) EmbeddedPB() PBAppStore {
+	s.muOps.RLock()
+	defer s.muOps.RUnlock()
+	return s.embeddedPB
 }
 
 // SetOps attaches the embedded PB ops store (called from main after
@@ -147,6 +172,17 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		uiKeys: map[string]string{},
 	}
 	s.pb = pb.New(pbURL(cfg))
+	s.pb.SetCredsRefresh(func() (string, string) {
+		if app := s.EmbeddedPB(); app != nil {
+			if p, ok := app.SuperuserPass(); ok {
+				return pbSuperuserIdent(), p
+			}
+		}
+		if p := pbSuperuserPass(cfg); p != "" {
+			return pbSuperuserIdent(), p
+		}
+		return "", ""
+	})
 	s.pb.SetSuperuser(pbSuperuserIdent(), pbSuperuserPass(cfg))
 	if a := os.Getenv("AGENT_URL"); a != "" {
 		s.agentURL = a
