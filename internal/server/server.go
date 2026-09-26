@@ -244,6 +244,20 @@ func pbSuperuserIdent() string {
 	return "admin@llm.local"
 }
 
+// publicBaseURL: externally-reachable gateway URL for user-facing
+// snippets (invites, key setup). config wins; env SPROUT_PUBLIC_URL
+// second; last resort http://<hostname>:<port>.
+func (s *Server) publicBaseURL() string {
+	if u := strings.TrimSpace(s.cfg.Gateway.PublicBaseURL); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if u := os.Getenv("SPROUT_PUBLIC_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	host, _ := os.Hostname()
+	return fmt.Sprintf("http://%s:%d", host, s.cfg.Gateway.Port)
+}
+
 func pbURL(cfg *config.Config) string {
 	if u := os.Getenv("POCKETBASE_URL"); u != "" {
 		return u
@@ -649,3 +663,25 @@ func toF(v any) (float64, bool) {
 }
 
 // --- usage accounting (SPEC §8) ---
+
+// preferredModel: the model a new user should default to — the pool name
+// (virtual id) if pools exist, else the first public model, else the
+// first discovered model id.
+func (s *Server) preferredModel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name := range s.cfg.ModelPools {
+		return name
+	}
+	if len(s.cfg.PublicModels) > 0 {
+		if s.cfg.PublicModels[0] != "*" {
+			return s.cfg.PublicModels[0]
+		}
+	}
+	for _, info := range s.backends {
+		if len(info.Models) > 0 {
+			return info.Models[0]
+		}
+	}
+	return ""
+}

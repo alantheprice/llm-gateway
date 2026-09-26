@@ -25,6 +25,35 @@ function showSecret(res) {
   });
   row.appendChild(div); row.appendChild(cp);
   document.getElementById('flash').after(row);
+  // Setup script snippet: env + shell profile + sprout provider.
+  fetch('/static/setup-key.sh').then(r2 => r2.text()).then(tpl => {
+    const setup = 'curl -fsSL ' + location.origin + '/static/setup-key.sh | sh -s -- ' + res.key;
+    const box = document.createElement('div');
+    box.className = 'card'; box.style.marginTop = '12px';
+    const h = document.createElement('h2');
+    h.style.fontSize = '14px';
+    h.textContent = 'Set up a machine with this key (bash/zsh + sprout)';
+    box.appendChild(h);
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;font-size:12px;margin:0 0 8px';
+    pre.textContent = setup;
+    box.appendChild(pre);
+    const note = document.createElement('p');
+    note.className = 'muted'; note.style.fontSize = '12px';
+    note.textContent = 'Run it on the target machine — stores the key in the shell profile and registers the gateway as a sprout provider (if sprout is installed).';
+    box.appendChild(note);
+    const row2 = document.createElement('div'); row2.style.cssText = 'display:flex;gap:8px';
+    row2.appendChild((() => { const b = document.createElement('button'); b.className = 'btn';
+      b.textContent = 'Copy setup command';
+      b.addEventListener('click', () => navigator.clipboard.writeText(setup).then(() => {
+        b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy setup command', 2000); }));
+      return b; })());
+    row2.appendChild((() => { const a = document.createElement('a'); a.className = 'btn';
+      a.href = '/static/setup-key.sh'; a.textContent = 'View script'; a.target = '_blank';
+      return a; })());
+    box.appendChild(row2);
+    row.after(box);
+  });
 }
 async function load() {
   const r = await api('/api/keys');

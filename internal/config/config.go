@@ -21,6 +21,10 @@ type GatewayCfg struct {
 	InternalAPIKeyFile string `json:"internal_api_key_file"`
 	UsersFile          string `json:"users_file"`
 	UsageFile          string `json:"usage_file"`
+	// PublicBaseURL: externally-reachable URL of this gateway (e.g.
+	// https://llm.example.com). Used in invite emails / copy-paste
+	// snippets shown to new users. Falls back to http://<host>:<port>.
+	PublicBaseURL string `json:"public_base_url"`
 }
 
 type DiscoveryCfg struct {

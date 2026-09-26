@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"llmgateway/internal/web"
 )
 
 // CountUsers: total PB accounts (0 on a fresh install).
@@ -109,4 +111,29 @@ func (s *Server) renderBootstrapDone(w http.ResponseWriter, user string) {
 <p class="ok">✓ Setup complete</p>
 <p style="margin-top:1.4rem"><a class="ok" href="/login">Continue to login →</a></p>
 <p><a href="/guide">Setup guide</a></p>`)
+}
+
+// handleSetupKeyScript: serves the client setup script with the gateway's
+// URL/provider/model substituted. Public (the script itself carries no
+// secret; the user pastes their own key as the argument).
+func (s *Server) handleSetupKeyScript(w http.ResponseWriter, r *http.Request) {
+	tpl, err := web.StaticFile("setup-key.sh.tpl")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	model := s.preferredModel()
+	prov := strings.SplitN(model, ".", 2)[0]
+	prov = strings.SplitN(prov, "-", 2)[0]
+	if prov == "" {
+		prov = "gateway"
+	}
+	out := strings.NewReplacer(
+		"__GATEWAY_URL__", s.publicBaseURL(),
+		"__PROVIDER_NAME__", "llmgw-"+prov,
+		"__DEFAULT_MODEL__", model,
+	).Replace(string(tpl))
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(out))
 }

@@ -138,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/usage/me", s.handleAPIUsageMe)
 	mux.HandleFunc("/api/usage/history", s.handleAPIUsageHistory)
 	mux.HandleFunc("/bootstrap", s.handleBootstrapPage)
+	mux.HandleFunc("/static/setup-key.sh", s.handleSetupKeyScript)
 	mux.HandleFunc("/guide", s.guideHandler)
 	mux.HandleFunc("/guide/", s.guideHandler)
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)

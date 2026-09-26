@@ -114,6 +114,8 @@ function render(c) {
       'LAN hosts call inference without a key. 127.0.0.1 is NEVER trusted (tunnel path).') +
     field('models_require_auth', chk('g_mra', g.models_require_auth),
       'Off (default): GET /v1/models is public. On: the catalog needs a key like every other /v1 surface.') +
+    field('public_base_url', txt('g_pbu', g.public_base_url, 'https://llm.example.com'),
+      'External URL for invite emails and setup snippets (empty = hostname:port).') +
     field('local_networks (one CIDR per line)', '<textarea name="g_nets" rows="3">' + esc((c.local_networks||[]).join('\n')) + '</textarea>',
       'Applies instantly on save.');
 
@@ -234,6 +236,7 @@ function collect() {
       port: CFG.gateway.port, // port edits need a restart; not editable here
       trust_local_networks: chkv('g_tln'),
       models_require_auth: chkv('g_mra'),
+      public_base_url: val('g_pbu').trim(),
     },
     local_networks: lines(val('g_nets')),
     cache: {ttl: parseInt(val('c_ttl'), 10) || 60},

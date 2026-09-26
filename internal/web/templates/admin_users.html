@@ -79,10 +79,45 @@ document.getElementById('invite').addEventListener('click', async () => {
     body: JSON.stringify({action:'create_user', username:u.trim(), email})});
   if (!r.ok) { if (r.status === 401) { location = '/'; return; }
       flash(r.data.error || 'failed', true); return; }
-  flash('Account created. Hand these credentials to the user — they must set a new password on first login.', false);
-  showSecret('Temporary password for ' + u, r.data.password);
+  showInvite(r.data.invite_email || ('Username: ' + u + '\nPassword: ' + r.data.password));
   load();
 });
+
+function copyBtn(text, label) {
+  const b = document.createElement('button');
+  b.className = 'btn'; b.textContent = label || 'Copy';
+  b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(text); b.textContent = 'Copied ✓';
+          setTimeout(() => b.textContent = label || 'Copy', 1500); }
+    catch { // clipboard API needs https or localhost — fall back
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove();
+      b.textContent = 'Copied ✓'; setTimeout(() => b.textContent = label || 'Copy', 1500);
+    }
+  });
+  return b;
+}
+
+function showInvite(emailText) {
+  document.querySelectorAll('.invite-box').forEach(e => e.remove());
+  const div = document.createElement('div');
+  div.className = 'invite-box card';
+  div.style.marginTop = '12px';
+  const h = document.createElement('h2'); h.textContent = 'Invite email — copy & send';
+  div.appendChild(h);
+  const p = document.createElement('p'); p.className = 'muted'; p.style.fontSize = '12px';
+  p.textContent = 'Paste into your mail client. The temp password and setup link are included; the user sets a new password on first login.';
+  div.appendChild(p);
+  const ta = document.createElement('textarea');
+  ta.value = emailText; ta.rows = Math.min(18, emailText.split('\n').length + 1);
+  ta.style.width = '100%'; ta.style.fontFamily = 'monospace'; ta.style.fontSize = '12px';
+  div.appendChild(ta);
+  const row = document.createElement('div'); row.style.marginTop = '8px';
+  row.appendChild(copyBtn(emailText, 'Copy email'));
+  div.appendChild(row);
+  document.getElementById('flash').after(div);
+}
 document.getElementById('rp-go').addEventListener('click', async () => {
   const u = document.getElementById('rp-user').value.trim();
   if (!u) { flash('Enter a username', true); return; }

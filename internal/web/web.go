@@ -104,6 +104,15 @@ func Render(w io.Writer, pageName string, data PageData) error {
 // StaticHandler returns an http handler serving the embedded assets with
 // immutable caching keyed by the static version (atomic so hot reloads can
 // bump it).
+// StaticFile reads an embedded static file by name.
+func StaticFile(name string) ([]byte, error) {
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, err
+	}
+	return fs.ReadFile(sub, name)
+}
+
 func StaticHandler(ver *atomic.Value) http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
