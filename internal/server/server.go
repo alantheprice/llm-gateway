@@ -422,10 +422,20 @@ func unauthorized(w http.ResponseWriter) {
 
 // --- discovery (SPEC §7) ---
 
+// Discover: probe discovery port ranges for OpenAI-compatible backends.
+// The gateway's own listen port is always skipped — otherwise a misconfig
+// (gateway port inside a discovery range) makes the gateway discover and
+// route to itself. Discovery is a convenience; explicit pool members need
+// no scanning and are the recommended setup.
 func (s *Server) Discover() {
 	urls := []string{}
+	own := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.Gateway.Port)
 	for _, p := range s.cfg.Discovery.LocalPorts {
-		urls = append(urls, fmt.Sprintf("http://127.0.0.1:%d", p))
+		u := fmt.Sprintf("http://127.0.0.1:%d", p)
+		if u == own {
+			continue
+		}
+		urls = append(urls, u)
 	}
 	for _, p := range s.cfg.Discovery.RemotePorts {
 		urls = append(urls, fmt.Sprintf("http://%s:%d", s.cfg.Discovery.RemoteHost, p))

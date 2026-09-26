@@ -66,7 +66,7 @@ func pbDataDirForBootstrap() string { return os.Getenv("PB_DATA_DIR") }
 
 func renderBootstrapShell(w http.ResponseWriter, inner string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`+
+	fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`+
 		`<title>Set up llm-gateway</title><style>`+
 		`body{font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}`+
 		`.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:2rem;width:360px}`+

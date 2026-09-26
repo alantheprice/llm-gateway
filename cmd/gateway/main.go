@@ -2,11 +2,12 @@
 // PocketBase identity and SQLite operational history.
 //
 // Modes:
-//   (default)  serve the gateway (embedded PB must own its port)
-//   version    print version
-//   superuser  passthrough to the embedded PocketBase superuser command
-//              (e.g. `llm-gateway superuser upsert admin@example.com pw`)
-//   user       manage the first admin without the UI (see userCmd)
+//
+//	(default)  serve the gateway (embedded PB must own its port)
+//	version    print version
+//	superuser  passthrough to the embedded PocketBase superuser command
+//	           (e.g. `llm-gateway superuser upsert admin@example.com pw`)
+//	user       manage the first admin without the UI (see userCmd)
 package main
 
 import (
