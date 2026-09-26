@@ -512,7 +512,9 @@ func (c *CostHistory) saveLocked() {
 func (c *CostHistory) RecordDay(day string, d CostDay) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if day != time.Now().Format("2006-01-02") {
+	// Cost day keys are UTC (callers pass now.UTC()); the "only today writes"
+	// guard must compare against the same UTC day or every write is dropped.
+	if day != time.Now().UTC().Format("2006-01-02") {
 		return
 	}
 	c.Days[day] = d

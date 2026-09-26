@@ -57,8 +57,9 @@ func TestDailyLimit429(t *testing.T) {
 	}
 	var resp struct {
 		Error struct {
-			Limit int `json:"limit"`
-			Used  int `json:"used"`
+			Limit    int    `json:"limit"`
+			Used     int    `json:"used"`
+			ResetsAt string `json:"resets_at"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(w2.Body.Bytes(), &resp); err != nil {
@@ -66,6 +67,20 @@ func TestDailyLimit429(t *testing.T) {
 	}
 	if resp.Error.Limit != 100 || resp.Error.Used != 180 {
 		t.Fatalf("error body limit/used = %d/%d, want 100/180", resp.Error.Limit, resp.Error.Used)
+	}
+	// resets_at must be a parseable RFC3339 instant (the UI converts it to
+	// the viewer's local time), exactly at the next UTC midnight.
+	rst, err := time.Parse(time.RFC3339, resp.Error.ResetsAt)
+	if err != nil {
+		t.Fatalf("resets_at %q is not RFC3339: %v", resp.Error.ResetsAt, err)
+	}
+	if rst.In(time.UTC).Hour() != 0 || rst.In(time.UTC).Minute() != 0 || rst.In(time.UTC).Second() != 0 {
+		t.Fatalf("resets_at %v is not on the hour (want next UTC midnight)", rst)
+	}
+	// The window resets sometime within the next 24h (in the future).
+	until := rst.Sub(time.Now())
+	if until <= 0 || until > 24*time.Hour {
+		t.Fatalf("resets_at %v is %s from now, want (0, 24h)", rst, until)
 	}
 }
 
@@ -130,7 +145,8 @@ func TestApplyBookPrices(t *testing.T) {
 func TestCostHistoryFreezesTodayOnly(t *testing.T) {
 	dir := t.TempDir()
 	ch := NewCostHistory(filepath.Join(dir, "cost_history.json"))
-	today := time.Now().Format("2006-01-02")
+	// RecordDay's "only today writes" guard compares against the UTC day.
+	today := time.Now().UTC().Format("2006-01-02")
 	ch.RecordDay(today, CostDay{EnergyUSD: 1.0, Tokens: 100, ValueUSD: 2.0})
 	ch.RecordDay("2020-01-01", CostDay{EnergyUSD: 99}) // past day: rejected
 	if got := ch.Days[today]; got.EnergyUSD != 1.0 {

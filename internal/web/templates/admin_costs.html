@@ -14,7 +14,7 @@ async function load() {
   const t = d.totals;
 
   document.getElementById('fleetstats').innerHTML =
-    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_today, 2) + '</div><div class="l">all-in cost today</div></div>' +
+    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_today, 2) + '</div><div class="l">all-in cost, current UTC day</div></div>' +
     '<div class="stat"><div class="v">' + usd(t.projected_monthly_usd, 0) + '</div><div class="l">projected / month (today ×30)</div></div>' +
     '<div class="stat"><div class="v">' + (t.all_in_usd_per_m_tokens != null ? usd(t.all_in_usd_per_m_tokens) : '—') + '</div><div class="l">all-in $ / 1M tokens</div></div>' +
     '<div class="stat"><div class="v">' + (t.gpu_only_usd_per_m_tokens != null ? usd(t.gpu_only_usd_per_m_tokens) : '—') + '</div><div class="l">GPU-energy-only $ / 1M (no capex)</div></div>' +
@@ -56,11 +56,12 @@ async function load() {
   const h = d.cost_history || {};
   const hd = h.days || [];
   if (hd.length) {
-    const labels = hd.map(r => r.day.slice(5));
     const costSeries = { name: 'actual cost', color: '#f85149',
-      values: hd.map(r => ({label: r.day.slice(5), value: Math.round((r.total_usd)*1000)/1000})) };
+      values: hd.map(r => ({label: TZ.dayLabel(r.day), value: Math.round((r.total_usd)*1000)/1000})) };
     const valSeries = { name: 'value (your prices)', color: '#3fb950',
-      values: hd.map(r => ({label: r.day.slice(5), value: Math.round((r.value_usd)*1000)/1000})) };
+      values: hd.map(r => ({label: TZ.dayLabel(r.day), value: Math.round((r.value_usd)*1000)/1000})) };
+    const vn = document.getElementById('valuernote');
+    if (vn) vn.textContent = TZ.bucketNote(hd[hd.length - 1].day);
     document.getElementById('valuechart').innerHTML = Charts.linesMulti({
       series: [costSeries, valSeries], height: 240, format: Charts.fmtShort, yLabel: 'USD/day'});
   } else {
@@ -130,11 +131,12 @@ document.addEventListener('DOMContentLoaded', load);
   <div class="card">
     <h2>Value vs actual cost — daily</h2>
     <div id="valuechart"><p class="muted">Loading…</p></div>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">Red: what the fleet actually cost that day (GPU energy + host overhead + capex accrual). Green: what the day's traffic would have cost at your prices. Green above red = the system is paying for itself.</p>
+    <p class="muted" id="valuernote" style="font-size:12px;margin:6px 0 0"></p>
+    <p class="muted" style="font-size:12px;margin:4px 0 0">Red: what the fleet actually cost that day (GPU energy + host overhead + capex accrual). Green: what the day's traffic would have cost at your prices. Green above red = the system is paying for itself.</p>
   </div>
 
   <div class="card">
-    <h2>Value by user (today, at cost-floor prices)</h2>
+    <h2>Value by user — current UTC day (at cost-floor prices)</h2>
     <div class="tablewrap"><table>
       <thead><tr><th>User</th><th>Value today</th></tr></thead>
       <tbody id="valuerows"><tr><td colspan="2" class="muted">Loading…</td></tr></tbody>

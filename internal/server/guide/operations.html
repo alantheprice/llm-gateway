@@ -20,8 +20,10 @@ accrual) means the system pays for itself. History persists in SQLite<br>
 overhead + capex only.</p>
 <h2>Per-user quotas</h2>
 <p>Admins → Users → set a daily token limit per user. Exceeding it returns<br>
-<code>429</code> with a retry hint until midnight UTC. Admins and LAN-trusted<br>
-unkeyed traffic are exempt by design.</p>
+<code>429</code> with a retry hint until midnight UTC — the same UTC-day boundary<br>
+usage and cost accounting bucket by (the admin UI shows the rollover in<br>
+your local time). Admins and LAN-trusted unkeyed traffic are exempt by<br>
+design.</p>
 <h2>Users, keys, sessions</h2>
 <ul>
 <li><strong>Invites</strong>: Admins → Users → invite (credential hand-off; the user<br>
@@ -62,7 +64,7 @@ session cookies with per-user epochs, per-IP rate limits, login backoff,<br>
 | <code>energy</code> columns are 0 | Engine lacks <code>--electricity-rate</code> or is vLLM (no NVML reporting) |<br>
 | <code>bind: address already in use</code> (8090) at gateway boot | A standalone PocketBase is running — <code>sudo systemctl disable --now pocketbase</code> |<br>
 | <code>/usage/costs</code> shows <code>source: json</code> | SQLite ops not attached; check boot logs for <code>ops tables</code> errors |<br>
-| User hit 429 | Daily quota — raise it in Admins → Users, or wait for UTC midnight |<br>
+| User hit 429 | Daily quota — raise it in Admins → Users, or wait for UTC midnight (UI shows the local-time equivalent) |<br>
 | Cache hit rates dropped after a config change | New pool name or member set = new affinity table; warms up over subsequent turns (see <code>cache-affinity depth=</code> in the journal) |</p>
 <h2>Upgrading</h2>
 <p>Releases are tagged <code>vX.Y.Z</code>; <code>install.sh</code> re-run handles it (see<br>

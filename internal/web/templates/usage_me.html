@@ -28,7 +28,7 @@ async function load() {
   if (hr.ok) {
     const days = hr.data.days || [];
     const mine = days.map(d => ((hr.data.tokens_by_day[d] || {})[me.username]) || 0);
-    const labels = days.map(d => d.slice(5));
+    const labels = days.map(d => TZ.dayLabel(d));
     const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
     if (mine.some(v => v > 0)) {
       document.getElementById('mychart').innerHTML = Charts.linesMulti({
@@ -37,6 +37,8 @@ async function load() {
     } else {
       document.getElementById('mychart').innerHTML = '<p class="muted">No daily usage recorded yet.</p>';
     }
+    const mn = document.getElementById('mynote');
+    if (mn && days.length) mn.textContent = TZ.bucketNote(days[days.length - 1]);
   }
   const tb = document.getElementById('keyrows');
   const keys = keysR.data.keys || [];
@@ -66,6 +68,7 @@ load();
   <div class="card">
     <h2>Your tokens per day</h2>
     <div id="mychart"></div>
+    <p class="muted" id="mynote" style="font-size:12px;margin:6px 0 0"></p>
   </div>
 
   <div class="card">

@@ -339,8 +339,31 @@
     }
     try {
       if (!resp.ok) {
-        const err = await resp.text();
-        a.content = '⚠ ' + resp.status + ': ' + err.slice(0, 300);
+        const body = await resp.text();
+        if (resp.status === 429) {
+          // 429 has two producers on this route: the daily-quota gate
+          // (type "rate_limit_error", carries resets_at — a UTC instant to
+          // localize) and the global per-IP throttle (type "rate_limited",
+          // no reset). Branch on type so we don't mislabel a throttle 429
+          // as a quota reset.
+          try {
+            const e = JSON.parse(body.slice(0, 2000)).error || {};
+            if (e.type === 'rate_limit_error' && e.resets_at && typeof TZ !== 'undefined') {
+              const used = (e.used != null && e.limit != null)
+                ? ` (${e.used} of ${e.limit} tokens)` : '';
+              a.content = '⚠ 429: Daily token limit reached' + used +
+                ' — resets ' + TZ.instantLocal(e.resets_at, {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) + '.';
+            } else if (e.type === 'rate_limited') {
+              a.content = '⚠ 429: Too many requests from your IP — slow down and retry.';
+            } else {
+              a.content = '⚠ 429: ' + (e.message || body.slice(0, 300));
+            }
+          } catch (e) {
+            a.content = '⚠ 429: ' + body.slice(0, 300);
+          }
+        } else {
+          a.content = '⚠ ' + resp.status + ': ' + body.slice(0, 300);
+        }
       } else if (useTools) {
         // seed-agent SSE: start / tool_start / tool_end / content / done
         const reader = resp.body.getReader();

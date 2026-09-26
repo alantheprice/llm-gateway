@@ -28,7 +28,7 @@ async function load() {
       '<td data-label="Email" class="muted">' + esc(u.email || '') + '</td>' +
       '<td data-label="Role"><span class="badge ' + (u.role === 'admin' ? 'role-admin' : 'off') + '">' + esc(u.role || 'user') + '</span></td>' +
       '<td data-label="Keys">' + nk + ' active</td>' +
-      '<td data-label="Today / limit">' + quota + '</td>' +
+      '<td data-label="Today / limit">' + quota + (lim.daily_token_limit > 0 ? '<br><span class="muted" style="font-size:11px">resets ' + TZ.instantLocal(TZ.nextUtcMidnight(), {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) + '</span>' : '') + '</td>' +
       '<td data-label="Actions" style="white-space:nowrap">' +
       '<button class="btn sm" data-act="limit" data-u="' + esc(name) + '" data-limit="' + (lim.daily_token_limit||0) + '">Limit</button> ' +
       '<button class="btn sm" data-act="role" data-u="' + esc(name) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' +
@@ -108,7 +108,7 @@ load();
 
   <div class="card">
     <div class="tablewrap"><table>
-      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Keys</th><th>Tokens today / limit</th><th style="text-align:right">Actions</th></tr></thead>
+      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Keys</th><th>Tokens / limit (current UTC day)</th><th style="text-align:right">Actions</th></tr></thead>
       <tbody id="userrows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
     </table></div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">Limits count prompt + output tokens per user per UTC day across all engines; requests over the limit get a 429 with a retry-after until midnight. Admins, the operator key, and LAN-trusted requests are exempt.</p>

@@ -370,8 +370,8 @@ func (u *UsageStore) User(username string) *UserUsage {
 func (u *UsageStore) TodayTokens(username string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	// Same local-date key RecordDetailed writes under (Python parity).
-	today := time.Now().Format("2006-01-02")
+	// Same UTC-day key RecordDetailed writes under.
+	today := time.Now().UTC().Format("2006-01-02")
 	t := u.Data.Daily[today][username]
 	if t == nil {
 		return 0

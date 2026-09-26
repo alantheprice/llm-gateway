@@ -7,11 +7,13 @@ async function load() {
   const t = usageR.data.totals;
 
   document.getElementById('energystats').innerHTML =
-    '<div class="stat"><div class="v">' + (t.energy_kwh_today||0).toFixed(3) + ' kWh</div><div class="l">energy today</div></div>' +
-    '<div class="stat"><div class="v">$' + (t.energy_cost_usd_today||0).toFixed(4) + '</div><div class="l">cost today</div></div>' +
-    '<div class="stat"><div class="v">$' + (t.energy_cost_per_m_tokens_usd != null ? t.energy_cost_per_m_tokens_usd.toFixed(4) : '—') + '</div><div class="l">per 1M tokens (avg today)</div></div>' +
+    '<div class="stat"><div class="v">' + (t.energy_kwh_today||0).toFixed(3) + ' kWh</div><div class="l">energy, current UTC day</div></div>' +
+    '<div class="stat"><div class="v">$' + (t.energy_cost_usd_today||0).toFixed(4) + '</div><div class="l">cost, current UTC day</div></div>' +
+    '<div class="stat"><div class="v">$' + (t.energy_cost_per_m_tokens_usd != null ? t.energy_cost_per_m_tokens_usd.toFixed(4) : '—') + '</div><div class="l">per 1M tokens (avg, current UTC day)</div></div>' +
     '<div class="stat"><div class="v">' + (t.energy_kwh_30d||0).toFixed(1) + ' kWh</div><div class="l">30-day energy</div></div>' +
     '<div class="stat"><div class="v">$' + (t.energy_cost_usd_30d||0).toFixed(2) + '</div><div class="l">30-day cost</div></div>';
+  const tn = document.getElementById('todaynote');
+  if (tn) tn.textContent = TZ.todayBucketNote();
 
   const gr = document.getElementById('gpurows');
   const gpus = Object.entries(usageR.data.backends || {}).filter(([u,b]) => b.reachable);
@@ -69,7 +71,7 @@ async function loadCharts() {
   if (!r.ok) return;
   const days = r.data.days || [];
   if (!days.length) return;
-  const labels = days.map(d => d.slice(5));  // MM-DD
+  const labels = days.map(d => TZ.dayLabel(d));  // UTC day, shown in viewer's local
 
   // Energy: kWh bars
   const kwh = days.map(d => (r.data.energy_by_day[d] || {}).kwh || 0);
@@ -80,10 +82,12 @@ async function loadCharts() {
     height: 220, format: v => v.toFixed(2), yLabel: 'kWh per day'});
   const costLine = days.map((d, i) => {
     const e = r.data.energy_by_day[d] || {};
-    return e.cost_usd != null ? `${d.slice(5)}: $${(+e.cost_usd).toFixed(2)}` : '';
+    return e.cost_usd != null ? `${labels[i]}: $${(+e.cost_usd).toFixed(2)}` : '';
   }).filter(Boolean).join(' · ');
   document.getElementById('energychart').insertAdjacentHTML('beforeend',
     '<p class="muted">Cost per day: ' + costLine + '</p>');
+  const en = document.getElementById('energynote');
+  if (en) en.textContent = TZ.bucketNote(days[days.length - 1]);
 
   // Tokens per day per user
   const users = new Set();
@@ -91,10 +95,12 @@ async function loadCharts() {
   const palette = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149', '#39c5cf'];
   const series = [...users].map((u, i) => ({
     name: u, color: palette[i % palette.length],
-    values: days.map(d => ({label: d.slice(5), value: (r.data.tokens_by_day[d] || {})[u] || 0}))
+    values: days.map(d => ({label: TZ.dayLabel(d), value: (r.data.tokens_by_day[d] || {})[u] || 0}))
   }));
   document.getElementById('tokenchart').innerHTML = Charts.linesMulti({
     series, height: 220, format: Charts.fmtShort, yLabel: 'tokens per day'});
+  const kn = document.getElementById('tokennote');
+  if (kn) kn.textContent = TZ.bucketNote(days[days.length - 1]);
 }
 
 document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); });
@@ -114,22 +120,25 @@ loadCharts(); setInterval(loadCharts, 60000);
   <div class="flash" id="flash"></div>
 
   <div class="statgrid" id="energystats"></div>
-  <div style="height:18px"></div>
+  <p class="muted" id="todaynote" style="font-size:12px;margin:0 0 8px"></p>
+  <div style="height:10px"></div>
 
   <div class="card">
     <h2>Energy &amp; cost — last 30 days</h2>
     <div id="energychart"></div>
+    <p class="muted" id="energynote" style="font-size:12px;margin:6px 0 0"></p>
   </div>
 
   <div class="card">
     <h2>Tokens per day — by user</h2>
     <div id="tokenchart"></div>
+    <p class="muted" id="tokennote" style="font-size:12px;margin:6px 0 0"></p>
   </div>
 
   <div class="card">
     <h2>GPU pool</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Backend</th><th>Lanes</th><th>Busy</th><th>Decode tok/s</th><th>Prefill tok/s</th><th>Energy today</th><th>Cost today</th><th>$ / 1M tok</th></tr></thead>
+      <thead><tr><th>Backend</th><th>Lanes</th><th>Busy</th><th>Decode tok/s</th><th>Prefill tok/s</th><th>Energy (current UTC day)</th><th>Cost (current UTC day)</th><th>$ / 1M tok</th></tr></thead>
       <tbody id="gpurows"><tr><td colspan="8" class="muted">Loading…</td></tr></tbody>
     </table></div>
   </div>
