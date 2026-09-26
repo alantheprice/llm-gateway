@@ -122,7 +122,7 @@ func TestComputeCostsSchedule(t *testing.T) {
 
 func TestBackendHostIP(t *testing.T) {
 	cases := map[string]string{
-		"http://127.0.0.1:8000":     "127.0.0.1",
+		"http://127.0.0.1:8000":    "127.0.0.1",
 		"http://192.168.1.20:8006": "192.168.1.20",
 		"192.168.1.20:8006":        "192.168.1.20",
 	}

@@ -93,12 +93,12 @@ type OpsStore interface {
 
 // PBAppStore: the embedded PocketBase app surface the server needs beyond
 // the HTTP client (bootstrap-time user count, direct record access).
-type 	PBAppStore interface {
-		CountUsers() (int64, error)
-		CreateAdminUser(username, password string) error
-		EnsureSuperuserEnv(dataDir string, ident, pass string) (string, error)
-		SuperuserPass() (string, bool)
-	}// SetEmbeddedPB attaches the embedded PB app (nil in tests that don't
+type PBAppStore interface {
+	CountUsers() (int64, error)
+	CreateAdminUser(username, password string) error
+	EnsureSuperuserEnv(dataDir string, ident, pass string) (string, error)
+	SuperuserPass() (string, bool)
+} // SetEmbeddedPB attaches the embedded PB app (nil in tests that don't
 // embed PocketBase).
 func (s *Server) SetEmbeddedPB(app PBAppStore) {
 	s.muOps.Lock()
