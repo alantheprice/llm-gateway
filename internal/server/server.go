@@ -163,6 +163,18 @@ func pbSuperuserPass(cfg *config.Config) string {
 	if p := os.Getenv("PB_SUPERUSER_PASS"); p != "" {
 		return p
 	}
+	// Embedded-PB layout: <PB_DATA_DIR>/.superuser-env (written by
+	// `user create-admin` / install.sh).
+	if dd := os.Getenv("PB_DATA_DIR"); dd != "" {
+		data, err := os.ReadFile(filepath.Join(dd, ".superuser-env"))
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "SUPERUSER_PASS=") {
+					return strings.TrimSpace(strings.TrimPrefix(line, "SUPERUSER_PASS="))
+				}
+			}
+		}
+	}
 	usersPath := cfg.Gateway.UsersFile
 	if usersPath == "" {
 		usersPath = "users.json"
@@ -171,14 +183,19 @@ func pbSuperuserPass(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
-	envPath := filepath.Join(filepath.Dir(filepath.Dir(abs)), "pb", ".superuser-env")
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		return ""
+	candidates := []string{
+		filepath.Join(filepath.Dir(filepath.Dir(abs)), "pb", ".superuser-env"),
+		filepath.Join(filepath.Dir(abs), ".superuser-env"), // <conf dir>/.superuser-env
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "SUPERUSER_PASS=") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "SUPERUSER_PASS="))
+	for _, envPath := range candidates {
+		data, err := os.ReadFile(envPath)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "SUPERUSER_PASS=") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "SUPERUSER_PASS="))
+			}
 		}
 	}
 	return ""

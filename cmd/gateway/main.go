@@ -1,9 +1,17 @@
-// llm-gateway: single-binary Go port of the Python gateway's inference plane.
-// See docs/SPEC.md for the behavioral contract.
+// llm-gateway: single-binary, engine-aware LLM gateway with embedded
+// PocketBase identity and SQLite operational history.
+//
+// Modes:
+//   (default)  serve the gateway (embedded PB must own its port)
+//   version    print version
+//   superuser  passthrough to the embedded PocketBase superuser command
+//              (e.g. `llm-gateway superuser upsert admin@example.com pw`)
+//   user       manage the first admin without the UI (see userCmd)
 package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -15,7 +23,15 @@ import (
 	"llmgateway/internal/server"
 )
 
+// version is stamped at release builds: -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println("llm-gateway " + version)
+		return
+	}
+
 	confPath := os.Getenv("LLM_GATEWAY_CONF")
 	if confPath == "" {
 		confPath = "llm_gateway.conf"
@@ -25,7 +41,9 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	if p := os.Getenv("PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
+		if port, err := strconv.Atoi(p); err != nil || port < 1 || port > 65535 {
+			log.Fatalf("invalid PORT %q", p)
+		} else {
 			cfg.Gateway.Port = port
 		}
 	}
@@ -34,14 +52,9 @@ func main() {
 	if usersPath == "" {
 		usersPath = "users.json"
 	}
-	store, err := auth.Open(usersPath)
-	if err != nil {
-		log.Fatalf("users store: %v", err)
-	}
 
-	// Embedded PocketBase: identity plane runs in-process (one binary,
-	// one SQLite). The standalone pocketbase.service must be OFF before
-	// starting the gateway — two servers can't hold the same SQLite.
+	// Embedded PocketBase app (identity plane + ops SQLite). Built before
+	// the mode switch so `superuser` and `user` modes can use it too.
 	pbDataDir := os.Getenv("PB_DATA_DIR")
 	if pbDataDir == "" {
 		pbDataDir = embeddedpb.DataDirFromGatewayConf(usersPath, "")
@@ -52,12 +65,35 @@ func main() {
 			pbPort = v
 		}
 	}
-	pbApp, err := embeddedpb.Start(embeddedpb.Config{
+	// The server's PB client defaults to 8090; when PB_PORT moves the
+	// embedded instance, point the client at it (unless set explicitly).
+	if os.Getenv("POCKETBASE_URL") == "" && os.Getenv("PB_URL") == "" && pbPort != 8090 {
+		os.Setenv("POCKETBASE_URL", fmt.Sprintf("http://127.0.0.1:%d", pbPort))
+	}
+
+	// CLI management modes (run before serving; safe while gateway down).
+	if len(os.Args) > 1 && os.Args[1] == "superuser" {
+		embeddedpb.SuperuserCmd(pbDataDir, pbPort, os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "user" {
+		if err := userCmd(pbDataDir, pbPort, os.Args[2:]); err != nil {
+			log.Fatalf("user: %v", err)
+		}
+		return
+	}
+
+	store, err := auth.Open(usersPath)
+	if err != nil {
+		log.Fatalf("users store: %v", err)
+	}
+
+	pbApp, pbErr := embeddedpb.Start(embeddedpb.Config{
 		DataDir: pbDataDir,
 		Port:    pbPort,
 	})
-	if err != nil {
-		log.Fatalf("embedded pocketbase: %v", err)
+	if pbErr != nil {
+		log.Fatalf("embedded pocketbase: %v", pbErr)
 	}
 	if err := pbApp.WaitUntilHealthy("127.0.0.1", pbPort, 15*time.Second); err != nil {
 		log.Fatalf("embedded pocketbase: %v (is pocketbase.service still running? stop it first)", err)

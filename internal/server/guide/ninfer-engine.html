@@ -1,0 +1,94 @@
+<h1>NInfer Engine Runbook</h1>
+<p>The gateway routes fine against any OpenAI-compatible backend, but<br>
+<strong>routing intelligence and energy accounting need engine telemetry</strong>. The<br>
+NInfer fork supplies it. This runbook installs the fork as a<br>
+systemd-served engine the gateway can pool.</p>
+<h2>What the fork adds</h2>
+<p>Three endpoints stock engines don't have (branch <code>nvfp4-upstream-master</code><br>
+of <a href="https://github.com/alantheprice/ninfer-4090"><code>alantheprice/ninfer-4090</code></a>):</p>
+<p>| Endpoint | Gateway feature it feeds |<br>
+|---|---|<br>
+| <code>GET /slots</code> | lane capacity + running/waiting → load score (0.75·lanes + 0.15·queue + 0.10·KV-pressure) |<br>
+| <code>GET /usage</code> | tok/s, cache-hit %, KV spills/evictions, <strong>energy kWh + $</strong> (NVML, <code>--electricity-rate</code>) → admin Costs page, price book |<br>
+| <code>GET /metrics</code> | Prometheus text (vLLM-compatible parser) |</p>
+<p>Counters persist across engine restarts via <code>--metrics-state</code> — daily/30-day<br>
+energy rollups survive.</p>
+<h2>Prerequisites</h2>
+<p>| Component | Version | Notes |<br>
+|---|---|---|<br>
+| NVIDIA GPU | sm_90 (4090/6000 Pro) or sm_120 (5090) | driver 570+ |<br>
+| CUDA toolkit | 13.x | <code>nvcc --version</code> |<br>
+| CMake | ≥ 3.28 | hard requirement |<br>
+| Ninja, GCC 13+ | any recent | C++20 |<br>
+| Disk | ~60 GB | model artifact + build |</p>
+<h2>Install (scripted)</h2>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install-ninfer-engine.sh | bash -s -- --arch 120a
+</code></pre>
+<p><code>--arch</code>: <code>120a</code> for RTX 5090 / 6000 Pro Ada, <code>90a</code> for 4090-class. The<br>
+script clones the fork, builds <code>ninfer-serve</code>, installs a systemd unit<br>
+(<code>ninfer-engine.service</code>), and prints the flags to confirm.</p>
+<h2>Install (manual)</h2>
+<pre><code class="language-bash">git clone -b nvfp4-upstream-master https://github.com/alantheprice/ninfer-4090.git ninfer
+cd ninfer
+PATH=/usr/local/cuda-13.1/bin:$PATH cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120a
+PATH=/usr/local/cuda-13.1/bin:$PATH ninja -C build -j$(nproc)
+sudo install -m755 build/apps/ninfer-serve /usr/local/bin/
+</code></pre>
+<h3>Model artifact</h3>
+<p>Either copy an existing <code>*.ninfer</code> v3 artifact to the box, or convert:</p>
+<pre><code class="language-bash">huggingface-cli download Ostfralla/Qwen3.8-27B-NVFP4-NInfer \
+  qwen3_8_27b_nvfp4.ninfer --local-dir models/
+python3 tools/upgrade_ninfer_v2_to_v3.py \
+  models/qwen3_8_27b_nvfp4.ninfer models/qwen3_8_27b_nvfp4_v3.ninfer
+</code></pre>
+<h3>Serve (systemd)</h3>
+<pre><code class="language-ini"># /etc/systemd/system/ninfer-engine.service
+[Unit]
+Description=NInfer serve (llm-gateway engine)
+After=network.target
+
+[Service]
+Type=simple
+User=ninfer
+ExecStart=/usr/local/bin/ninfer-serve /var/lib/ninfer/qwen3_8_27b_nvfp4_v3.ninfer \
+  --host 0.0.0.0 --port 8006 \
+  --model-id qwen3.8-27b \
+  --max-context 262144 --kv-dtype fp8 \
+  --max-concurrency 8 --max-pending-requests 64 \
+  --spec mtp --draft-tokens 4 --lm-head-draft \
+  --preserve-thinking \
+  --electricity-rate 0.125 \
+  --metrics-state /var/lib/ninfer/metrics-state.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+<p><strong>VRAM guidance</strong>: start conservative and read the startup log's free-VRAM<br>
+line. 96 GB cards take <code>--kv-capacity 1700000</code> at C=8; 32 GB cards should<br>
+start near <code>--kv-capacity 600000 --max-concurrency 4</code> and raise it until<br>
+the log says otherwise.</p>
+<h2>Point the gateway at it</h2>
+<p>Add the member to the pool (<code>/admin/config/page</code> → pools, or conf):</p>
+<pre><code class="language-json">&quot;model_pools&quot;: { &quot;qwen3.8-27b&quot;: { &quot;members&quot;: [
+  {&quot;model_id&quot;: &quot;qwen3.8-27b&quot;, &quot;backend&quot;: &quot;http://&lt;engine-host&gt;:8006&quot;,
+   &quot;large_context&quot;: true, &quot;capacity_weight&quot;: 8}
+], &quot;cache_affinity&quot;: true } }
+</code></pre>
+<p><code>sudo systemctl restart llm-gateway</code>, then verify at <code>/backends</code>:</p>
+<ul>
+<li><code>engine=ninfer</code>, <code>lanes=8</code>, <code>load_score</code> moving with load</li>
+<li>energy columns on <code>/admin/costs</code> start filling (needs <code>--electricity-rate</code>)</li>
+</ul>
+<h2>Expected performance (validated)</h2>
+<p>| Card | Solo decode | Batched (C=8) | MTP-4 acceptance | Energy |<br>
+|---|---|---|---|---|<br>
+| RTX 6000 Pro 96GB | ~245 tok/s | 2,250–2,750 tok/s | ~77% | ~0.9 kWh / 1M out tok |<br>
+| RTX 5090 32GB | ~200–320 tok/s | C=6: 650–950 tok/s | ~77% | similar per-token |</p>
+<h2>Engine without the fork?</h2>
+<p>vLLM works with partial signal (its <code>/metrics</code> Prometheus endpoint);<br>
+llama.cpp and stock engines work with zero load signal — routing still<br>
+happens, but scores stay 0.0 and overflow never triggers. Pin sessions and<br>
+size your pools by hand in that case.</p>

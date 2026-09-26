@@ -1,0 +1,59 @@
+<h1>Installation Runbook (Linux)</h1>
+<h2>Requirements</h2>
+<ul>
+<li>Linux (amd64 or arm64) with systemd; root via sudo</li>
+<li>One or more OpenAI-compatible LLM backends reachable over HTTP<br>
+(for the full-featured path: the <a href="/guide/ninfer-engine">NInfer fork</a>)</li>
+<li>Go 1.27+ only if building from source (release installs download a binary)</li>
+</ul>
+<h2>Install</h2>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+</code></pre>
+<p>Useful flags (pass after <code>--</code>):</p>
+<p>| Flag | Meaning |<br>
+|---|---|<br>
+| <code>--version vX.Y.Z</code> | pin a release (default: latest) |<br>
+| <code>--build</code> | build from source instead of downloading |<br>
+| <code>--port N</code> | gateway port (default 8033) |<br>
+| <code>--uninstall</code> | remove service + files (data kept unless <code>--purge</code>) |</p>
+<p>What it does:</p>
+<ol>
+<li>Creates the <code>llmgateway</code> system user and <code>/opt/llm-gateway</code></li>
+<li>Installs the binary + default <code>llm_gateway.conf</code></li>
+<li>Installs the systemd unit (<code>llm-gateway.service</code>)</li>
+<li>Boots, then provisions the <strong>first admin</strong> and the <strong>PB dashboard<br>
+superuser</strong> — the admin password is printed once, store it</li>
+<li>Verifies <code>GET /health</code></li>
+</ol>
+<h2>Layout</h2>
+<p>| Path | What |<br>
+|---|---|<br>
+| <code>/opt/llm-gateway/llm-gateway</code> | binary |<br>
+| <code>/opt/llm-gateway/llm_gateway.conf</code> | config (form-editable at <code>/admin/config/page</code>) |<br>
+| <code>/opt/llm-gateway/users.json</code> | API keys + session state (0600) |<br>
+| <code>/opt/llm-gateway/usage.json</code> | usage mirror (SQLite is the store) |<br>
+| <code>/var/lib/llm-gateway/pb/</code> | embedded PocketBase + SQLite history |</p>
+<h2>First login</h2>
+<ol>
+<li><code>http://&lt;host&gt;:8033/</code> → log in as <code>admin</code></li>
+<li>Change the password (<strong>Account</strong> page)</li>
+<li>Follow <a href="/guide/start">Start Here §First 5 minutes</a></li>
+</ol>
+<h2>Upgrade</h2>
+<pre><code class="language-bash">sudo systemctl stop llm-gateway
+curl -fsSL .../install.sh | bash        # same command; replaces the binary
+sudo systemctl start llm-gateway
+</code></pre>
+<p>Usage history survives: SQLite is the store and every boot re-merges the<br>
+JSON mirrors into it.</p>
+<h2>Uninstall</h2>
+<pre><code class="language-bash">curl -fsSL .../install.sh | bash -s -- --uninstall
+# add --purge to also delete /var/lib/llm-gateway and /opt/llm-gateway
+</code></pre>
+<h2>Troubleshooting</h2>
+<p>| Symptom | Fix |<br>
+|---|---|<br>
+| Service restarts with <code>bind: address already in use (8090)</code> | Another PocketBase owns 8090 — it must be stopped: <code>sudo systemctl disable --now pocketbase</code> |<br>
+| <code>DB not open after health-wait</code> at boot | Same root cause: port 8090 is taken |<br>
+| Login says invalid credentials for the admin | Re-run <code>sudo -u llmgateway /opt/llm-gateway/llm-gateway user create-admin admin</code> and use the printed password |<br>
+| Everything works locally, 401 from outside | That's <code>models_require_auth</code> / LAN trust — see <a href="/guide/operations">Operations Runbook</a> |</p>

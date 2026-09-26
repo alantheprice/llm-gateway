@@ -1,0 +1,63 @@
+<h1>Start Here</h1>
+<p>Welcome to llm-gateway — a single-binary gateway for self-hosted LLM<br>
+backends. This page gets you from zero to a working system, then hands off<br>
+to the runbooks.</p>
+<h2>What this is</h2>
+<p>One binary that sits between your AI clients and your GPU servers:</p>
+<ul>
+<li><strong>Routes</strong> requests across pools of engines (NInfer, vLLM, llama.cpp —<br>
+anything OpenAI-compatible), with per-engine load scoring, session/ KV-cache<br>
+affinity, and failover that happens before the first streamed byte.</li>
+<li><strong>Authenticates</strong>: per-user <code>sk-...</code> keys (PBKDF2-hashed), optional LAN<br>
+trust, per-user daily quotas, login rate-limiting.</li>
+<li><strong>Accounts</strong>: per-user / per-key / per-day usage in SQLite, plus full cost<br>
+and energy accounting (real NVML energy from the NInfer fork).</li>
+<li><strong>Identity</strong>: PocketBase embedded in the same binary — accounts, invites,<br>
+sessions, admin UI. One process, one database.</li>
+</ul>
+<h2>Install (Linux)</h2>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+</code></pre>
+<p>or, pinned to a release:</p>
+<pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash -s -- --version v0.1.0
+</code></pre>
+<p>The script installs a <code>llmgateway</code> systemd service and prints the<br>
+<strong>first-admin password once</strong> — store it. Details and flags:<br>
+<a href="/guide/install">Installation Runbook</a>.</p>
+<h2>First 5 minutes</h2>
+<ol>
+<li>Open <code>http://&lt;host&gt;:8033/</code> and log in as <code>admin</code> (password from the<br>
+installer — change it under <strong>Account</strong>).</li>
+<li><strong>Point it at an engine.</strong> No backends yet? Run the NInfer engine<br>
+installer on your GPU box (see <a href="/guide/ninfer-engine">NInfer Engine Runbook</a>)<br>
+or set <code>model_pools</code> in <code>/opt/llm-gateway/llm_gateway.conf</code> to any<br>
+OpenAI-compatible server, then:
+<pre><code class="language-bash">sudo systemctl restart llm-gateway
+</code></pre>
+</li>
+<li><strong>Mint a key</strong>: Keys page → new key → copy (<code>sk-...</code>).</li>
+<li><strong>First request</strong>:
+<pre><code class="language-bash">curl -s http://&lt;host&gt;:8033/v1/chat/completions \
+  -H &quot;Authorization: Bearer sk-...&quot; \
+  -d '{&quot;model&quot;:&quot;qwen3.8-27b&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;hello&quot;}]}'
+</code></pre>
+</li>
+<li><strong>Watch it work</strong>: <code>/admin/costs</code> (cost + energy), <code>/usage/me</code><br>
+(your tokens), <code>/backends</code> (live per-engine load).</li>
+</ol>
+<h2>Where to go next</h2>
+<p>| I want to… | Read |<br>
+|---|---|<br>
+| Install/upgrade the gateway | <a href="/guide/install">Installation Runbook</a> |<br>
+| Serve models with the NInfer fork (energy metrics) | <a href="/guide/ninfer-engine">NInfer Engine Runbook</a> |<br>
+| Price it, set quotas, back up, debug | <a href="/guide/operations">Operations Runbook</a> |<br>
+| Full behavioral spec | <a href="https://github.com/sprout-foundry/llm-gateway/blob/main/docs/SPEC.md">docs/SPEC.md</a> |</p>
+<h2>Ten thousand feet</h2>
+<pre><code>clients (sk- keys) ──▶ llm-gateway :8033
+                        │  auth · quota · routing · usage · costs
+                        │  embedded PocketBase (accounts) + SQLite (history)
+                        ▼
+        NInfer fork ──────────────── vLLM ────────── llama.cpp
+        /slots /usage /metrics      /metrics         (no metrics:
+        energy via NVML             partial signal   scored 0.0)
+</code></pre>
