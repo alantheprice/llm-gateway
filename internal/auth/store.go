@@ -85,7 +85,11 @@ type Store struct {
 	mu   sync.Mutex
 	path string
 
-	SessionSecret   string                  `json:"session_secret"`
+	SessionSecret string `json:"session_secret"`
+	// AutoKeyPlain: plaintext of each user's stable "auto" UI key. Lives
+	// beside session_secret (same trust domain, 0600) so the gateway can
+	// reuse the key across restarts instead of minting a replacement.
+	AutoKeyPlain    map[string]string       `json:"auto_key_plaintexts,omitempty"`
 	LocalKeys       map[string][]*KeyRecord `json:"local_keys"`
 	MustChangePWMap map[string]bool         `json:"must_change_pw"`
 	SessionEpochs   map[string]int          `json:"session_epochs"`
@@ -97,6 +101,7 @@ type Store struct {
 	LegacyKeysFile string
 	legacyKeys     []string
 	legacyAt       time.Time
+	uiPlain        map[string]string // username -> plaintext auto key (in-process)
 
 	// verified: sha256(plaintext) → record that passed PBKDF2 (see LookupKey).
 	verified map[[32]byte]verifiedKey
@@ -109,12 +114,16 @@ type UserSettings struct {
 
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, LocalKeys: map[string][]*KeyRecord{},
-		MustChangePWMap: map[string]bool{}, SessionEpochs: map[string]int{}}
+		MustChangePWMap: map[string]bool{}, SessionEpochs: map[string]int{},
+		uiPlain: map[string]string{}}
 	if err := s.reload(); err != nil {
 		return nil, err
 	}
 	if s.SessionSecret == "" {
 		s.SessionSecret = newSecret(32)
+	}
+	for u, p := range s.AutoKeyPlain {
+		s.uiPlain[u] = p
 	}
 	// Poll for external writes: two gateways sharing one users.json (the
 	// drop-in/cutover scenario) must see each other's key churn. Python's
@@ -141,6 +150,9 @@ func (s *Store) reload() error {
 	}
 	if s.SessionEpochs == nil {
 		s.SessionEpochs = map[string]int{}
+	}
+	for u, p := range s.AutoKeyPlain {
+		s.uiPlain[u] = p
 	}
 	if s.MustChangePWMap == nil {
 		s.MustChangePWMap = map[string]bool{}

@@ -161,16 +161,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // ---- /chat/config: session info + ui api key (SPEC parity) ----
 
-// uiKeyFor returns the in-memory UI key for a session user, minting one if
-// needed (one per user; stale ui keys dropped on mint — Python parity).
+// uiKeyFor returns the user's stable "auto" chat key: minted once, then
+// reused across sessions AND restarts (persisted as a `ui` record with a
+// fixed key_id "auto"). Old ui-* keys from the previous per-mint scheme
+// are deactivated on first sight and pruned to zero.
 func (s *Server) uiKeyFor(username, role string) string {
-	s.mu.Lock()
-	key, ok := s.uiKeys[username]
-	s.mu.Unlock()
-	if ok {
-		if _, _, valid := s.store.LookupKey(key); valid {
-			return key
-		}
+	if plain, ok := s.store.AutoKeyFor(username); ok {
+		s.store.SetKeyRoleIfDiffers(username, "auto", role)
+		return plain
 	}
 	plain, _, err := s.store.CreateUIKey(username, role)
 	if err != nil {

@@ -14,6 +14,31 @@ import (
 // chat 401'd 13s after an admin login on another port). A bounded ring
 // keeps orphan accumulation capped while surviving cross-surface mints.
 // key_id = "ui-" + plaintext[3:11] (Python parity).
+// AutoKeyFor returns the plaintext of the user's stable "auto" UI key,
+// true when it exists and is active. Minted once by CreateUIKey (id
+// "auto"), reused across sessions and restarts — no per-restart churn.
+// The plaintext is cached in-process; the hash lives in users.json.
+func (s *Store) AutoKeyFor(username string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hasAuto := false
+	for _, k := range s.LocalKeys[username] {
+		if k.UI && k.KeyID == "auto" && k.Active {
+			hasAuto = true
+		}
+	}
+	if !hasAuto {
+		return "", false
+	}
+	if plain, ok := s.uiPlain[username]; ok && plain != "" {
+		return plain, true
+	}
+	return "", false
+}
+
+// CreateUIKey mints the user's stable "auto" key. Any legacy ui-* keys
+// (per-mint scheme) are deactivated and pruned — the auto key replaces
+// them all. Called when no auto key exists yet.
 func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -21,18 +46,29 @@ func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 	var named, uis []*KeyRecord
 	for _, k := range keys {
 		if k.UI {
-			uis = append(uis, k)
+			uis = append(uis, k) // legacy ui-* records: pruned below
 		} else {
 			named = append(named, k)
 		}
 	}
-	// keep the newest 2 prior ui keys (list order = mint order)
-	if len(uis) > 2 {
-		uis = uis[len(uis)-2:]
+	// An auto key already present but whose plaintext we don't know (e.g.
+	// store reloaded from disk without the in-process cache): the old hash
+	// is unrecoverable, so replace the record under the same "auto" id.
+	// Otherwise reuse the known plaintext — stable across mints.
+	if cached, ok := s.uiPlain[username]; ok {
+		for _, k := range uis {
+			if k.KeyID == "auto" && k.Active {
+				if k.Role != role {
+					k.Role = role
+					_ = s.saveLocked()
+				}
+				return cached, k, nil
+			}
+		}
 	}
 	plain, prefix, salt := NewAPIKey()
 	rec := &KeyRecord{
-		KeyID:   "ui-" + strings.TrimPrefix(plain[:11], "sk-"),
+		KeyID:   "auto",
 		Prefix:  prefix,
 		Salt:    salt,
 		Created: time.Now().UTC().Format(isoLayout),
@@ -43,6 +79,11 @@ func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 	rec.KeyHash = HashSecret(plain, salt)
 	uis = append(uis, rec)
 	s.LocalKeys[username] = append(named, uis...)
+	s.uiPlain[username] = plain
+	if s.AutoKeyPlain == nil {
+		s.AutoKeyPlain = map[string]string{}
+	}
+	s.AutoKeyPlain[username] = plain
 	if err := s.saveLocked(); err != nil {
 		return "", nil, err
 	}
