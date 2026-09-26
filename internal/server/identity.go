@@ -407,7 +407,7 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		// persistent secrets; they're minted by the user on the Keys page
 		// and travel only through the copy-paste setup snippet there.
 		_ = s.uiKeyFor(target, role)
-		_ = s.preferredModel()
+		model := s.preferredModel()
 		invite := fmt.Sprintf(`Subject: Your llm-gateway account
 
 Hi,
@@ -426,7 +426,7 @@ with a copy-paste command that sets it up on any machine.
 Questions? Just reply to this email.
 `, s.publicBaseURL(), target, pw)
 		jsonOK(w, map[string]any{"status": "ok", "username": rec.Username, "password": pw,
-			"invite_email": invite,
+			"invite_email": invite, "model": model,
 			"note":         "password shown once - pass to user; they must set a new one on first login"})
 	case "set_email":
 		rec, err := s.pb.FindUser(target)
