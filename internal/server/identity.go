@@ -427,7 +427,7 @@ Questions? Just reply to this email.
 `, s.publicBaseURL(), target, pw)
 		jsonOK(w, map[string]any{"status": "ok", "username": rec.Username, "password": pw,
 			"invite_email": invite, "model": model,
-			"note":         "password shown once - pass to user; they must set a new one on first login"})
+			"note": "password shown once - pass to user; they must set a new one on first login"})
 	case "set_email":
 		rec, err := s.pb.FindUser(target)
 		if err != nil || rec == nil {
