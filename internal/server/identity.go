@@ -402,11 +402,12 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		s.setMustChangePW(target, true)
 		log.Printf("Admin %s created PB user %s (must change password)", sess.U, target)
-		// Pre-provision the stable "auto" UI key so the invite email can
-		// include ready-to-paste setup commands (first login works with
-		// it immediately).
-		autoKey := s.uiKeyFor(target, role)
-		model := s.preferredModel()
+		// The stable "auto" UI key still exists (chat works right after
+		// first login) — but it is NOT put in the email. API keys are
+		// persistent secrets; they're minted by the user on the Keys page
+		// and travel only through the copy-paste setup snippet there.
+		_ = s.uiKeyFor(target, role)
+		_ = s.preferredModel()
 		invite := fmt.Sprintf(`Subject: Your llm-gateway account
 
 Hi,
@@ -414,26 +415,19 @@ Hi,
 An account has been created for you on our llm-gateway (a private
 ChatGPT-style AI service running on our own hardware).
 
-  Sign in:     %s/
-  Username:    %s
+  Sign in:   %s/
+  Username:  %s
   Temp password: %s
 
-You'll be asked to set a new password on first login. Your API key is
-provisioned automatically (visible on the Keys page after login).
-
-To use it from your terminal, run:
-
-  curl -fsSL %s/static/setup-key.sh | sh -s -- %s
-
-This stores your key, adds it to your shell profile, and (if you use
-sprout) registers the gateway as a provider. Works with bash and zsh.
+You'll be asked to set a new password on first login. After that, the
+Keys page lets you mint an API key whenever you need one — it comes
+with a copy-paste command that sets it up on any machine.
 
 Questions? Just reply to this email.
-`, s.publicBaseURL(), target, pw, s.publicBaseURL(), autoKey)
+`, s.publicBaseURL(), target, pw)
 		jsonOK(w, map[string]any{"status": "ok", "username": rec.Username, "password": pw,
-			"auto_key": autoKey, "invite_email": invite, "setup_url": s.publicBaseURL() + "/static/setup-key.sh",
-			"model": model,
-			"note":  "password shown once - pass to user; they must set a new one on first login"})
+			"invite_email": invite,
+			"note":         "password shown once - pass to user; they must set a new one on first login"})
 	case "set_email":
 		rec, err := s.pb.FindUser(target)
 		if err != nil || rec == nil {
