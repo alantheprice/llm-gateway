@@ -79,7 +79,7 @@ func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {
 // RecordDetailed is Record with engine-reported cache reuse.
 func (u *UsageStore) RecordDetailed(user, keyID, model string, prompt, output, cached int) {
 	kind := kindFor(model)
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	usr, ok := u.Data.Users[user]
@@ -243,7 +243,7 @@ func (u *UsageStore) OpsRows() []OpsRow {
 		out = append(out, OpsRow{Day: day, User: user, Kind: kind,
 			Requests: t.Requests, Prompt: t.PromptTokens, Cached: t.CachedTokens, Output: t.OutputTokens})
 	}
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	// Lifetime per user: kinds + per-key.
 	for user, usr := range u.Data.Users {
 		if usr == nil {
@@ -295,7 +295,7 @@ func (u *UsageStore) KeyUsage(username string) map[string]map[string]int {
 func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsage) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	all := make(map[string]*UserUsage, len(u.Data.Users))
 	for k, v := range u.Data.Users {
 		cp := *v
@@ -314,7 +314,7 @@ func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsa
 func (u *UsageStore) TodaySnapshot() map[string]*UserUsage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	out := map[string]*UserUsage{}
 	for k, v := range u.Data.Daily[today] {
 		cp := *v
@@ -332,7 +332,7 @@ func (u *UsageStore) AvgDailyTokens(n int) float64 {
 	if n <= 0 {
 		n = 7
 	}
-	today := time.Now().Format("2006-01-02")
+	today := time.Now().UTC().Format("2006-01-02")
 	days := make([]string, 0, len(u.Data.Daily))
 	for d := range u.Data.Daily {
 		if d != today {

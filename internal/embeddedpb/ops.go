@@ -135,7 +135,7 @@ func (a *App) PruneOlderThan(days int) (int64, error) {
 	if a.pb.DB() == nil {
 		return 0, fmt.Errorf("ops: DB not open")
 	}
-	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
 	res, err := a.pb.DB().NewQuery(`
 		DELETE FROM usage_daily WHERE day < {:cutoff}
 	`).Bind(map[string]any{"cutoff": cutoff}).Execute()

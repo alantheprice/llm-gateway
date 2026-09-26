@@ -35,6 +35,7 @@ type HostCost struct {
 	GPUCost30dUSD float64 `json:"gpu_cost_usd_30d"`
 
 	// Overhead (whole-system minus GPU): watts × elapsed UTC day × rate.
+	// (Day boundary is UTC everywhere — engines bucket energy by UTC.)
 	OverheadKwhToday  float64 `json:"overhead_kwh_today"`
 	OverheadCostToday float64 `json:"overhead_cost_usd_today"`
 	OverheadCost30d   float64 `json:"overhead_cost_usd_30d"`
@@ -113,7 +114,7 @@ func capitalState(hardware, years float64, purchased string, now time.Time) (pai
 	}
 	monthsTotal := years * 12
 	if purchased != "" {
-		if t, err := time.ParseInLocation("2006-01-02", purchased, time.Local); err == nil && t.Before(now) {
+		if t, err := time.ParseInLocation("2006-01-02", purchased, time.UTC); err == nil && t.Before(now) {
 			days := now.Sub(t).Hours() / 24
 			paid = math.Min(daily*days, hardware)
 			monthsElapsed = days / 30.4375
@@ -127,7 +128,8 @@ func capitalState(hardware, years float64, purchased string, now time.Time) (pai
 // ComputeCosts is the pure cost engine (1 IP = 1 box).
 func ComputeCosts(p CostsParams) []HostCost {
 	now := p.Now
-	hoursElapsed := float64(now.Hour()) + float64(now.Minute())/60 + float64(now.Second())/3600
+	utcNow := now.UTC()
+	hoursElapsed := float64(utcNow.Hour()) + float64(utcNow.Minute())/60 + float64(utcNow.Second())/3600
 	rate := p.RateUSDPerKwh
 	if rate <= 0 {
 		rate = 0.125
@@ -183,7 +185,7 @@ func ComputeCosts(p CostsParams) []HostCost {
 			}
 			energyMonth := (h.GPUCostToday + h.OverheadCostToday) * 30
 			cum := h.CapitalPaid
-			start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+			start := time.Date(utcNow.Year(), utcNow.Month(), 1, 0, 0, 0, 0, time.UTC)
 			for m := 0; m < months; m++ {
 				mo := start.AddDate(0, m+1, 0)
 				monthCap := math.Min(h.DailyCapital*30.4375, math.Max(0, hc.HardwareUSD-cum))
@@ -348,7 +350,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		capital += h.CapitalToday
 	}
 	now := time.Now()
-	s.costHistory.RecordDay(now.Format("2006-01-02"), CostDay{
+	s.costHistory.RecordDay(now.UTC().Format("2006-01-02"), CostDay{
 		EnergyUSD:   math.Round(gpuCost*10000) / 10000,
 		OverheadUSD: math.Round(overhead*10000) / 10000,
 		CapitalUSD:  math.Round(capital*10000) / 10000,
@@ -356,7 +358,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		ValueUSD:    math.Round(valueToday*10000) / 10000,
 	})
 	if ops := s.Ops(); ops != nil {
-		_ = ops.UpsertCostDay(now.Format("2006-01-02"),
+		_ = ops.UpsertCostDay(now.UTC().Format("2006-01-02"),
 			gpuCost, overhead, capital, valueToday, int64(pTok+oTok))
 	}
 
