@@ -229,6 +229,13 @@ func (s *Server) handleAPIUsageHistory(w http.ResponseWriter, r *http.Request) {
 		"tokens_by_day": tokensByDay,
 		"is_admin":      isAdmin,
 	}
+	// Per-key daily split (own usage only — admins use /usage/users for
+	// the per-user view).
+	if !isAdmin {
+		keyDays, tokensByDayKey := s.usage.KeysHistory(sess.U)
+		out["key_days"] = keyDays
+		out["tokens_by_day_key"] = tokensByDayKey
+	}
 	if isAdmin {
 		out["energy_by_day"] = s.energyByDay()
 	}

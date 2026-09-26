@@ -274,6 +274,34 @@ func (u *UsageStore) OpsRows() []OpsRow {
 	return out
 }
 
+// KeysHistory: per-day totals per key for one user (kind = key id), same
+// 30-day window as History. Feeds the per-key chart on My Usage.
+func (u *UsageStore) KeysHistory(username string) ([]string, map[string]map[string]int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	days := make([]string, 0, len(u.Data.Daily))
+	for d := range u.Data.Daily {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	if len(days) > 30 {
+		days = days[len(days)-30:]
+	}
+	out := map[string]map[string]int{}
+	for _, d := range days {
+		usr, ok := u.Data.Daily[d][username]
+		if !ok {
+			continue
+		}
+		m := map[string]int{}
+		for kid, kt := range usr.Keys {
+			m[kid] = kt.PromptTokens + kt.OutputTokens
+		}
+		out[d] = m
+	}
+	return days, out
+}
+
 // KeyUsage snapshots the per-key tallies for a username (auth.ListKeys merge).
 func (u *UsageStore) KeyUsage(username string) map[string]map[string]int {
 	u.mu.Lock()

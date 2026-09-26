@@ -226,6 +226,9 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
 .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .chart-legend span { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chart-legend .legend-item { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend .legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+
 .chart-bar { transition: opacity .15s; }
 .chart-bar:hover { opacity: .75; }
 .chart-tooltip {

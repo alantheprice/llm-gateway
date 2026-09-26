@@ -83,9 +83,22 @@ const Charts = (() => {
       const x = padL + i * step;
       g += `<text x="${x}" y="${H-6}" text-anchor="middle" class="chart-tick">${esc(l)}</text>`;
     });
+    // Catmull-Rom → cubic Bézier: smooth curve through the points (no
+    // overshoot beyond neighbors), falls back to straight lines for <3 pts.
+    function smoothPath(pts) {
+      if (pts.length < 3) return 'M' + pts.map(p => p.join(',')).join(' L');
+      let d = `M${pts[0][0]},${pts[0][1]}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(pts.length-1, i+2)];
+        const c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
+        const c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
+        d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0]},${p2[1]}`;
+      }
+      return d;
+    }
     for (const s of series) {
-      const pts = s.values.map((p, i) => `${padL + i*step},${yFor(p.value)}`).join(' ');
-      g += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" ` +
+      const pts = s.values.map((p, i) => [padL + i*step, yFor(p.value)]);
+      g += `<path d="${smoothPath(pts)}" fill="none" stroke="${s.color}" stroke-width="2" ` +
            `stroke-linejoin="round" stroke-linecap="round"/>`;
       s.values.forEach((p, i) => {
         const x = padL + i * step, y = yFor(p.value);
