@@ -153,23 +153,23 @@ func (a *App) migrateGPUDaily() error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("ops: DB not open")
 	}
-	// PB's query builder won't One() into a scalar — use the raw handle.
+	// PB's query builder won't One() into a scalar — use a struct.
+	// Add each missing column independently (tables from any earlier
+	// release may have either, both, or neither).
 	type row struct {
 		N int64 `db:"n"`
 	}
-	var r row
-	if err := a.pb.DB().NewQuery(
-		`SELECT COUNT(*) AS n FROM pragma_table_info('gpu_daily') WHERE name = 'cache_hits'`,
-	).One(&r); err != nil {
-		return err
-	}
-	if r.N > 0 {
-		return nil
-	}
-	for _, ddl := range []string{
-		`ALTER TABLE gpu_daily ADD COLUMN cache_hits INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE gpu_daily ADD COLUMN engine_input INTEGER NOT NULL DEFAULT 0`,
-	} {
+	for _, col := range []string{"cache_hits", "engine_input"} {
+		var r row
+		if err := a.pb.DB().NewQuery(
+			`SELECT COUNT(*) AS n FROM pragma_table_info('gpu_daily') WHERE name = {:col}`,
+		).Bind(map[string]any{"col": col}).One(&r); err != nil {
+			return err
+		}
+		if r.N > 0 {
+			continue
+		}
+		ddl := "ALTER TABLE gpu_daily ADD COLUMN " + col + " INTEGER NOT NULL DEFAULT 0"
 		if _, err := a.pb.DB().NewQuery(ddl).Execute(); err != nil {
 			return err
 		}
@@ -191,7 +191,8 @@ func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput
 		  kwh = MAX(kwh, {:kwh}),
 		  cache_hits = MAX(cache_hits, {:cache}),
 		  engine_input = MAX(engine_input, {:engine})
-	`).Bind(map[string]any{"day": day, "backend": backend, "tokens": tokens, "kwh": kwh, "cache": cacheHits}).Execute()
+	`).Bind(map[string]any{"day": day, "backend": backend, "tokens": tokens, "kwh": kwh,
+		"cache": cacheHits, "engine": engineInput}).Execute()
 	return err
 }
 
