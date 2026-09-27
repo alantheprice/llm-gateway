@@ -543,7 +543,8 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	candidates := members
 	for len(candidates) > 0 {
 		pick := routing.PickPool(modelName, pool.OverflowThreshold, pool.StickyBias,
-			pool.LargePromptTokens, pool.CapacityBias, candidates, s.tracker, est, sess, leader)
+			pool.LargePromptTokens, pool.CapacityBias, candidates, s.tracker, est, sess, leader,
+			pool.CacheAffinity)
 		leader = pick.URL
 
 		// Rewrite pool name -> the chosen member's backend model id
