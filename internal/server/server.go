@@ -509,7 +509,7 @@ func (s *Server) Discover() {
 }
 
 func probeBackend(client *http.Client, url string, cfg *config.Config) *BackendInfo {
-	c := &http.Client{Timeout: 1 * time.Second}
+	c := &http.Client{Timeout: 3 * time.Second}
 	resp, err := c.Get(url + "/v1/models")
 	if err != nil {
 		return nil
@@ -587,6 +587,22 @@ func (s *Server) PollOnce() {
 				s.tracker.Set(u, l)
 				s.mu.Lock()
 				s.lastMetrics[u] = raw // raw /usage payload for /backends extras
+				s.mu.Unlock()
+				s.recordGPUDaily(u, raw)
+				return
+			}
+			if l := pollVLLM(s.client, u, s.cfg); l != nil {
+				s.tracker.Set(u, l)
+				return
+			}
+			// Both shapes failed once — retry before marking down. Under
+			// load (race builds, GC, port contention) a single probe can
+			// exceed the 1s timeout; a genuinely dead engine fails twice.
+			time.Sleep(50 * time.Millisecond)
+			if l, raw := pollNinferFull(s.client, u); l != nil {
+				s.tracker.Set(u, l)
+				s.mu.Lock()
+				s.lastMetrics[u] = raw
 				s.mu.Unlock()
 				s.recordGPUDaily(u, raw)
 				return

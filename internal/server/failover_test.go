@@ -24,6 +24,11 @@ func deadURL(t *testing.T) string {
 func okBackend(t *testing.T, hits *int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" { // metrics poll: must 200 like a real engine
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":[{"id":"test-model"}]}`))
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			w.WriteHeader(404)
 			return
@@ -104,6 +109,7 @@ func TestPollFailureOnlyMarksTrackedMembers(t *testing.T) {
 	conf = strings.ReplaceAll(conf, "%BACKEND_B%", b.URL)
 	s := testServer(t, conf, nil)
 	s.PollOnce()
+	s.PollOnce() // MarkDownIfTracked needs 2 consecutive failures (flake-proof)
 	if s.tracker.IsDown(b.URL) {
 		t.Fatalf("untracked backend marked down by a metrics-poll failure")
 	}

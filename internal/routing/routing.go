@@ -50,8 +50,11 @@ type Tracker struct {
 	weights  Weights
 	// down: url -> time of the last connect/poll failure. A member counts
 	// as down for DownTTL after its last failure; a successful poll (Set)
-	// clears it immediately.
-	down map[string]time.Time
+	// clears it immediately. MarkDownIfTracked needs consecutive failures:
+	// one dropped probe packet under load must not evict a healthy member
+	// (observed as a ~1-in-5 flake in the CI matrix under -race load).
+	down       map[string]time.Time
+	failStreak map[string]int
 }
 
 // DownTTL: how long one failure keeps a member out of rotation. The
@@ -72,6 +75,7 @@ func (t *Tracker) Set(url string, l *Load) {
 	defer t.mu.Unlock()
 	t.loads[url] = l
 	delete(t.down, url) // a successful poll proves the member is back
+	delete(t.failStreak, url)
 }
 
 // MarkDown records a connect or poll failure for url.
@@ -79,15 +83,23 @@ func (t *Tracker) MarkDown(url string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.down[url] = time.Now()
+	delete(t.failStreak, url)
 }
 
 // MarkDownIfTracked marks url down only if it has been polled
 // successfully before. Poll failures on backends that never answered the
 // metrics endpoints (non-NInfer/vLLM engines) must not evict them.
+// MarkDownIfTracked: mark a previously-seen member down, but only after
+// two consecutive poll failures — a single dropped probe (GC pause, port
+// contention, scheduler hiccup) must not evict a healthy member.
 func (t *Tracker) MarkDownIfTracked(url string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.loads[url]; ok {
+	if _, ok := t.loads[url]; !ok {
+		return // never polled successfully: nothing to mark
+	}
+	t.failStreak[url]++
+	if t.failStreak[url] >= 2 {
 		t.down[url] = time.Now()
 	}
 }
