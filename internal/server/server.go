@@ -57,6 +57,7 @@ type Server struct {
 	leader         map[string]string // pool -> leader url
 	usage          *UsageStore
 	lastMetrics    map[string]map[string]any // url -> raw /usage payload for merge
+	lastPollAt     map[string]time.Time      // url -> last metrics poll attempt
 	lastCostRecord atomic.Int64              // unix-nano of last poll-loop cost write
 	// last sane (clearly-busy) fleet throughput reading — pricing's
 	// GPU-time split needs a stable pp/tg ratio; defaults are a typical
@@ -190,7 +191,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 			StaleSeconds:   float64(cfg.Metrics.StaleThreshold),
 		}),
 		client:       &http.Client{Timeout: 5 * time.Second},
-		streamClient: &http.Client{Timeout: 0}, // streams: no overall deadline
+		streamClient: &http.Client{Timeout: 0, Transport: streamTransport()}, // streams: no overall deadline
 		backends:     map[string]*BackendInfo{},
 		rate:         map[string][]time.Time{},
 		probe:        map[string][]time.Time{},
@@ -560,8 +561,25 @@ func (s *Server) PollOnce() {
 		urls = append(urls, u)
 	}
 	s.mu.Unlock()
-	var wg sync.WaitGroup
+	// A member already known to be down is re-probed at most every
+	// downReprobe: PollOnce runs on every pool request, and polling an
+	// unreachable host costs a full timeout per request.
+	now2 := time.Now()
+	s.mu.Lock()
+	if s.lastPollAt == nil {
+		s.lastPollAt = map[string]time.Time{}
+	}
+	due := urls[:0]
 	for _, u := range urls {
+		if s.tracker.IsDown(u) && now2.Sub(s.lastPollAt[u]) < downReprobe {
+			continue
+		}
+		s.lastPollAt[u] = now2
+		due = append(due, u)
+	}
+	s.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, u := range due {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
@@ -575,11 +593,22 @@ func (s *Server) PollOnce() {
 			}
 			if l := pollVLLM(s.client, u, s.cfg); l != nil {
 				s.tracker.Set(u, l)
+				return
+			}
+			// Neither metrics shape answered: a previously healthy member
+			// is down (engine stopped or host unreachable).
+			wasDown := s.tracker.IsDown(u)
+			s.tracker.MarkDownIfTracked(u)
+			if !wasDown && s.tracker.IsDown(u) {
+				log.Printf("backend %s: metrics poll failed, marking down", u)
 			}
 		}(u)
 	}
 	wg.Wait()
 }
+
+// downReprobe: minimum spacing between metrics polls of a down member.
+const downReprobe = 5 * time.Second
 
 // recordGPUDaily: persist a backend's engine-reported daily tokens + kWh
 // into the gpu_daily ops table (MAX-merge; engines are the source of
@@ -774,4 +803,13 @@ func (s *Server) hostByIP(ip string) (config.HostCfg, bool) {
 		}
 	}
 	return config.HostCfg{}, false
+}
+
+// streamTransport: the default transport with a short dial timeout. Streams
+// keep no overall deadline, but connecting to a dead LAN host must fail in
+// seconds (the default dialer waits 30s) so failover stays fast.
+func streamTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	return t
 }

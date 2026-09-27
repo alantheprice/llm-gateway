@@ -162,7 +162,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/schemas/", s.docHandler)
 
 	mux.HandleFunc("/", s.handleRoot)
-	return s.withThrottle(mux)
+	return s.withAccessLog(s.withThrottle(mux))
 }
 
 func (s *Server) withThrottle(next http.Handler) http.Handler {
@@ -464,8 +464,9 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 			LargeContext: m.LargeContext, CapacityWeight: m.CapacityWeight, Lanes: lanes,
 		})
 	}
+	members = s.upMembers(members)
 	if len(members) == 0 {
-		http.Error(w, `{"error":{"message":"pool: no reachable members","type":"service_unavailable"}}`, http.StatusServiceUnavailable)
+		poolUnavailable(w)
 		return
 	}
 
@@ -549,6 +550,12 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		})
 	}
 
+	members = s.upMembers(members)
+	if len(members) == 0 {
+		poolUnavailable(w)
+		return
+	}
+
 	var lastStatus int
 	var lastBody []byte
 	candidates := members
@@ -596,9 +603,12 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		}
 		lastStatus, lastBody = status, respBody
 		if err != nil {
-			log.Printf("pool %q member %s dispatch error: %v", modelName, pick.URL, err)
-			lastStatus = http.StatusBadGateway
-			lastBody = []byte(`{"error":{"message":"backend connect failed","type":"proxy_error"}}`)
+			if r.Context().Err() != nil {
+				return // client went away; nothing to fail over for
+			}
+			log.Printf("Pool '%s': %s connect failed (%v), marking down", modelName, pick.URL, err)
+			s.tracker.MarkDown(pick.URL)
+			lastStatus, lastBody = 0, nil
 		}
 		// drop this member and retry
 		var next []routing.Member
@@ -609,14 +619,33 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		}
 		candidates = next
 	}
+	if lastStatus == 0 {
+		// Every member failed to connect: the pool is down, not erroring.
+		poolUnavailable(w)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusOr502(lastStatus))
+	w.WriteHeader(lastStatus)
 	w.Write(lastBody)
 }
 
-func statusOr502(code int) int {
-	if code == 0 {
-		return http.StatusBadGateway
+// upMembers drops members currently marked down. If every member is down
+// the result is empty and the caller answers 503 at once instead of
+// spending connect timeouts on dead hosts.
+func (s *Server) upMembers(members []routing.Member) []routing.Member {
+	up := members[:0:0]
+	for _, m := range members {
+		if !s.tracker.IsDown(m.URL) {
+			up = append(up, m)
+		}
 	}
-	return code
+	return up
+}
+
+// poolUnavailable: 503 + Retry-After when no pool member can serve.
+func poolUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", "5")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"error":{"message":"no healthy backend available for this model; retry shortly","type":"service_unavailable"}}`))
 }

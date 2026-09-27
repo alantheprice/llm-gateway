@@ -60,8 +60,14 @@ func (s *Server) relayPoolPick(w http.ResponseWriter, r *http.Request,
 	}
 	// Cache hit missed at dispatch (backend hiccup): fall back to the
 	// classic picker, which re-records the conversation on success.
-	log.Printf("Pool '%s': cache-affinity pick %s failed (status %d), falling back",
-		modelName, pick.URL, status)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return // client went away mid-dispatch; nothing to fall back for
+		}
+		s.tracker.MarkDown(pick.URL) // classic picker will skip it
+	}
+	log.Printf("Pool '%s': cache-affinity pick %s failed (status %d, err %v), falling back",
+		modelName, pick.URL, status, err)
 	s.routePoolClassic(w, r, modelName, pool, body, user, keyID, est, convMsgs)
 }
 
