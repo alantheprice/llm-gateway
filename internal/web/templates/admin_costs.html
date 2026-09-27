@@ -47,10 +47,13 @@ async function load() {
   } else {
     const colors = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149'];
     const maxT = Math.max(...gpuRows.map(r => r.tokens || 0));
-    gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) =>
-      '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
+    gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) => {
+      const rate = (r.tokens && r.cache_hits != null) ? (100 * r.cache_hits / r.tokens).toFixed(1) + '% cache-hit' : '';
+      return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
       esc(r.backend.replace('http://', '')) + ' — ' + Charts.fmtShort(r.tokens) + ' tok · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
-      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '%</span>').join('') + '</div>' +
+      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '%' + (rate ? ' · ' + rate : '') + '</span>';
+    }).join('') + '</div>' +
+    '<p class="muted" style="font-size:12px;margin:0 0 6px">cache-hit % = engine-aggregate prefix reuse (prompt tokens served from KV cache). The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
       gpuRows.map((r, i) => {
         const w = maxT ? Math.max(4, 100 * (r.tokens || 0) / maxT) : 0;
         return '<div style="margin:6px 0"><div style="height:14px;background:var(--border,#30363d);border-radius:7px;overflow:hidden">' +

@@ -38,10 +38,11 @@ CREATE TABLE IF NOT EXISTS cost_history (
 CREATE INDEX IF NOT EXISTS idx_cost_history_day ON cost_history (day);
 
 CREATE TABLE IF NOT EXISTS gpu_daily (
-  day     TEXT NOT NULL,
-  backend TEXT NOT NULL,
-  tokens  INTEGER NOT NULL DEFAULT 0,
-  kwh     REAL NOT NULL DEFAULT 0,
+  day        TEXT NOT NULL,
+  backend    TEXT NOT NULL,
+  tokens     INTEGER NOT NULL DEFAULT 0,
+  kwh        REAL NOT NULL DEFAULT 0,
+  cache_hits INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, backend)
 );
 `
@@ -140,25 +141,27 @@ func (a *App) CostSeries(days int) ([]CostRow, error) {
 
 // UpsertGPUDaily merges one backend's daily counters. MAX-merge (engines
 // are the source of truth; their counters only grow within a day).
-func (a *App) UpsertGPUDaily(day, backend string, tokens int64, kwh float64) error {
+func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits int64, kwh float64) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("ops: DB not open")
 	}
 	_, err := a.pb.DB().NewQuery(`
-		INSERT INTO gpu_daily (day, backend, tokens, kwh)
-		VALUES ({:day}, {:backend}, {:tokens}, {:kwh})
+		INSERT INTO gpu_daily (day, backend, tokens, kwh, cache_hits)
+		VALUES ({:day}, {:backend}, {:tokens}, {:kwh}, {:cache})
 		ON CONFLICT(day, backend) DO UPDATE SET
 		  tokens = MAX(tokens, {:tokens}),
-		  kwh = MAX(kwh, {:kwh})
-	`).Bind(map[string]any{"day": day, "backend": backend, "tokens": tokens, "kwh": kwh}).Execute()
+		  kwh = MAX(kwh, {:kwh}),
+		  cache_hits = MAX(cache_hits, {:cache})
+	`).Bind(map[string]any{"day": day, "backend": backend, "tokens": tokens, "kwh": kwh, "cache": cacheHits}).Execute()
 	return err
 }
 
 // GPUDailyRow: one backend's day.
 type GPUDailyRow struct {
-	Backend string  `json:"backend"`
-	Tokens  int64   `json:"tokens"`
-	Kwh     float64 `json:"kwh"`
+	Backend   string  `json:"backend"`
+	Tokens    int64   `json:"tokens"`
+	Kwh       float64 `json:"kwh"`
+	CacheHits int64   `json:"cache_hits"`
 }
 
 // GPUDaily: today's (or any day's) per-backend counters, oldest first.
@@ -168,7 +171,7 @@ func (a *App) GPUDaily(day string) ([]GPUDailyRow, error) {
 	}
 	var rows []GPUDailyRow
 	err := a.pb.DB().NewQuery(`
-		SELECT backend, tokens, kwh FROM gpu_daily
+		SELECT backend, tokens, kwh, cache_hits FROM gpu_daily
 		WHERE day = {:day} ORDER BY tokens DESC
 	`).Bind(map[string]any{"day": day}).All(&rows)
 	return rows, err

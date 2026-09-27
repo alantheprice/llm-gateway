@@ -398,6 +398,18 @@ func (s *Server) usageCostsPayload() map[string]any {
 	}
 	if ops := s.Ops(); ops != nil {
 		if rows, err := ops.GPUDaily(time.Now().UTC().Format("2006-01-02")); err == nil {
+			// Augment with live engine cache-hit rates (tokens.input).
+			s.mu.Lock()
+			for i := range rows {
+				if raw := s.lastMetrics[rows[i].Backend]; raw != nil {
+					hits := usageNum(raw, "tokens", "input", "cache_hits")
+					total := usageNum(raw, "tokens", "input", "total")
+					if total > 0 {
+						rows[i].CacheHits = int64(hits)
+					}
+				}
+			}
+			s.mu.Unlock()
 			out["gpu_today"] = rows
 		}
 	}

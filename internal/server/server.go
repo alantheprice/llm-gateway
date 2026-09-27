@@ -89,7 +89,7 @@ type OpsStore interface {
 	UpsertUsageDaily(day, user, kind string, requests, prompt, cached, output int) error
 	UpsertCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	CostSeries(days int) ([]embeddedpb.CostRow, error)
-	UpsertGPUDaily(day, backend string, tokens int64, kwh float64) error
+	UpsertGPUDaily(day, backend string, tokens, cacheHits int64, kwh float64) error
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	PruneOlderThan(days int) (int64, error)
 }
@@ -549,10 +549,16 @@ func (s *Server) recordGPUDaily(backend string, raw map[string]any) {
 	}
 	tok := usageNum(raw, "energy", "today", "tokens")
 	kwh := usageNum(raw, "energy", "today", "kwh")
+	// Cache truth: the engine's aggregate input counters, NOT the OpenAI
+	// usage block (which reports prompt_tokens_details.cached_tokens = 0
+	// on this NInfer build regardless of actual reuse).
+	hits := usageNum(raw, "tokens", "input", "cache_hits")
+	total := usageNum(raw, "tokens", "input", "total")
 	if tok == 0 && kwh == 0 {
 		return
 	}
-	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), kwh)
+	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), int64(hits), kwh)
+	_ = total
 }
 
 func getJSON(client *http.Client, url string, timeout time.Duration) (map[string]any, bool) {
