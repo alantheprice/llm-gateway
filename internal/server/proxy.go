@@ -100,13 +100,11 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 		buf := make([]byte, 32*1024)
 		var captured ringBuf // capture LAST 1MB (usage+timings live at stream end)
 		strip := wantsUsageStrip(r)
+		filter := newSSEFilter(strip)
 		for {
 			n, err := stream.Read(buf)
 			if n > 0 {
-				out := buf[:n]
-				if strip && looksLikeUsageChunk(out) {
-					out = nil // injected usage chunk: parse, don't forward
-				}
+				out := filter.write(buf[:n])
 				if len(out) > 0 {
 					w.Write(out)
 					if f := flusher; f != nil {
@@ -116,17 +114,27 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				captured.write(buf[:n])
 			}
 			if err != nil {
+				if tail := filter.flush(); len(tail) > 0 {
+					w.Write(tail)
+					if f := flusher; f != nil {
+						f.Flush()
+					}
+				}
 				break
 			}
 		}
 		pt, ot, cached := usageFromSSE(captured.bytes(), est)
-		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+		if status < 400 { // failed requests don't burn quota or count as usage
+			s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+		}
 		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
-	w.Write(buffered)
+	w.Write(stripIfInjected(r, buffered))
 	pt, ot, cached := usageFromJSON(buffered, est)
-	s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+	if status < 400 {
+		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+	}
 	s.observePeak(model, backendURL, buffered, true)
 }
 
@@ -188,7 +196,7 @@ func (s *Server) observePeak(modelID, backendURL string, body []byte, isJSON boo
 		return
 	}
 	if prompt <= 0 {
-		prompt = float64(estimateFrom(nil))
+		prompt = 1 // unknown prompt size: <8k bucket (honest floor)
 	}
 	s.peaks.Observe(backendURL, prompt, tg, pp)
 }
@@ -305,20 +313,70 @@ func (r *ringBuf) write(p []byte) {
 
 func (r *ringBuf) bytes() []byte { return r.buf }
 
-// looksLikeUsageChunk: choices-empty SSE chunk = injected usage.
-func looksLikeUsageChunk(b []byte) bool {
-	i := bytes.Index(b, []byte("data:"))
-	if i < 0 {
+// sseFilter: pass-through pipe that removes exactly one SSE event kind —
+// a data event with an empty choices array and a usage block (the chunk
+// injected by withUsageHint). Buffers partial lines across reads.
+type sseFilter struct {
+	strip bool
+	carry []byte // partial line carried between reads
+}
+
+func newSSEFilter(strip bool) *sseFilter { return &sseFilter{strip: strip} }
+
+func (f *sseFilter) write(p []byte) []byte {
+	if !f.strip {
+		return p
+	}
+	data := append(f.carry, p...)
+	f.carry = nil
+	// Split into complete lines; the last (possibly partial) line carries.
+	lines := strings.SplitAfter(string(data), "\n")
+	out := make([]byte, 0, len(data))
+	for i, line := range lines {
+		isLast := i == len(lines)-1
+		t := strings.TrimSpace(line)
+		if isLast && t != "" {
+			f.carry = append(f.carry, line...) // incomplete: carry over
+			break
+		}
+		if f.isInjectedUsage(line) {
+			continue
+		}
+		out = append(out, line...)
+	}
+	return out
+}
+
+func (f *sseFilter) flush() []byte {
+	if len(f.carry) == 0 {
+		return nil
+	}
+	tail := f.carry
+	f.carry = nil
+	if f.isInjectedUsage(string(tail)) {
+		return nil
+	}
+	return tail
+}
+
+// isInjectedUsage: a data line whose event has empty choices + a usage block.
+func (f *sseFilter) isInjectedUsage(line string) bool {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "data:") {
 		return false
 	}
-	p := strings.TrimSpace(string(b[i+5:]))
+	p := strings.TrimSpace(strings.TrimPrefix(t, "data:"))
 	if p == "" || p == "[DONE]" {
 		return false
 	}
 	var ch struct {
 		Choices []any `json:"choices"`
+		Usage   *struct {
+			PromptTokens int `json:"prompt_tokens"`
+		} `json:"usage"`
 	}
-	return json.Unmarshal([]byte(p), &ch) == nil && len(ch.Choices) == 0
+	return json.Unmarshal([]byte(p), &ch) == nil &&
+		len(ch.Choices) == 0 && ch.Usage != nil
 }
 
 // usageFromSSE extracts usage from the captured tail. Sources in priority
@@ -374,12 +432,20 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 			cached = chunk.Usage.PromptDetails.CachedTokens
 		}
 		for _, ch := range chunk.Choices {
-			ot += len([]rune(ch.Delta.Content)) + len([]rune(ch.Delta.Reasoning))
+			// chars/4 ≈ tokens (the fallback only runs when the engine
+			// sent no usage chunk and no timings)
+			ot += (len([]rune(ch.Delta.Content)) + len([]rune(ch.Delta.Reasoning))) / 4
 		}
 	}
-	// Engine timings win: they are the engine's own exact counters.
+	// Priority: (1) the OpenAI usage block — always present now that we
+	// request include_usage, and prompt_tokens is the FULL prompt;
+	// (2) engine timings — exact but prompt_n counts only the UNCACHED
+	// suffix, so prompt = prompt_n + cache_n; (3) estimate.
+	if pt > 0 {
+		return pt, ot, cached
+	}
 	if haveTimings {
-		return int(tPrompt), int(tPredicted), int(tCache)
+		return int(tPrompt + tCache), int(tPredicted), int(tCache)
 	}
 	if pt == 0 {
 		pt = est
@@ -390,10 +456,10 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 // proxy handles non-pool direct requests (SPEC §2) with usage recording.
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body []byte,
 	user, keyID, reqModel, modelID string) {
-	body = withUsageHint(body)
-	injected := streamRequested(body) && !clientAskedIncludeUsage(body)
-	if injected {
+	needsHint := streamRequested(body) && !clientAskedIncludeUsage(body)
+	if needsHint {
 		r = withUsageHintCtx(r)
+		body = withUsageHint(body)
 	}
 	status, hdr, buffered, stream, err := s.dispatch(r, url, body)
 	if err != nil {

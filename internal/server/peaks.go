@@ -40,10 +40,12 @@ func bucketFor(promptTokens float64) string {
 
 // BackendPeak: high-water throughput for one engine backend.
 type BackendPeak struct {
-	TGPoS   float64            `json:"tg_tok_per_s_peak"`
-	PPPoS   float64            `json:"pp_tok_per_s_peak"`
-	Buckets map[string]float64 `json:"tg_by_context"` // bucket label -> peak tg
-	Updated time.Time          `json:"updated"`
+	TGPoS     float64            `json:"tg_tok_per_s_peak"`
+	PPPoS     float64            `json:"pp_tok_per_s_peak"`
+	Buckets   map[string]float64 `json:"tg_by_context"` // bucket label -> peak tg
+	Updated   time.Time          `json:"updated"`       // legacy: last time ANY peak updated
+	TGUpdated time.Time          // decode (tg) peak update clock
+	PPUpdated time.Time          // prefill (pp) peak update clock
 }
 
 // PeakStore: per-backend peaks + persistence.
@@ -98,15 +100,18 @@ func (p *PeakStore) Observe(backend string, promptTokens, tgTPS, ppTPS float64) 
 		bkt := bucketFor(promptTokens)
 		if tgTPS > bp.Buckets[bkt] {
 			bp.Buckets[bkt] = tgTPS
+			p.dirty = true // bucket peaks are persisted too
 		}
 		if tgTPS > bp.TGPoS {
 			bp.TGPoS = tgTPS
+			bp.TGUpdated = now
 			bp.Updated = now
 			p.dirty = true
 		}
 	}
 	if ppTPS > bp.PPPoS {
 		bp.PPPoS = ppTPS
+		bp.PPUpdated = now
 		bp.Updated = now
 		p.dirty = true
 	}
@@ -120,8 +125,8 @@ func (p *PeakStore) FleetPeaks() (tg, pp float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, bp := range p.Backends {
-		tg += decayed(bp.TGPoS, bp.Updated, now)
-		pp += decayed(bp.PPPoS, bp.Updated, now)
+		tg += decayed(bp.TGPoS, bp.TGUpdated, now)
+		pp += decayed(bp.PPPoS, bp.PPUpdated, now)
 	}
 	return tg, pp
 }
@@ -142,8 +147,8 @@ func (p *PeakStore) Snapshot() map[string]any {
 			}
 		}
 		out[url] = map[string]any{
-			"tg_tok_per_s_peak":   math.Round(decayed(bp.TGPoS, bp.Updated, now)*10) / 10,
-			"pp_tok_per_s_peak":   math.Round(bp.PPPoS*10) / 10,
+			"tg_tok_per_s_peak":   math.Round(decayed(bp.TGPoS, bp.TGUpdated, now)*10) / 10,
+			"pp_tok_per_s_peak":   math.Round(decayed(bp.PPPoS, bp.PPUpdated, now)*10) / 10,
 			"tg_by_context":       buckets,
 			"best_context_bucket": bucketLabelFor(maxBucket, bp.Buckets),
 			"updated":             bp.Updated.Format(time.RFC3339),

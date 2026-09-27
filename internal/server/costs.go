@@ -567,39 +567,6 @@ func (c *CostHistory) Series() ([]string, map[string]CostDay) {
 
 func CostHistoryPath(usagePath string) string {
 	return filepath.Join(filepath.Dir(usagePath), "cost_history.json")
-} // peakCapacity: fleet throughput ceiling = per-request peak decode/prefill
-// × the backend's lane count, summed over backends. A 6-lane GPU decoding
-// ~160 tok/s per stream delivers ~960 tok/s; that's the number a
-// utilization assumption applies to.
-func (s *Server) peakCapacity() (pp, tg float64) {
-	s.mu.Lock()
-	lanes := map[string]int{}
-	for url, l := range s.tracker.Snapshot() {
-		n := l.Lanes
-		if n <= 0 {
-			n = l.MaxSeqs
-		}
-		if n <= 0 {
-			n = s.cfg.MaxSeqsFor(url)
-		}
-		lanes[url] = n
-	}
-	s.mu.Unlock()
-	for url, raw := range s.peaks.Snapshot() {
-		bp, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		ppPeak, _ := bp["pp_tok_per_s_peak"].(float64)
-		tgPeak, _ := bp["tg_tok_per_s_peak"].(float64)
-		n := lanes[url]
-		if n <= 0 {
-			n = 1
-		}
-		pp += ppPeak * float64(n)
-		tg += tgPeak * float64(n)
-	}
-	return pp, tg
 }
 
 // handleUsageCosts already returns the envelope below — pricing block and

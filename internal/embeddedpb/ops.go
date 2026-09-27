@@ -211,6 +211,26 @@ type GPUDailyRow struct {
 	DayStartInput int64   `json:"day_start_input"`
 }
 
+// ReplaceCostDay: SET a day's row (backfill repair). Unlike the
+// MAX-merge upsert, a smaller corrected value replaces the stored one.
+func (a *App) ReplaceCostDay(day string, energy, overhead, capital, value float64, tokens int64) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("ops: DB not open")
+	}
+	_, err := a.pb.DB().NewQuery(`
+		INSERT INTO cost_history (day, energy_usd, overhead_usd, capital_usd, tokens, value_usd)
+		VALUES ({:day}, {:energy}, {:overhead}, {:capital}, {:tokens}, {:value})
+		ON CONFLICT(day) DO UPDATE SET
+		  energy_usd = {:energy},
+		  overhead_usd = {:overhead},
+		  capital_usd = {:capital},
+		  tokens = {:tokens},
+		  value_usd = {:value}
+	`).Bind(map[string]any{"day": day, "energy": energy, "overhead": overhead,
+		"capital": capital, "tokens": tokens, "value": value}).Execute()
+	return err
+}
+
 // GPUDaily: today's (or any day's) per-backend counters, oldest first.
 func (a *App) GPUDaily(day string) ([]GPUDailyRow, error) {
 	if a.pb.DB() == nil {

@@ -93,6 +93,7 @@ type OpsStore interface {
 	CostSeries(days int) ([]embeddedpb.CostRow, error)
 	UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput int64, kwh float64) error
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
+	ReplaceCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	PruneOlderThan(days int) (int64, error)
 }
 
@@ -727,4 +728,16 @@ func (s *Server) preferredModel() string {
 		}
 	}
 	return ""
+}
+
+// hostByIP: the cost-config host owning this backend IP, if any.
+func (s *Server) hostByIP(ip string) (config.HostCfg, bool) {
+	for _, h := range s.cfg.Hosts {
+		for _, hip := range h.IPs {
+			if hip == ip {
+				return h, true
+			}
+		}
+	}
+	return config.HostCfg{}, false
 }
