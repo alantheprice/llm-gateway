@@ -45,7 +45,11 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.hostByIP(backendHostIP(backendURL)); !ok {
 			continue
 		}
-		daysRaw, ok := raw["days"].(map[string]any)
+		energy, ok := raw["energy"].(map[string]any)
+		if !ok {
+			continue
+		}
+		daysRaw, ok := energy["daily"].(map[string]any)
 		if !ok {
 			continue
 		}
