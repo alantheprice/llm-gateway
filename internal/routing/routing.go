@@ -285,15 +285,18 @@ func PickCache(ct *CacheTable, poolName string, members []Member, tr *Tracker,
 // leader is the current leader URL ("" if none); it is updated by the caller
 // from the returned URL.
 func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTokens int,
-	capacityBias float64, members []Member, tr *Tracker, estTokens int, session, leader string) PickResult {
+	capacityBias float64, members []Member, tr *Tracker, estTokens int, session, leader string,
+	affinityMode bool) PickResult {
 
 	scores := map[string]float64{}
 	for _, m := range members {
 		scores[m.URL] = tr.Score(m.URL)
 	}
 
-	// 2. Session pinning
-	if session != "" {
+	// 2. Session pinning — skipped in affinityMode: blind md5 pinning
+	// fights content affinity (it pins new conversations to whichever
+	// member their key hashes to, regardless of where their cache lives).
+	if session != "" && !affinityMode {
 		idx := md5Mod(len(members), poolName+"|"+session)
 		pinned := members[idx]
 		l := tr.Get(pinned.URL)

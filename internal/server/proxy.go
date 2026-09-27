@@ -60,6 +60,12 @@ func sessionKey(r *http.Request, keyID string) string {
 func (s *Server) dispatch(r *http.Request, url string, body []byte) (
 	status int, hdr http.Header, buffered []byte, reader io.Reader, err error) {
 
+	// Virtual link backends (http://link/...) relay over the agent socket
+	// instead of dialing.
+	if strings.HasPrefix(url, "http://link/") {
+		return s.relayViaLink(url, r.URL.Path, r, body)
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, url+r.URL.Path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, nil, err

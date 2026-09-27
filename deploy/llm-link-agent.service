@@ -1,0 +1,13 @@
+[Unit]
+Description=llm-link-agent - outbound link to llm-gateway
+After=network.target
+
+[Service]
+Type=simple
+User=llmgateway
+ExecStart=/usr/local/bin/llm-link-agent --server https://YOUR-GATEWAY --token YOUR_LINK_TOKEN --name %H --engine 127.0.0.1:8006=YOUR-MODEL:4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

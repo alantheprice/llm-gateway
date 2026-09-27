@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"llmgateway/internal/embeddedpb"
+	"llmgateway/internal/link"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -68,6 +69,7 @@ type Server struct {
 
 	cacheTable *routing.CacheTable // conversation-hash → GPU (content affinity)
 	dayShare   *routing.DayShare   // new-conversations-routed-today per member
+	linkReg    *link.Registry      // outbound link agents (remote GPUs)
 
 	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
 	// PocketBase's database. Nil in tests that don't embed PB — every
@@ -175,6 +177,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		costHistory:  NewCostHistory(CostHistoryPath(UsagePath(cfg))),
 		cacheTable:   routing.NewCacheTable(2*time.Hour, 8192),
 		dayShare:     routing.NewDayShare(),
+		linkReg:      link.NewRegistry(),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},

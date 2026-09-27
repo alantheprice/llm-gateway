@@ -139,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/usage/history", s.handleAPIUsageHistory)
 	mux.HandleFunc("/bootstrap", s.handleBootstrapPage)
 	mux.HandleFunc("/static/setup-key.sh", s.handleSetupKeyScript)
+	mux.HandleFunc("/link/agent", s.handleLinkAgent)
 	mux.HandleFunc("/guide", s.guideHandler)
 	mux.HandleFunc("/guide/", s.guideHandler)
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)
@@ -551,7 +552,8 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	candidates := members
 	for len(candidates) > 0 {
 		pick := routing.PickPool(modelName, pool.OverflowThreshold, pool.StickyBias,
-			pool.LargePromptTokens, pool.CapacityBias, candidates, s.tracker, est, sess, leader)
+			pool.LargePromptTokens, pool.CapacityBias, candidates, s.tracker, est, sess, leader,
+			pool.CacheAffinity)
 		leader = pick.URL
 
 		// Rewrite pool name -> the chosen member's backend model id
@@ -584,6 +586,7 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		}
 		lastStatus, lastBody = status, respBody
 		if err != nil {
+			log.Printf("pool %q member %s dispatch error: %v", modelName, pick.URL, err)
 			lastStatus = http.StatusBadGateway
 			lastBody = []byte(`{"error":{"message":"backend connect failed","type":"proxy_error"}}`)
 		}
