@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"llmgateway/internal/analytics"
 	"llmgateway/internal/embeddedpb"
 	"llmgateway/internal/link"
 
@@ -70,6 +71,7 @@ type Server struct {
 	cacheTable *routing.CacheTable // conversation-hash → GPU (content affinity)
 	dayShare   *routing.DayShare   // new-conversations-routed-today per member
 	linkReg    *link.Registry      // outbound link agents (remote GPUs)
+	reqLog     *analytics.Store    // per-request telemetry (async writer)
 
 	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
 	// PocketBase's database. Nil in tests that don't embed PB — every
@@ -97,12 +99,18 @@ type OpsStore interface {
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	ReplaceCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	QueryUsageDay(day string, dest any) error
+	QueryAnalyticsHourly(days int, dest *[]embeddedpb.HourlyRow) error
+	QueryAnalyticsPerGPU(days int, dest *[]embeddedpb.GPURow) error
+	QueryAnalyticsPerUser(days int, dest *[]embeddedpb.UserRow) error
+	QueryAnalyticsReuse(days int, dest *[]embeddedpb.ReuseRow) error
 	PruneOlderThan(days int) (int64, error)
 }
 
 // PBAppStore: the embedded PocketBase app surface the server needs beyond
 // the HTTP client (bootstrap-time user count, direct record access).
 type PBAppStore interface {
+	OpsReady() bool
+	InitRequestsSchema() error
 	CountUsers() (int64, error)
 	CreateAdminUser(username, password string) error
 	EnsureSuperuserEnv(dataDir string, ident, pass string) (string, error)
@@ -113,6 +121,15 @@ func (s *Server) SetEmbeddedPB(app PBAppStore) {
 	s.muOps.Lock()
 	s.embeddedPB = app
 	s.muOps.Unlock()
+	// Per-request telemetry: schema + async writer over the embedded PB.
+	if app != nil {
+		if err := app.InitRequestsSchema(); err != nil {
+			log.Printf("analytics schema: %v", err)
+		}
+		if appConcrete, ok := app.(*embeddedpb.App); ok {
+			s.reqLog = analytics.NewStore(appConcrete)
+		}
+	}
 }
 
 // EmbeddedPB returns the attached app (or nil).
@@ -178,6 +195,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		cacheTable:   routing.NewCacheTable(2*time.Hour, 8192),
 		dayShare:     routing.NewDayShare(),
 		linkReg:      link.NewRegistry(),
+		reqLog:       analytics.NewStore(nil),
 		lastMetrics:  map[string]map[string]any{},
 		lastGoodPP:   3000, lastGoodTG: 300,
 		uiKeys: map[string]string{},

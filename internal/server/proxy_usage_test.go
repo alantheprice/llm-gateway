@@ -17,7 +17,7 @@ const realStreamTail = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\
 // 2a: the usage block is the source of truth — prompt is the FULL prompt
 // (54, not the 5-token uncached suffix), cached is 49.
 func TestUsageFromSSE_PrefersUsageBlock(t *testing.T) {
-	pt, ot, cached := usageFromSSE([]byte(realStreamTail), 999)
+	pt, ot, cached, _ := usageFromSSE([]byte(realStreamTail), 999)
 	if pt != 54 {
 		t.Fatalf("prompt = %d, want 54 (prompt_n is uncached-only; usage block has the full count)", pt)
 	}
@@ -34,7 +34,7 @@ func TestUsageFromSSE_TimingsPromptIncludesCache(t *testing.T) {
 	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n" +
 		"data: {\"choices\":[],\"timings\":{\"prompt_n\":5,\"predicted_n\":26,\"cache_n\":49}}\n" +
 		"data: [DONE]\n"
-	pt, ot, cached := usageFromSSE([]byte(stream), 999)
+	pt, ot, cached, _ := usageFromSSE([]byte(stream), 999)
 	if pt != 54 {
 		t.Fatalf("prompt = %d, want 54 (5 uncached + 49 cached)", pt)
 	}
@@ -103,7 +103,7 @@ func TestSSEFilter_CarriesPartialLines(t *testing.T) {
 func TestUsageFromSSE_FallbackCharsOver4(t *testing.T) {
 	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"abcdefghijklmnop\"}}]}\n" + // 16 chars → 4 tokens
 		"data: [DONE]\n"
-	_, ot, _ := usageFromSSE([]byte(stream), 1)
+	_, ot, _, _ := usageFromSSE([]byte(stream), 1)
 	if ot != 4 {
 		t.Fatalf("output = %d, want 4 (16 chars / 4)", ot)
 	}

@@ -1,0 +1,234 @@
+package embeddedpb
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// InitRequestsSchema: create the table + indexes (idempotent).
+// Record: one completed inference request (wire type shared with the
+// analytics package).
+type RequestRecord struct {
+	TS        time.Time
+	User      string
+	KeyID     string
+	Model     string
+	Backend   string
+	Kind      string
+	Status    int
+	Prompt    int64
+	Cached    int64
+	Output    int64
+	TTFTms    float64
+	Prefillms float64
+	Decodems  float64
+	Totalms   float64
+	TokPerSec float64
+	ReusePath string
+}
+
+func (a *App) InitRequestsSchema() error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	_, err := a.pb.DB().NewQuery(`
+		CREATE TABLE IF NOT EXISTS requests (
+			ts         TEXT NOT NULL,        -- RFC3339 UTC
+			ts_hour    TEXT NOT NULL,        -- YYYY-MM-DDTHH (rollup key)
+			day        TEXT NOT NULL,        -- YYYY-MM-DD (UTC day)
+			user       TEXT NOT NULL,
+			key_id     TEXT NOT NULL DEFAULT '',
+			model      TEXT NOT NULL DEFAULT '',
+			backend    TEXT NOT NULL DEFAULT '',
+			kind       TEXT NOT NULL DEFAULT 'chat',
+			status     INTEGER NOT NULL DEFAULT 0,
+			prompt     INTEGER NOT NULL DEFAULT 0,
+			cached     INTEGER NOT NULL DEFAULT 0,
+			output     INTEGER NOT NULL DEFAULT 0,
+			ttft_ms    REAL NOT NULL DEFAULT 0,
+			prefill_ms REAL NOT NULL DEFAULT 0,
+			decode_ms  REAL NOT NULL DEFAULT 0,
+			total_ms   REAL NOT NULL DEFAULT 0,
+			tok_per_s  REAL NOT NULL DEFAULT 0,
+			reuse_path TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests (ts);
+		CREATE INDEX IF NOT EXISTS idx_requests_day_user ON requests (day, user);
+		CREATE INDEX IF NOT EXISTS idx_requests_day_backend ON requests (day, backend);
+	`).Execute()
+	return err
+}
+
+// InsertRequests: batch insert.
+func (a *App) InsertRequests(recs []RequestRecord) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	for _, r := range recs {
+		_, err := a.pb.DB().NewQuery(`
+			INSERT INTO requests (ts, ts_hour, day, user, key_id, model, backend,
+				kind, status, prompt, cached, output,
+				ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path)
+			VALUES ({:ts}, {:ts_hour}, {:day}, {:user}, {:key_id}, {:model},
+				{:backend}, {:kind}, {:status}, {:prompt}, {:cached}, {:output},
+				{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse})
+		`).Bind(map[string]any{
+			"ts":      r.TS.UTC().Format(time.RFC3339Nano),
+			"ts_hour": r.TS.UTC().Format("2006-01-02T15"),
+			"day":     r.TS.UTC().Format("2006-01-02"),
+			"user":    r.User, "key_id": r.KeyID, "model": r.Model,
+			"backend": r.Backend, "kind": r.Kind, "status": r.Status,
+			"prompt": r.Prompt, "cached": r.Cached, "output": r.Output,
+			"ttft": r.TTFTms, "prefill": r.Prefillms, "decode": r.Decodems,
+			"total": r.Totalms, "tps": r.TokPerSec, "reuse": r.ReusePath,
+		}).Execute()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PruneRequests: delete raw rows older than the retention window.
+func (a *App) PruneRequests(days int) (int64, error) {
+	if a.pb.DB() == nil {
+		return 0, fmt.Errorf("analytics: DB not open")
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	res, err := a.pb.DB().NewQuery(
+		`DELETE FROM requests WHERE day < {:cutoff}`,
+	).Bind(map[string]any{"cutoff": cutoff}).Execute()
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// SanitizeLabel: strip characters that would confuse group-by output.
+func SanitizeLabel(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '=' || r == '"' || r == '\'' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// HourlyRow: pre-aggregated hourly analytics row.
+type HourlyRow struct {
+	Hour      string  `db:"hour" json:"hour"`
+	Requests  int64   `db:"requests" json:"requests"`
+	Prompt    int64   `db:"prompt" json:"prompt"`
+	Output    int64   `db:"output" json:"output"`
+	Errors    int64   `db:"errors" json:"errors"`
+	TTFTP50   float64 `db:"ttft_p50" json:"ttft_p50"`
+	TTFTP95   float64 `db:"ttft_p95" json:"ttft_p95"`
+	TokPerSec float64 `db:"tok_per_s" json:"tok_per_s"`
+}
+
+// QueryAnalyticsHourly: hourly traffic + latency series (last N days).
+// p50/p95 via ordered-set aggregate: substring trick over grouped rows.
+func (a *App) QueryAnalyticsHourly(days int, dest *[]HourlyRow) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT ts_hour || ':00' AS hour,
+			COUNT(*) AS requests,
+			SUM(prompt) AS prompt,
+			SUM(output) AS output,
+			SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
+			ROUND(AVG(ttft_ms), 0) AS ttft_avg,
+			ROUND(MAX(ttft_ms), 0) AS ttft_max,
+			ROUND(AVG(tok_per_s), 0) AS tok_per_s
+		FROM requests
+		WHERE day >= {:start}
+		GROUP BY ts_hour ORDER BY ts_hour
+	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+}
+
+// GPURow: per-backend aggregates.
+type GPURow struct {
+	Backend     string  `db:"backend" json:"backend"`
+	Requests    int64   `db:"requests" json:"requests"`
+	Input       int64   `db:"input" json:"input"`
+	Output      int64   `db:"output" json:"output"`
+	Cached      int64   `db:"cached" json:"cached"`
+	CacheHitPct float64 `db:"cache_hit_pct" json:"cache_hit_pct"`
+	TokPerSec   float64 `db:"tok_per_s" json:"tok_per_s"`
+	TTFTP95     float64 `db:"ttft_p95" json:"ttft_p95"`
+}
+
+// QueryAnalyticsPerGPU: per-backend request/token/latency aggregates.
+func (a *App) QueryAnalyticsPerGPU(days int, dest *[]GPURow) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT backend,
+			COUNT(*) AS requests,
+			SUM(prompt) AS input,
+			SUM(output) AS output,
+			SUM(cached) AS cached,
+			ROUND(100.0 * SUM(cached) / MAX(SUM(prompt), 1), 1) AS cache_hit_pct,
+			ROUND(AVG(tok_per_s), 0) AS tok_per_s,
+			ROUND(MAX(ttft_ms), 0) AS ttft_p95
+		FROM requests
+		WHERE day >= {:start}
+		GROUP BY backend ORDER BY SUM(output) DESC
+	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+}
+
+// UserRow: per-user aggregates.
+type UserRow struct {
+	User      string  `db:"user" json:"user"`
+	Requests  int64   `db:"requests" json:"requests"`
+	Prompt    int64   `db:"prompt" json:"prompt"`
+	Output    int64   `db:"output" json:"output"`
+	Cached    int64   `db:"cached" json:"cached"`
+	CachedPct float64 `db:"cached_pct" json:"cached_pct"`
+	TTFTP50   float64 `db:"ttft_p50" json:"ttft_p50"`
+	Errors    int64   `db:"errors" json:"errors"`
+}
+
+// QueryAnalyticsPerUser: per-user request/token/latency aggregates.
+func (a *App) QueryAnalyticsPerUser(days int, dest *[]UserRow) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT user,
+			COUNT(*) AS requests,
+			SUM(prompt) AS prompt,
+			SUM(output) AS output,
+			SUM(cached) AS cached,
+			ROUND(100.0 * SUM(cached) / MAX(SUM(prompt), 1), 1) AS cached_pct,
+			ROUND(AVG(ttft_ms), 0) AS ttft_avg,
+			SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors
+		FROM requests
+		WHERE day >= {:start}
+		GROUP BY user ORDER BY SUM(output) DESC
+	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+}
+
+// ReuseRow: prefix-reuse path distribution.
+type ReuseRow struct {
+	Path     string `db:"path" json:"path"`
+	Requests int64  `db:"requests" json:"requests"`
+}
+
+// QueryAnalyticsReuse: reuse-path distribution (miss = empty path).
+func (a *App) QueryAnalyticsReuse(days int, dest *[]ReuseRow) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT CASE WHEN reuse_path = '' THEN 'miss' ELSE reuse_path END AS path,
+			COUNT(*) AS requests
+		FROM requests
+		WHERE day >= {:start}
+		GROUP BY path ORDER BY requests DESC
+	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+}

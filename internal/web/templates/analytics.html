@@ -1,0 +1,126 @@
+{{define "title"}}Analytics — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+function pct(v) { return v == null ? '—' : Number(v).toFixed(1) + '%'; }
+function ms(v) { return v == null ? '—' : Number(v).toFixed(0) + ' ms'; }
+
+let RANGE = 1;
+
+async function load() {
+  const r = await api('/api/analytics?days=' + RANGE);
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; } flash(r.data.error || 'failed', true); return; }
+  const d = r.data;
+
+  // --- Traffic chart: requests per hour + errors
+  const hours = d.hourly || [];
+  if (hours.length) {
+    document.getElementById('traffchart').innerHTML = Charts.linesMulti({
+      series: [
+        {name: 'requests', color: '#58a6ff', values: hours.map(h => ({label: h.hour.slice(5,13), value: h.requests}))},
+        {name: 'errors', color: '#f85149', values: hours.map(h => ({label: h.hour.slice(5,13), value: h.errors}))}
+      ],
+      height: 200, format: Charts.fmtShort, yLabel: 'requests / hour'});
+  } else {
+    document.getElementById('traffchart').innerHTML = '<p class="muted">No request telemetry yet (needs completed requests through the pool).</p>';
+  }
+
+  // --- Latency chart: avg + max TTFT per hour
+  if (hours.length && hours.some(h => h.ttft_avg > 0)) {
+    document.getElementById('latchart').innerHTML = Charts.linesMulti({
+      series: [
+        {name: 'avg TTFT', color: '#3fb950', values: hours.map(h => ({label: h.hour.slice(5,13), value: h.ttft_avg}))},
+        {name: 'max TTFT', color: '#e3b341', values: hours.map(h => ({label: h.hour.slice(5,13), value: h.ttft_max}))}
+      ],
+      height: 200, format: (v) => ms(v), yLabel: 'TTFT ms / hour'});
+  } else {
+    document.getElementById('latchart').innerHTML = '<p class="muted">No latency telemetry yet.</p>';
+  }
+
+  // --- Per-GPU table
+  const gr = document.getElementById('gpurows');
+  gr.innerHTML = (d.per_gpu || []).map(g =>
+    '<tr>' +
+    '<td data-label="GPU"><strong>' + esc(g.backend.replace('http://','')) + '</strong></td>' +
+    '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
+    '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
+    '<td data-label="Tokens out">' + fmtNum(g.output) + '</td>' +
+    '<td data-label="Cache hit">' + pct(g.cache_hit_pct) + '</td>' +
+    '<td data-label="tok/s">' + fmtNum(g.tok_per_s) + '</td>' +
+    '<td data-label="Worst TTFT">' + ms(g.ttft_p95) + '</td></tr>'
+  ).join('') || '<tr><td colspan="7" class="muted">No data.</td></tr>';
+
+  // --- Reuse paths
+  const rr = document.getElementById('reuserows');
+  rr.innerHTML = (d.reuse || []).map(x =>
+    '<tr><td data-label="Path"><code>' + esc(x.path) + '</code></td>' +
+    '<td data-label="Requests">' + fmtNum(x.requests) + '</td></tr>'
+  ).join('') || '<tr><td colspan="2" class="muted">No data.</td></tr>';
+
+  // --- Per-user table
+  const ur = document.getElementById('userrows');
+  ur.innerHTML = (d.per_user || []).map(u =>
+    '<tr>' +
+    '<td data-label="User"><strong>' + esc(u.user) + '</strong></td>' +
+    '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
+    '<td data-label="Prompt">' + fmtNum(u.prompt) + '</td>' +
+    '<td data-label="Output">' + fmtNum(u.output) + '</td>' +
+    '<td data-label="Cached">' + fmtNum(u.cached) + ' (' + pct(u.cached_pct) + ')</td>' +
+    '<td data-label="Avg TTFT">' + ms(u.ttft_avg) + '</td>' +
+    '<td data-label="Errors">' + fmtNum(u.errors) + '</td></tr>'
+  ).join('') || '<tr><td colspan="7" class="muted">No data.</td></tr>';
+}
+
+document.getElementById('range').addEventListener('change', (e) => { RANGE = parseInt(e.target.value, 10); load(); });
+load(); setInterval(load, 60000);
+</script>
+{{end}}
+{{define "content"}}
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Analytics</h1>
+    <span style="flex:1"></span>
+    <select id="range" class="btn" style="padding:.4rem .6rem">
+      <option value="1">Last 24h</option>
+      <option value="7">Last 7 days</option>
+      <option value="14">Last 14 days</option>
+    </select>
+  </div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Traffic — requests per hour <span class="muted" style="font-size:12px">(red = errors)</span></h2>
+    <div id="traffchart"></div>
+  </div>
+
+  <div class="card">
+    <h2>Latency — time to first token <span class="muted" style="font-size:12px">(avg / max ms per hour; spikes = cache evictions or cold prefills)</span></h2>
+    <div id="latchart"></div>
+  </div>
+
+  <div class="card">
+    <h2>Per GPU</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>GPU</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th>Worst TTFT</th></tr></thead>
+      <tbody id="gpurows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Prefix reuse paths</h2>
+    <p class="muted" style="font-size:12px">How prompts reached (or missed) the KV cache: <code>shared_prefix</code>/<code>turn_closure</code>/<code>long_anchor</code> are reuse paths; <code>miss</code> means a full prefill.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Path</th><th>Requests</th></tr></thead>
+      <tbody id="reuserows"><tr><td colspan="2" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Per user</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>Cached</th><th>Avg TTFT</th><th>Errors</th></tr></thead>
+      <tbody id="userrows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+{{end}}

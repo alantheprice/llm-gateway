@@ -146,6 +146,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/admin/system", s.handleAdminSystemPage)
 	mux.HandleFunc("/admin/costs", s.handleAdminCostsPage)
+	mux.HandleFunc("/admin/analytics/page", s.handleAnalyticsPage)
+	mux.HandleFunc("/api/analytics", s.handleAnalytics)
 	mux.HandleFunc("/admin/costs/backfill", s.handleCostsBackfill)
 	mux.HandleFunc("/usage/costs", s.handleUsageCosts)
 

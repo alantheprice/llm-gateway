@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"llmgateway/internal/config"
+	"llmgateway/internal/embeddedpb"
 	"llmgateway/internal/routing"
 )
 
@@ -129,17 +130,33 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				break
 			}
 		}
-		pt, ot, cached := usageFromSSE(captured.bytes(), est)
+		pt, ot, cached, extras := usageFromSSE(captured.bytes(), est)
 		if status < 400 { // failed requests don't burn quota or count as usage
 			s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+			s.reqLog.Add(embeddedpb.RequestRecord{
+				User: user, KeyID: keyID, Model: model, Backend: backendURL,
+				Kind: kindFor(model), Status: status,
+				Prompt: int64(pt), Cached: int64(cached), Output: int64(ot),
+				TTFTms: extras.TTFTms, Prefillms: extras.Prefillms,
+				Decodems: extras.Decodems, Totalms: extras.Totalms,
+				TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
+			})
 		}
 		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
 	w.Write(stripIfInjected(r, buffered))
-	pt, ot, cached := usageFromJSON(buffered, est)
+	pt, ot, cached, extras := usageFromJSON(buffered, est)
 	if status < 400 {
 		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
+		s.reqLog.Add(embeddedpb.RequestRecord{
+			User: user, KeyID: keyID, Model: model, Backend: backendURL,
+			Kind: kindFor(model), Status: status,
+			Prompt: int64(pt), Cached: int64(cached), Output: int64(ot),
+			TTFTms: extras.TTFTms, Prefillms: extras.Prefillms,
+			Decodems: extras.Decodems, Totalms: extras.Totalms,
+			TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
+		})
 	}
 	s.observePeak(model, backendURL, buffered, true)
 }
@@ -220,7 +237,7 @@ func copyHeader(dst, src http.Header) {
 
 // usageFromJSON extracts prompt/completion tokens (and engine-reported
 // cache reuse) from a non-stream response.
-func usageFromJSON(body []byte, est int) (int, int, int) {
+func usageFromJSON(body []byte, est int) (int, int, int, SSEExtras) {
 	var resp struct {
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -229,11 +246,28 @@ func usageFromJSON(body []byte, est int) (int, int, int) {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
+		Timings struct {
+			PromptMS    float64 `json:"prompt_ms"`
+			PredictedMS float64 `json:"predicted_ms"`
+			TTFTS       float64 `json:"ttft_s"`
+			ReusePath   string  `json:"reuse_path"`
+		} `json:"timings"`
 	}
-	if json.Unmarshal(body, &resp) == nil && resp.Usage.PromptTokens > 0 {
-		return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.PromptDetails.CachedTokens
+	if json.Unmarshal(body, &resp) != nil || resp.Usage.PromptTokens <= 0 {
+		return est, 0, 0, SSEExtras{}
 	}
-	return est, 0, 0
+	extras := SSEExtras{
+		Prefillms: resp.Timings.PromptMS,
+		Decodems:  resp.Timings.PredictedMS,
+		Totalms:   resp.Timings.PromptMS + resp.Timings.PredictedMS,
+		TTFTms:    resp.Timings.TTFTS * 1000,
+		ReusePath: resp.Timings.ReusePath,
+	}
+	if resp.Timings.PredictedMS > 0 {
+		extras.TokPerSec = float64(resp.Usage.CompletionTokens) /
+			(resp.Timings.PredictedMS / 1000)
+	}
+	return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.PromptDetails.CachedTokens, extras
 }
 
 type ctxKeyUsageHint struct{}
@@ -386,14 +420,26 @@ func (f *sseFilter) isInjectedUsage(line string) bool {
 		len(ch.Choices) == 0 && ch.Usage != nil
 }
 
+// SSEExtras: request telemetry beyond tokens, from the final chunk.
+type SSEExtras struct {
+	TTFTms    float64
+	Prefillms float64
+	Decodems  float64
+	Totalms   float64
+	TokPerSec float64
+	ReusePath string
+}
+
 // usageFromSSE extracts usage from the captured tail. Sources in priority
 // order: (1) the OpenAI usage chunk (present when stream_options
 // include_usage is set), (2) the engine's timings block (prompt_n /
 // predicted_n / cache_n — NInfer always sends it in the final chunk),
 // (3) rough estimate. reasoning_content counts toward output.
-func usageFromSSE(captured []byte, est int) (int, int, int) {
+// extras carries the timing telemetry when present.
+func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 	pt, ot, cached := 0, 0, 0
 	var tPrompt, tPredicted, tCache float64
+	var extras SSEExtras
 	haveTimings := false
 	for _, line := range strings.Split(string(captured), "\n") {
 		line = strings.TrimSpace(line)
@@ -413,9 +459,13 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 			Timings *struct {
-				PromptN    int `json:"prompt_n"`
-				PredictedN int `json:"predicted_n"`
-				CacheN     int `json:"cache_n"`
+				PromptN     int     `json:"prompt_n"`
+				PredictedN  int     `json:"predicted_n"`
+				CacheN      int     `json:"cache_n"`
+				PromptMS    float64 `json:"prompt_ms"`
+				PredictedMS float64 `json:"predicted_ms"`
+				TTFTS       float64 `json:"ttft_s"`
+				ReusePath   string  `json:"reuse_path"`
 			} `json:"timings"`
 			Choices []struct {
 				Delta struct {
@@ -432,7 +482,20 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 			tPrompt = float64(chunk.Timings.PromptN)
 			tPredicted = float64(chunk.Timings.PredictedN)
 			tCache = float64(chunk.Timings.CacheN)
+			extras.Prefillms = chunk.Timings.PromptMS
+			extras.Decodems = chunk.Timings.PredictedMS
+			extras.Totalms = chunk.Timings.PromptMS + chunk.Timings.PredictedMS
+			if chunk.Timings.PredictedMS > 0 && chunk.Timings.PredictedN > 0 {
+				extras.TokPerSec = float64(chunk.Timings.PredictedN) /
+					(chunk.Timings.PredictedMS / 1000)
+			}
 			haveTimings = true
+		}
+		if chunk.Timings != nil && chunk.Timings.TTFTS > 0 {
+			extras.TTFTms = chunk.Timings.TTFTS * 1000
+		}
+		if chunk.Timings != nil && chunk.Timings.ReusePath != "" {
+			extras.ReusePath = chunk.Timings.ReusePath
 		}
 		if chunk.Usage != nil && chunk.Usage.PromptTokens > 0 {
 			pt, ot = chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens
@@ -449,15 +512,15 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 	// (2) engine timings — exact but prompt_n counts only the UNCACHED
 	// suffix, so prompt = prompt_n + cache_n; (3) estimate.
 	if pt > 0 {
-		return pt, ot, cached
+		return pt, ot, cached, extras
 	}
 	if haveTimings {
-		return int(tPrompt + tCache), int(tPredicted), int(tCache)
+		return int(tPrompt + tCache), int(tPredicted), int(tCache), extras
 	}
 	if pt == 0 {
 		pt = est
 	}
-	return pt, ot, cached
+	return pt, ot, cached, extras
 }
 
 // proxy handles non-pool direct requests (SPEC §2) with usage recording.

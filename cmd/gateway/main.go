@@ -108,6 +108,9 @@ func main() {
 	if err := pbApp.InitOpsTables(); err != nil {
 		log.Fatalf("ops tables: %v", err)
 	}
+	if err := pbApp.InitRequestsSchema(); err != nil {
+		log.Printf("analytics schema: %v (continuing)", err)
+	}
 	// Legacy import: usage.json merges on every boot (MAX-upserts are
 	// idempotent; usage counters are monotone). cost_history.json imports
 	// ONLY while SQLite's cost_history table is empty — its rows are
@@ -128,6 +131,17 @@ func main() {
 			embeddedpb.RenameLegacy(costPath)
 		}
 	}
+
+	go func() {
+		for {
+			if n, err := pbApp.PruneRequests(14); err != nil && n == 0 {
+				log.Printf("analytics prune: %v", err)
+			} else if n > 0 {
+				log.Printf("analytics: pruned %d old request rows", n)
+			}
+			time.Sleep(6 * time.Hour)
+		}
+	}()
 
 	srv := server.New(cfg, store)
 	srv.SetOps(pbApp)
