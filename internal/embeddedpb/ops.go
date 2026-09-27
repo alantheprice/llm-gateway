@@ -40,10 +40,12 @@ CREATE INDEX IF NOT EXISTS idx_cost_history_day ON cost_history (day);
 CREATE TABLE IF NOT EXISTS gpu_daily (
   day          TEXT NOT NULL,
   backend      TEXT NOT NULL,
-  tokens       INTEGER NOT NULL DEFAULT 0,
+  tokens       INTEGER NOT NULL DEFAULT 0,   -- gateway-routed (MAX)
   kwh          REAL NOT NULL DEFAULT 0,
-  cache_hits   INTEGER NOT NULL DEFAULT 0,
-  engine_input INTEGER NOT NULL DEFAULT 0,
+  cache_hits   INTEGER NOT NULL DEFAULT 0,   -- engine LIFETIME counter
+  engine_input INTEGER NOT NULL DEFAULT 0,   -- engine LIFETIME counter
+  day_start_cache INTEGER NOT NULL DEFAULT 0, -- lifetime value at first sight of the day
+  day_start_input INTEGER NOT NULL DEFAULT 0, -- lifetime value at first sight of the day
   PRIMARY KEY (day, backend)
 );
 `
@@ -159,7 +161,7 @@ func (a *App) migrateGPUDaily() error {
 	type row struct {
 		N int64 `db:"n"`
 	}
-	for _, col := range []string{"cache_hits", "engine_input"} {
+	for _, col := range []string{"cache_hits", "engine_input", "day_start_cache", "day_start_input"} {
 		var r row
 		if err := a.pb.DB().NewQuery(
 			`SELECT COUNT(*) AS n FROM pragma_table_info('gpu_daily') WHERE name = {:col}`,
@@ -184,8 +186,10 @@ func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput
 		return fmt.Errorf("ops: DB not open")
 	}
 	_, err := a.pb.DB().NewQuery(`
-		INSERT INTO gpu_daily (day, backend, tokens, kwh, cache_hits, engine_input)
-		VALUES ({:day}, {:backend}, {:tokens}, {:kwh}, {:cache}, {:engine})
+		INSERT INTO gpu_daily (day, backend, tokens, kwh, cache_hits, engine_input,
+		                       day_start_cache, day_start_input)
+		VALUES ({:day}, {:backend}, {:tokens}, {:kwh}, {:cache}, {:engine},
+		        {:cache}, {:engine})
 		ON CONFLICT(day, backend) DO UPDATE SET
 		  tokens = MAX(tokens, {:tokens}),
 		  kwh = MAX(kwh, {:kwh}),
@@ -198,11 +202,13 @@ func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput
 
 // GPUDailyRow: one backend's day.
 type GPUDailyRow struct {
-	Backend     string  `json:"backend"`
-	Tokens      int64   `json:"tokens"` // gateway-routed tokens
-	Kwh         float64 `json:"kwh"`
-	CacheHits   int64   `json:"cache_hits"`   // engine aggregate
-	EngineInput int64   `json:"engine_input"` // engine aggregate input tokens (denominator)
+	Backend       string  `json:"backend"`
+	Tokens        int64   `json:"tokens"` // gateway-routed tokens
+	Kwh           float64 `json:"kwh"`
+	CacheHits     int64   `json:"cache_hits"`   // engine LIFETIME counter
+	EngineInput   int64   `json:"engine_input"` // engine LIFETIME counter
+	DayStartCache int64   `json:"day_start_cache"`
+	DayStartInput int64   `json:"day_start_input"`
 }
 
 // GPUDaily: today's (or any day's) per-backend counters, oldest first.
@@ -212,7 +218,9 @@ func (a *App) GPUDaily(day string) ([]GPUDailyRow, error) {
 	}
 	var rows []GPUDailyRow
 	err := a.pb.DB().NewQuery(`
-		SELECT backend, tokens, kwh, cache_hits, engine_input FROM gpu_daily
+		SELECT backend, tokens, kwh, cache_hits, engine_input,
+		       day_start_cache, day_start_input
+		FROM gpu_daily
 		WHERE day = {:day} ORDER BY tokens DESC
 	`).Bind(map[string]any{"day": day}).All(&rows)
 	return rows, err

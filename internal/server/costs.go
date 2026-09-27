@@ -158,7 +158,10 @@ func ComputeCosts(p CostsParams) []HostCost {
 		h.Purchased = hc.Purchased
 		h.AmortizeYears = hc.AmortizeYears
 		h.DailyCapital = dayCapital(hc.HardwareUSD, hc.AmortizeYears)
-		h.CapitalToday = h.DailyCapital
+		// Capital accrues by the hour like overhead, so "today" is a true
+		// part-day number: $/M is stable through the day and the monthly
+		// projection (today / day-fraction × 30) is coherent.
+		h.CapitalToday = h.DailyCapital * (hoursElapsed / 24)
 		h.Capital30d = h.DailyCapital * 30
 		paid, _, me, ml, fully := capitalState(hc.HardwareUSD, hc.AmortizeYears, hc.Purchased, now)
 		h.CapitalPaid = paid
@@ -171,6 +174,10 @@ func ComputeCosts(p CostsParams) []HostCost {
 
 		h.TotalToday = h.GPUCostToday + h.OverheadCostToday + h.CapitalToday
 		h.Total30d = h.GPUCost30dUSD + h.OverheadCost30d + h.Capital30d
+		// AllIn30dPerM: 30-day cost over 30-day tokens when the engine
+		// reports a rolling 30-day token count; else today's $/M is the
+		// honest estimate (no per-host token history yet).
+		h.AllIn30dPerM = h.AllInPerM
 		if h.TokensToday > 0 {
 			h.AllInPerM = math.Round(h.TotalToday/h.TokensToday*1e6*100) / 100
 			// 30d projection uses today's token run-rate (no per-day history
@@ -266,6 +273,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	gpuKwh30d := make([]float64, len(hosts))
 
 	usage := s.gatherUsage(backends)
+
 	for u, payload := range usage {
 		ip := backendHostIP(u)
 		idx, ok := backendHost[ip]
@@ -279,33 +287,14 @@ func (s *Server) usageCostsPayload() map[string]any {
 		tokensToday[idx] += usageNum(payload, "energy", "today", "tokens")
 	}
 
-	// Per-host GPU kwh + idle watts aligned to the hosts slice (marginal/
-	// fixed split below).
-	gpuKwh := make([]float64, len(hosts))
-	idleW := make([]float64, len(hosts))
-	for u, payload := range usage {
-		ip := backendHostIP(u)
-		for i, h := range hosts {
-			for _, hip := range h.IPs {
-				if hip == ip {
-					gpuKwh[i] += usageNum(payload, "energy", "today", "kwh")
-					idleW[i] = idleByHost[ip]
-				}
-			}
-		}
-	}
-
-	// Per-host GPU kwh + idle watts aligned to the hosts slice (for the
-	// marginal/fixed split below).
-	for u, payload := range usage {
-		ip := backendHostIP(u)
-		for i, h := range hosts {
-			for _, hip := range h.IPs {
-				if hip == ip {
-					gpuKwh[i] += usageNum(payload, "energy", "today", "kwh")
-					idleW[i] = idleByHost[ip]
-				}
-			}
+	// Engine-restart guard: NInfer resets energy.today.tokens on restart
+	// but keeps kWh — tokens≈0 with real kWh makes $/M explode (observed:
+	// 589 tokens vs 2.52 kWh = $535/M). Where the signature appears, zero
+	// the tokens so the host's $/M reads nil ("no data") instead of a
+	// wrong number. Recovers on the next UTC day.
+	for i := range hosts {
+		if tokensToday[i] < 1000 && gpuKwhToday[i] > 0.1 {
+			tokensToday[i] = 0
 		}
 	}
 
@@ -377,7 +366,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 			"total_cost_usd_30d":        math.Round(total30d*100) / 100,
 			"tokens_today":              tokens,
 			"all_in_usd_per_m_tokens":   fleetPerM,
-			"projected_monthly_usd":     math.Round(totalToday*30*100) / 100,
+			"projected_monthly_usd":     math.Round(projMonth(totalToday)*100) / 100,
 			"gpu_only_usd_per_m_tokens": gpuOnlyPerM(hostCosts, tokens),
 		},
 		"price_book":       book,
@@ -389,16 +378,28 @@ func (s *Server) usageCostsPayload() map[string]any {
 	}
 	if ops := s.Ops(); ops != nil {
 		if rows, err := ops.GPUDaily(time.Now().UTC().Format("2006-01-02")); err == nil {
-			// Augment with live engine cache-hit rates (tokens.input).
+			// Live update from the poller's captured payload, then express
+			// the per-day counters as DELTAS (lifetime minus day-start
+			// snapshot) so the card shows today's traffic, not lifetime.
 			s.mu.Lock()
 			for i := range rows {
 				if raw := s.lastMetrics[rows[i].Backend]; raw != nil {
 					if h := int64(usageNum(raw, "tokens", "input", "cache_hits")); h > rows[i].CacheHits {
-						rows[i].CacheHits = int64(h)
+						rows[i].CacheHits = h
 					}
 					if t := int64(usageNum(raw, "tokens", "input", "total")); t > rows[i].EngineInput {
-						rows[i].EngineInput = int64(t)
+						rows[i].EngineInput = t
 					}
+				}
+				if d := rows[i].CacheHits - rows[i].DayStartCache; d > 0 {
+					rows[i].CacheHits = d
+				} else {
+					rows[i].CacheHits = 0 // day-start snapshot was taken mid/post-day
+				}
+				if d := rows[i].EngineInput - rows[i].DayStartInput; d > 0 {
+					rows[i].EngineInput = d
+				} else {
+					rows[i].EngineInput = 0
 				}
 			}
 			s.mu.Unlock()
@@ -443,6 +444,17 @@ func (s *Server) costHistorySeries() map[string]any {
 		})
 	}
 	return map[string]any{"days": rows, "source": "json"}
+}
+
+// projMonth: extrapolate a part-day total to 30 days. Day fraction comes
+// from UTC clock — same basis the per-day buckets use.
+func projMonth(totalToday float64) float64 {
+	now := time.Now().UTC()
+	frac := (float64(now.Hour()) + float64(now.Minute())/60 + float64(now.Second())/3600) / 24
+	if frac < 1.0/24 {
+		frac = 1.0 / 24 // first hour: don't divide by ~0
+	}
+	return totalToday / frac * 30
 }
 
 func gpuOnlyPerM(hosts []HostCost, tokens float64) any {

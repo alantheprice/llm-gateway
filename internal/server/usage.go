@@ -61,13 +61,20 @@ func NewUsageStore(path string) *UsageStore {
 	return u
 }
 
+// kindFor classifies by model id. Matches whole id segments (split on
+// separators) instead of substrings, so "qwen3.5-fim" is FIM but
+// "committed-32b" is not embeddings.
 func kindFor(model string) string {
-	m := lower(model)
-	if contains(m, "embed") {
-		return "embeddings"
-	}
-	if contains(m, "fim") {
-		return "fim"
+	m := strings.ToLower(model)
+	for _, part := range strings.FieldsFunc(m, func(r rune) bool {
+		return !('a' <= r && r <= 'z' || '0' <= r && r <= '9')
+	}) {
+		switch {
+		case strings.HasPrefix(part, "embed"):
+			return "embeddings"
+		case part == "fim" || strings.HasPrefix(part, "fim"):
+			return "fim"
+		}
 	}
 	return "chat"
 }
@@ -164,6 +171,30 @@ func (u *UsageStore) flushLocked() {
 	if data, err := os.ReadFile(u.path); err == nil {
 		var disk UsageFile
 		if json.Unmarshal(data, &disk) == nil {
+			mergeMaps := func(dst, srcMap map[string]*KindTally) {
+				for k, kt := range srcMap {
+					if kt == nil {
+						continue
+					}
+					if cur, ok := dst[k]; ok && cur != nil {
+						if kt.Requests > cur.Requests {
+							cur.Requests = kt.Requests
+						}
+						if kt.PromptTokens > cur.PromptTokens {
+							cur.PromptTokens = kt.PromptTokens
+						}
+						if kt.OutputTokens > cur.OutputTokens {
+							cur.OutputTokens = kt.OutputTokens
+						}
+						if kt.CachedTokens > cur.CachedTokens {
+							cur.CachedTokens = kt.CachedTokens
+						}
+					} else {
+						ktc := *kt
+						dst[k] = &ktc
+					}
+				}
+			}
 			mergeUserUsage := func(mu, du *UserUsage) {
 				if du == nil || mu == nil || du == mu {
 					return
@@ -180,14 +211,39 @@ func (u *UsageStore) flushLocked() {
 				if du.CachedTokens > mu.CachedTokens {
 					mu.CachedTokens = du.CachedTokens
 				}
+				// per-key and per-kind maps merge too — totals-only merging
+				// let the breakdowns drift from the sums.
+				if mu.Keys == nil {
+					mu.Keys = du.Keys
+				} else {
+					mergeMaps(mu.Keys, du.Keys)
+				}
+				if mu.Kinds == nil {
+					mu.Kinds = du.Kinds
+				} else {
+					mergeMaps(mu.Kinds, du.Kinds)
+				}
+			}
+			takeDiskUser := func(du *UserUsage) *UserUsage {
+				if du == nil {
+					return nil
+				}
+				// take ownership; ensure live-shape maps are non-nil so
+				// RecordDetailed can write without nil checks
+				if du.Keys == nil {
+					du.Keys = map[string]*KindTally{}
+				}
+				if du.Kinds == nil {
+					du.Kinds = map[string]*KindTally{}
+				}
+				return du
 			}
 			for name, du := range disk.Users {
-				if du == nil {
-					continue
-				}
 				mu, ok := u.Data.Users[name]
 				if !ok {
-					u.Data.Users[name] = du
+					if taken := takeDiskUser(du); taken != nil {
+						u.Data.Users[name] = taken
+					}
 					continue
 				}
 				mergeUserUsage(mu, du)
@@ -199,7 +255,14 @@ func (u *UsageStore) flushLocked() {
 					continue
 				}
 				for name, du := range users {
-					mergeUserUsage(dm[name], du)
+					mu, ok := dm[name]
+					if !ok {
+						if taken := takeDiskUser(du); taken != nil {
+							dm[name] = taken
+						}
+						continue
+					}
+					mergeUserUsage(mu, du)
 				}
 			}
 		}

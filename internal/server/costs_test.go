@@ -69,16 +69,18 @@ func TestComputeCostsAllIn(t *testing.T) {
 	if !almost(h.OverheadKwhToday, 1.2) || !almost(h.OverheadCostToday, 0.15) {
 		t.Fatalf("overhead kwh=%v cost=%v", h.OverheadKwhToday, h.OverheadCostToday)
 	}
-	// capital daily = 4380/(3*365.25) = 3.9973...
+	// capital accrues by the hour (part-day, like overhead):
+	// daily = 4380/(3*365.25) = 3.9973...; 12h = half
 	wantDaily := 4380 / (3 * 365.25)
-	if !almost(h.CapitalToday, wantDaily) {
-		t.Fatalf("capital today = %v want %v", h.CapitalToday, wantDaily)
+	wantCapital := wantDaily * 0.5
+	if !almost(h.CapitalToday, wantCapital) {
+		t.Fatalf("capital today = %v want %v", h.CapitalToday, wantCapital)
 	}
-	if !almost(h.TotalToday, 0.75+0.15+wantDaily) {
+	if !almost(h.TotalToday, 0.75+0.15+wantCapital) {
 		t.Fatalf("total = %v", h.TotalToday)
 	}
 	// all-in $/M = total / 200M × 1e6 = total/200
-	wantPerM := math.Round((0.75+0.15+wantDaily)/200*100) / 100
+	wantPerM := math.Round((0.75+0.15+wantCapital)/200*100) / 100
 	got, ok := h.AllInPerM.(float64)
 	if !ok || math.Abs(got-wantPerM) > 1e-9 {
 		t.Fatalf("all-in per M = %v want %v", h.AllInPerM, wantPerM)
