@@ -402,10 +402,11 @@ func (s *Server) usageCostsPayload() map[string]any {
 			s.mu.Lock()
 			for i := range rows {
 				if raw := s.lastMetrics[rows[i].Backend]; raw != nil {
-					hits := usageNum(raw, "tokens", "input", "cache_hits")
-					total := usageNum(raw, "tokens", "input", "total")
-					if total > 0 {
-						rows[i].CacheHits = int64(hits)
+					if h := int64(usageNum(raw, "tokens", "input", "cache_hits")); h > rows[i].CacheHits {
+						rows[i].CacheHits = int64(h)
+					}
+					if t := int64(usageNum(raw, "tokens", "input", "total")); t > rows[i].EngineInput {
+						rows[i].EngineInput = int64(t)
 					}
 				}
 			}

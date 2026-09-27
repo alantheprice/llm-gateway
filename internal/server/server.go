@@ -89,7 +89,7 @@ type OpsStore interface {
 	UpsertUsageDaily(day, user, kind string, requests, prompt, cached, output int) error
 	UpsertCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	CostSeries(days int) ([]embeddedpb.CostRow, error)
-	UpsertGPUDaily(day, backend string, tokens, cacheHits int64, kwh float64) error
+	UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput int64, kwh float64) error
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	PruneOlderThan(days int) (int64, error)
 }
@@ -554,11 +554,10 @@ func (s *Server) recordGPUDaily(backend string, raw map[string]any) {
 	// on this NInfer build regardless of actual reuse).
 	hits := usageNum(raw, "tokens", "input", "cache_hits")
 	total := usageNum(raw, "tokens", "input", "total")
-	if tok == 0 && kwh == 0 {
+	if tok == 0 && kwh == 0 && total == 0 {
 		return
 	}
-	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), int64(hits), kwh)
-	_ = total
+	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), int64(hits), int64(total), kwh)
 }
 
 func getJSON(client *http.Client, url string, timeout time.Duration) (map[string]any, bool) {

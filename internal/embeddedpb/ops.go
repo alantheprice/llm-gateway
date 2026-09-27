@@ -38,11 +38,12 @@ CREATE TABLE IF NOT EXISTS cost_history (
 CREATE INDEX IF NOT EXISTS idx_cost_history_day ON cost_history (day);
 
 CREATE TABLE IF NOT EXISTS gpu_daily (
-  day        TEXT NOT NULL,
-  backend    TEXT NOT NULL,
-  tokens     INTEGER NOT NULL DEFAULT 0,
-  kwh        REAL NOT NULL DEFAULT 0,
-  cache_hits INTEGER NOT NULL DEFAULT 0,
+  day          TEXT NOT NULL,
+  backend      TEXT NOT NULL,
+  tokens       INTEGER NOT NULL DEFAULT 0,
+  kwh          REAL NOT NULL DEFAULT 0,
+  cache_hits   INTEGER NOT NULL DEFAULT 0,
+  engine_input INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, backend)
 );
 `
@@ -57,8 +58,11 @@ func (a *App) InitOpsTables() error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	_, err := a.pb.DB().NewQuery(opsSchema).Execute()
-	return err
+	if _, err := a.pb.DB().NewQuery(opsSchema).Execute(); err != nil {
+		return err
+	}
+	// Schema evolution: gpu_daily shipped without cache_hits.
+	return a.migrateGPUDaily()
 }
 
 // UpsertUsageDaily merges one (day,user,kind) tally into the table.
@@ -139,29 +143,61 @@ func (a *App) CostSeries(days int) ([]CostRow, error) {
 	return rows, nil
 }
 
+// migrateGPUDaily: the first gpu_daily release shipped without cache_hits;
+// pre-existing tables need the column added (idempotent).
+func (a *App) migrateGPUDaily() error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("ops: DB not open")
+	}
+	// PB's query builder won't One() into a scalar — use the raw handle.
+	type row struct {
+		N int64 `db:"n"`
+	}
+	var r row
+	if err := a.pb.DB().NewQuery(
+		`SELECT COUNT(*) AS n FROM pragma_table_info('gpu_daily') WHERE name = 'cache_hits'`,
+	).One(&r); err != nil {
+		return err
+	}
+	if r.N > 0 {
+		return nil
+	}
+	for _, ddl := range []string{
+		`ALTER TABLE gpu_daily ADD COLUMN cache_hits INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE gpu_daily ADD COLUMN engine_input INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := a.pb.DB().NewQuery(ddl).Execute(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpsertGPUDaily merges one backend's daily counters. MAX-merge (engines
 // are the source of truth; their counters only grow within a day).
-func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits int64, kwh float64) error {
+func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput int64, kwh float64) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("ops: DB not open")
 	}
 	_, err := a.pb.DB().NewQuery(`
-		INSERT INTO gpu_daily (day, backend, tokens, kwh, cache_hits)
-		VALUES ({:day}, {:backend}, {:tokens}, {:kwh}, {:cache})
+		INSERT INTO gpu_daily (day, backend, tokens, kwh, cache_hits, engine_input)
+		VALUES ({:day}, {:backend}, {:tokens}, {:kwh}, {:cache}, {:engine})
 		ON CONFLICT(day, backend) DO UPDATE SET
 		  tokens = MAX(tokens, {:tokens}),
 		  kwh = MAX(kwh, {:kwh}),
-		  cache_hits = MAX(cache_hits, {:cache})
+		  cache_hits = MAX(cache_hits, {:cache}),
+		  engine_input = MAX(engine_input, {:engine})
 	`).Bind(map[string]any{"day": day, "backend": backend, "tokens": tokens, "kwh": kwh, "cache": cacheHits}).Execute()
 	return err
 }
 
 // GPUDailyRow: one backend's day.
 type GPUDailyRow struct {
-	Backend   string  `json:"backend"`
-	Tokens    int64   `json:"tokens"`
-	Kwh       float64 `json:"kwh"`
-	CacheHits int64   `json:"cache_hits"`
+	Backend     string  `json:"backend"`
+	Tokens      int64   `json:"tokens"` // gateway-routed tokens
+	Kwh         float64 `json:"kwh"`
+	CacheHits   int64   `json:"cache_hits"`   // engine aggregate
+	EngineInput int64   `json:"engine_input"` // engine aggregate input tokens (denominator)
 }
 
 // GPUDaily: today's (or any day's) per-backend counters, oldest first.
@@ -171,7 +207,7 @@ func (a *App) GPUDaily(day string) ([]GPUDailyRow, error) {
 	}
 	var rows []GPUDailyRow
 	err := a.pb.DB().NewQuery(`
-		SELECT backend, tokens, kwh, cache_hits FROM gpu_daily
+		SELECT backend, tokens, kwh, cache_hits, engine_input FROM gpu_daily
 		WHERE day = {:day} ORDER BY tokens DESC
 	`).Bind(map[string]any{"day": day}).All(&rows)
 	return rows, err
