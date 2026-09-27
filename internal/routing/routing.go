@@ -48,12 +48,22 @@ type Tracker struct {
 	baseline map[string][2]int // url -> {spills, evictions} at last score
 	inFlight map[string]int
 	weights  Weights
+	// down: url -> time of the last connect/poll failure. A member counts
+	// as down for DownTTL after its last failure; a successful poll (Set)
+	// clears it immediately.
+	down map[string]time.Time
 }
+
+// DownTTL: how long one failure keeps a member out of rotation. The
+// poller re-marks a still-dead member on every failed poll, so it stays
+// out continuously; a member whose failure goes unrepeated becomes
+// eligible again after the TTL (a natural re-probe).
+const DownTTL = 15 * time.Second
 
 func NewTracker(w Weights) *Tracker {
 	return &Tracker{
 		loads: map[string]*Load{}, baseline: map[string][2]int{},
-		inFlight: map[string]int{}, weights: w,
+		inFlight: map[string]int{}, weights: w, down: map[string]time.Time{},
 	}
 }
 
@@ -61,6 +71,33 @@ func (t *Tracker) Set(url string, l *Load) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.loads[url] = l
+	delete(t.down, url) // a successful poll proves the member is back
+}
+
+// MarkDown records a connect or poll failure for url.
+func (t *Tracker) MarkDown(url string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.down[url] = time.Now()
+}
+
+// MarkDownIfTracked marks url down only if it has been polled
+// successfully before. Poll failures on backends that never answered the
+// metrics endpoints (non-NInfer/vLLM engines) must not evict them.
+func (t *Tracker) MarkDownIfTracked(url string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.loads[url]; ok {
+		t.down[url] = time.Now()
+	}
+}
+
+// IsDown reports whether url failed within the last DownTTL.
+func (t *Tracker) IsDown(url string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	at, ok := t.down[url]
+	return ok && time.Since(at) < DownTTL
 }
 
 func (t *Tracker) Get(url string) *Load {

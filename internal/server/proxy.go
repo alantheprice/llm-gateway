@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -93,6 +94,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	hdr http.Header, buffered []byte, stream io.Reader, status int,
 	user, keyID, model string, est int, backendURL string) {
 
+	if ai := accessFrom(r); ai != nil {
+		ai.user, ai.model, ai.backend, ai.stream = user, model, backendURL, stream != nil
+	}
 	copyHeader(w.Header(), hdr)
 	w.WriteHeader(status)
 	if stream != nil {
@@ -114,6 +118,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				captured.write(buf[:n])
 			}
 			if err != nil {
+				if ai := accessFrom(r); ai != nil && err != io.EOF {
+					ai.streamErr = err.Error() // backend died or client left mid-stream
+				}
 				if tail := filter.flush(); len(tail) > 0 {
 					w.Write(tail)
 					if f := flusher; f != nil {
@@ -464,9 +471,12 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body 
 	}
 	status, hdr, buffered, stream, err := s.dispatch(r, url, body)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":{"message":"backend connect failed","type":"proxy_error"}}`))
+		if r.Context().Err() != nil {
+			return // client went away
+		}
+		log.Printf("backend %s connect failed (%v), marking down", url, err)
+		s.tracker.MarkDown(url)
+		poolUnavailable(w) // single-backend model: same 503 + Retry-After
 		return
 	}
 	s.relay(w, r, hdr, stripIfInjected(r, buffered), stream, status, user, keyID, modelID, estimateFrom(body), url)
