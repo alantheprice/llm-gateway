@@ -306,8 +306,9 @@ func (r *ringBuf) write(p []byte) {
 	}
 	r.buf = append(r.buf, p...)
 	if len(r.buf) > r.cap {
-		copy(r.buf, r.buf[len(r.buf)-r.cap:])
-		r.buf = r.buf[:r.cap]
+		// Drop the head by slicing (no copy); compaction happens at
+		// read time — bytes() copies only when it would be viewed.
+		r.buf = r.buf[len(r.buf)-r.cap:]
 	}
 }
 

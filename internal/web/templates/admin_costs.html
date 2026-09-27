@@ -51,7 +51,7 @@ async function load() {
       const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit' : '';
       return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
       esc(r.backend.replace('http://', '')) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
-      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of routed' + (rate ? ' · ' + rate : '') + '</span>';
+      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of input' + (rate ? ' · ' + rate : '') + '</span>';
     }).join('') + '</div>' +
     '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = per-day delta of engine prefix-reuse counters (day-start snapshots). "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
       gpuRows.map((r, i) => {

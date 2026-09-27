@@ -108,14 +108,25 @@ func main() {
 	if err := pbApp.InitOpsTables(); err != nil {
 		log.Fatalf("ops tables: %v", err)
 	}
-	// Legacy import: usage.json daily map + cost_history.json merged into
-	// SQLite on every boot. Upserts are idempotent; the JSON files stay in
-	// place as mirrors (the earlier rename-on-import scattered data across
-	// .imported-* copies — never again).
-	if n, err := pbApp.ImportLegacyJSON(server.UsagePath(cfg), server.CostHistoryPath(server.UsagePath(cfg))); err != nil {
+	// Legacy import: usage.json merges on every boot (MAX-upserts are
+	// idempotent; usage counters are monotone). cost_history.json imports
+	// ONLY while SQLite's cost_history table is empty — its rows are
+	// stale mirrors (frozen by the old page-view recording) and re-merging
+	// them after a backfill repair would resurrect corrected values.
+	costPath := server.CostHistoryPath(server.UsagePath(cfg))
+	if n, err := pbApp.ImportLegacyJSON(server.UsagePath(cfg), costPath); err != nil {
 		log.Printf("legacy usage/cost import: %v (continuing)", err)
 	} else if n > 0 {
 		log.Printf("merged %d usage/cost rows into SQLite", n)
+	}
+	if empty, err := pbApp.CostHistoryEmpty(); err == nil && empty {
+		// Fresh SQLite: import once, then retire the JSON mirror.
+		if n, err := pbApp.ImportCostHistoryJSON(costPath); err != nil {
+			log.Printf("cost_history import: %v (continuing)", err)
+		} else {
+			log.Printf("imported %d cost_history rows (first boot)", n)
+			embeddedpb.RenameLegacy(costPath)
+		}
 	}
 
 	srv := server.New(cfg, store)

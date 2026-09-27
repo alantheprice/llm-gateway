@@ -94,6 +94,7 @@ type OpsStore interface {
 	UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput int64, kwh float64) error
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	ReplaceCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
+	QueryUsageDay(day string, dest any) error
 	PruneOlderThan(days int) (int64, error)
 }
 
@@ -560,6 +561,12 @@ func (s *Server) PollOnce() {
 func (s *Server) recordGPUDaily(backend string, raw map[string]any) {
 	ops := s.Ops()
 	if ops == nil {
+		return
+	}
+	// During shutdown the DB closes before the poller stops — skip
+	// rather than spam "DB not open" every second.
+	type readier interface{ OpsReady() bool }
+	if rr, ok := ops.(readier); !ok || !rr.OpsReady() {
 		return
 	}
 	tok := usageNum(raw, "energy", "today", "tokens")

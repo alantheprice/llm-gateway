@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
+	"strings"
 	"time"
+
+	"llmgateway/internal/config"
 )
 
 // handleCostsBackfill: POST /admin/costs/backfill
@@ -100,4 +104,54 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 // historical days and a stale wrong maximum must not win.
 func replaceCostDay(ops OpsStore, day string, energy, overhead, capital, value float64, tokens int64) error {
 	return ops.ReplaceCostDay(day, energy, overhead, capital, value, tokens)
+}
+
+// hostExisted: whether the host was already purchased by this day
+// (charges nothing before the hardware existed).
+func hostExisted(h config.HostCfg, day string) bool {
+	if h.Purchased == "" {
+		return true // no purchase date recorded: assume it existed
+	}
+	purchased, err := time.Parse("2006-01-02", h.Purchased)
+	if err != nil {
+		return true
+	}
+	dayT, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return true
+	}
+	return !dayT.Before(purchased)
+}
+
+// tokensValueForDay: rebuild a past day's routed tokens and book-price
+// value from the ops usage_daily table (per-user chat/embeddings/fim
+// rows; key:<id> breakdowns and the synthetic 'lifetime' row excluded).
+func (s *Server) tokensValueForDay(day string) (int64, float64) {
+	ops := s.Ops()
+	if ops == nil {
+		return 0, 0
+	}
+	book := s.cfg.PriceBook
+	var tokens int64
+	var value float64
+	type row struct {
+		User         string `db:"user"`
+		Kind         string `db:"kind"`
+		Requests     int64  `db:"requests"`
+		PromptTokens int64  `db:"prompt_tokens"`
+		CachedTokens int64  `db:"cached_tokens"`
+		OutputTokens int64  `db:"output_tokens"`
+	}
+	var rows []row
+	if err := ops.QueryUsageDay(day, &rows); err != nil {
+		return 0, 0
+	}
+	for _, r := range rows {
+		if r.User == "lifetime" || strings.HasPrefix(r.Kind, "key:") {
+			continue
+		}
+		tokens += r.PromptTokens + r.OutputTokens
+		value += applyBookPrices(book, int(r.PromptTokens), int(r.CachedTokens), int(r.OutputTokens))
+	}
+	return tokens, math.Round(value*10000) / 10000
 }

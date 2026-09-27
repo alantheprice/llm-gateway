@@ -203,7 +203,7 @@ func (a *App) UpsertGPUDaily(day, backend string, tokens, cacheHits, engineInput
 // GPUDailyRow: one backend's day.
 type GPUDailyRow struct {
 	Backend       string  `json:"backend"`
-	Tokens        int64   `json:"tokens"` // gateway-routed tokens
+	Tokens        int64   `json:"tokens"` // engine-reported day input (see Costs page note)
 	Kwh           float64 `json:"kwh"`
 	CacheHits     int64   `json:"cache_hits"`   // engine LIFETIME counter
 	EngineInput   int64   `json:"engine_input"` // engine LIFETIME counter
@@ -229,6 +229,17 @@ func (a *App) ReplaceCostDay(day string, energy, overhead, capital, value float6
 	`).Bind(map[string]any{"day": day, "energy": energy, "overhead": overhead,
 		"capital": capital, "tokens": tokens, "value": value}).Execute()
 	return err
+}
+
+// QueryUsageDay: raw per-(user,kind) rows for a day — backfill input.
+func (a *App) QueryUsageDay(day string, dest any) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("ops: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT user, kind, requests, prompt_tokens, cached_tokens, output_tokens
+		FROM usage_daily WHERE day = {:day}
+	`).Bind(map[string]any{"day": day}).All(dest)
 }
 
 // GPUDaily: today's (or any day's) per-backend counters, oldest first.
@@ -319,22 +330,50 @@ func (a *App) ImportLegacyJSON(usagePath, costHistoryPath string) (int, error) {
 			}
 		}
 	}
-	if data, err := os.ReadFile(costHistoryPath); err == nil {
-		var ch struct {
-			Days map[string]struct {
-				EnergyUSD   float64 `json:"energy_usd"`
-				OverheadUSD float64 `json:"overhead_usd"`
-				CapitalUSD  float64 `json:"capital_usd"`
-				Tokens      int64   `json:"tokens"`
-				ValueUSD    float64 `json:"value_usd"`
-			} `json:"days"`
-		}
-		if err := json.Unmarshal(data, &ch); err == nil {
-			for day, c := range ch.Days {
-				if err := a.UpsertCostDay(day, c.EnergyUSD, c.OverheadUSD, c.CapitalUSD, c.ValueUSD, c.Tokens); err == nil {
-					imported++
-				}
-			}
+	return imported, nil
+}
+
+// CostHistoryEmpty: whether the ops cost_history table has no rows.
+func (a *App) CostHistoryEmpty() (bool, error) {
+	if a.pb.DB() == nil {
+		return false, fmt.Errorf("ops: DB not open")
+	}
+	type row struct {
+		N int64 `db:"n"`
+	}
+	var r row
+	if err := a.pb.DB().NewQuery(`SELECT COUNT(*) AS n FROM cost_history`).One(&r); err != nil {
+		return false, err
+	}
+	return r.N == 0, nil
+}
+
+// ImportCostHistoryJSON: one-time import of the legacy cost_history.json
+// mirror (fresh installs only — see main.go gate).
+func (a *App) ImportCostHistoryJSON(costHistoryPath string) (int, error) {
+	if a.pb.DB() == nil {
+		return 0, fmt.Errorf("ops: DB not open")
+	}
+	imported := 0
+	data, err := os.ReadFile(costHistoryPath)
+	if err != nil {
+		return 0, err
+	}
+	var ch struct {
+		Days map[string]struct {
+			EnergyUSD   float64 `json:"energy_usd"`
+			OverheadUSD float64 `json:"overhead_usd"`
+			CapitalUSD  float64 `json:"capital_usd"`
+			Tokens      int64   `json:"tokens"`
+			ValueUSD    float64 `json:"value_usd"`
+		} `json:"days"`
+	}
+	if err := json.Unmarshal(data, &ch); err != nil {
+		return 0, err
+	}
+	for day, c := range ch.Days {
+		if err := a.UpsertCostDay(day, c.EnergyUSD, c.OverheadUSD, c.CapitalUSD, c.ValueUSD, c.Tokens); err == nil {
+			imported++
 		}
 	}
 	return imported, nil

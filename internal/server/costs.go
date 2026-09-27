@@ -266,6 +266,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	book := s.cfg.PriceBook
 	s.mu.Unlock()
 
+	uptimeShort := make([]bool, len(hosts))
 	gpuKwhToday := make([]float64, len(hosts))
 	gpuCostToday := make([]float64, len(hosts))
 	gpuCost30d := make([]float64, len(hosts))
@@ -282,18 +283,28 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 		gpuKwhToday[idx] += usageNum(payload, "energy", "today", "kwh")
 		gpuCostToday[idx] += usageNum(payload, "energy", "today", "cost_usd")
+		// uptime < seconds-since-UTC-midnight ⇒ restarted mid-day
+		upS := usageNum(payload, "uptime", "seconds")
+		nowUTC := time.Now().UTC()
+		utcSec := float64(nowUTC.Hour())*3600 + float64(nowUTC.Minute())*60 + float64(nowUTC.Second())
+		if upS > 0 && upS < utcSec {
+			uptimeShort[idx] = true
+		}
 		gpuKwh30d[idx] += usageNum(payload, "energy", "rolling_30d", "kwh")
 		gpuCost30d[idx] += usageNum(payload, "energy", "rolling_30d", "cost_usd")
 		tokensToday[idx] += usageNum(payload, "energy", "today", "tokens")
 	}
 
 	// Engine-restart guard: NInfer resets energy.today.tokens on restart
-	// but keeps kWh — tokens≈0 with real kWh makes $/M explode (observed:
-	// 589 tokens vs 2.52 kWh = $535/M). Where the signature appears, zero
-	// the tokens so the host's $/M reads nil ("no data") instead of a
-	// wrong number. Recovers on the next UTC day.
+	// but keeps the day's kWh — tokens can sit anywhere below the true
+	// count, so threshold checks (tokens < 1000) don't catch real resets
+	// (observed: 3,767 tokens vs 2.56 kWh after a restart ≈ $740/M).
+	// Reliable signal: the engine's uptime. If the engine has been up
+	// LESS time than has elapsed in the UTC day, it restarted mid-day and
+	// its "today" counters are incomplete → the host's $/M reads nil
+	// rather than a wrong number. Recovers on the next UTC day.
 	for i := range hosts {
-		if tokensToday[i] < 1000 && gpuKwhToday[i] > 0.1 {
+		if uptimeShort[i] {
 			tokensToday[i] = 0
 		}
 	}
