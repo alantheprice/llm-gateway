@@ -34,6 +34,11 @@ func testServer(t *testing.T, confJSON string, users *auth.Store) *Server {
 	s.store.LegacyKeysFile = cfg.Gateway.APIKeysFile
 	s.ParseNetworks()
 	s.Discover()
+	t.Cleanup(func() {
+		s.CloseAnalytics()
+		// give async file writers a beat before RemoveAll
+		time.Sleep(100 * time.Millisecond)
+	})
 	return s
 }
 

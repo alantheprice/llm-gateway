@@ -101,17 +101,32 @@ func TestPoolAllDownReturns503Fast(t *testing.T) {
 
 // Poll failures must not evict a backend that was never pollable (engines
 // without /slots or /metrics) — only previously tracked members.
+// Member A is healthy (tracked); member B is a dead port (never
+// tracked). After polls: A stays healthy; B is NOT marked down by a
+// metrics-poll failure (dispatch failures mark tracked members down;
+// poll failures only mark members that once answered).
 func TestPollFailureOnlyMarksTrackedMembers(t *testing.T) {
 	hits := 0
 	b := okBackend(t, &hits)
 	defer b.Close()
+	dead := deadURL(t)
+
 	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_A%", b.URL)
-	conf = strings.ReplaceAll(conf, "%BACKEND_B%", b.URL)
+	conf = strings.ReplaceAll(conf, "%BACKEND_B%", dead)
 	s := testServer(t, conf, nil)
 	s.PollOnce()
-	s.PollOnce() // MarkDownIfTracked needs 2 consecutive failures (flake-proof)
+	s.PollOnce()             // repeated failures must not change the outcome
+	defer s.CloseAnalytics() // stop background writers before TempDir cleanup
 	if s.tracker.IsDown(b.URL) {
-		t.Fatalf("untracked backend marked down by a metrics-poll failure")
+		entries, _ := os.ReadDir(t.TempDir())
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("healthy tracked member marked down; tempdir entries: %v", names)
+	}
+	if s.tracker.IsDown(dead) {
+		t.Fatalf("never-tracked member was marked down by a metrics-poll failure")
 	}
 }
 

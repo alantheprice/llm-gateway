@@ -30,6 +30,7 @@ func adminConfServer(t *testing.T, confJSON string) (*Server, string) {
 	usersPath := filepath.Join(dir, "users.json")
 	users, _ := auth.Open(usersPath)
 	s := New(cfg, users)
+	t.Cleanup(s.CloseAnalytics)
 	s.store.LegacyKeysFile = cfg.Gateway.APIKeysFile
 	s.ParseNetworks()
 	return s, confPath

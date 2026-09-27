@@ -104,6 +104,17 @@ func (t *Tracker) MarkDownIfTracked(url string) {
 	}
 }
 
+// SnapshotLoads: copy of current loads (diagnostics).
+func (t *Tracker) SnapshotLoads() map[string]*Load {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]*Load, len(t.loads))
+	for k, v := range t.loads {
+		out[k] = v
+	}
+	return out
+}
+
 // IsDown reports whether url failed within the last DownTTL.
 func (t *Tracker) IsDown(url string) bool {
 	t.mu.Lock()

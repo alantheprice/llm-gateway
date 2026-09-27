@@ -50,15 +50,17 @@ type Server struct {
 	client  *http.Client
 	pb      *pb.Client
 
-	mu             sync.Mutex
-	backends       map[string]*BackendInfo // url -> info
-	rate           map[string][]time.Time
-	probe          map[string][]time.Time
-	leader         map[string]string // pool -> leader url
-	usage          *UsageStore
-	lastMetrics    map[string]map[string]any // url -> raw /usage payload for merge
-	lastPollAt     map[string]time.Time      // url -> last metrics poll attempt
-	lastCostRecord atomic.Int64              // unix-nano of last poll-loop cost write
+	mu                   sync.Mutex
+	backends             map[string]*BackendInfo // url -> info
+	rate                 map[string][]time.Time
+	probe                map[string][]time.Time
+	leader               map[string]string // pool -> leader url
+	usage                *UsageStore
+	lastMetrics          map[string]map[string]any // url -> raw /usage payload for merge
+	lastPollAt           map[string]time.Time      // url -> last metrics poll attempt
+	lastCostRecord       atomic.Int64              // unix-nano of last poll-loop cost write
+	costRecorderDisabled atomic.Bool               // tests: disable the async cost recorder
+	costRecorderOff      atomic.Bool               // tests: disable the background cost recorder
 	// last sane (clearly-busy) fleet throughput reading — pricing's
 	// GPU-time split needs a stable pp/tg ratio; defaults are a typical
 	// prefill/decode pair until the engines are seen working.
@@ -545,10 +547,10 @@ func probeBackend(client *http.Client, url string, cfg *config.Config) *BackendI
 func (s *Server) PollOnce() {
 	// Keep today's cost-history row fresh even when nobody views the page
 	// (throttled to once a minute; MAX-merge converges through the day).
-	now := time.Now().UnixNano()
-	last := s.lastCostRecord.Load()
-	if time.Since(time.Unix(0, last)) > time.Minute {
-		if s.lastCostRecord.CompareAndSwap(last, now) {
+	// Tests disable this: the async write races t.TempDir cleanup.
+	if !s.costRecorderDisabled.Load() && time.Since(time.Unix(0, s.lastCostRecord.Load())) > time.Minute {
+		now := time.Now().UnixNano()
+		if s.lastCostRecord.CompareAndSwap(s.lastCostRecord.Load(), now) {
 			go func() {
 				defer func() { _ = recover() }()
 				s.usageCostsPayload()
