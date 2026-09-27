@@ -234,4 +234,5 @@ func main() {
 	if ops := srv.Ops(); ops != nil && pbApp.OpsReady() {
 		srv.SyncUsageToOps()
 	}
+	srv.CloseAnalytics()
 }

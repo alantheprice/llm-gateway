@@ -117,6 +117,12 @@ type PBAppStore interface {
 	SuperuserPass() (string, bool)
 } // SetEmbeddedPB attaches the embedded PB app (nil in tests that don't
 // embed PocketBase).
+// CloseAnalytics: flush + stop the per-request telemetry writer
+// (graceful shutdown).
+func (s *Server) CloseAnalytics() {
+	s.reqLog.Close()
+}
+
 func (s *Server) SetEmbeddedPB(app PBAppStore) {
 	s.muOps.Lock()
 	s.embeddedPB = app

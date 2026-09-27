@@ -16,9 +16,10 @@ import (
 
 // Store: async batched writer over the ops SQLite handle.
 type Store struct {
+	mu      sync.Mutex
 	ch      chan embeddedpb.RequestRecord
 	done    chan struct{}
-	stopped sync.Once
+	stopped bool
 }
 
 func NewStore(ops *embeddedpb.App) *Store {
@@ -35,26 +36,42 @@ func NewStore(ops *embeddedpb.App) *Store {
 
 // Add: enqueue a record. Never blocks — drops on overflow (telemetry
 // must not backpressure inference; a full 512-deep queue means the DB
-// is badly backed up and losing one telemetry row is fine).
+// is badly backed up and losing one telemetry row is fine). Safe to call
+// after Close (drops).
 func (s *Store) Add(rec embeddedpb.RequestRecord) {
 	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	closed := s.stopped
+	ch := s.ch
+	s.mu.Unlock()
+	if closed || ch == nil {
 		return
 	}
 	if rec.TS.IsZero() {
 		rec.TS = time.Now()
 	}
 	select {
-	case s.ch <- rec:
+	case ch <- rec:
 	default:
 	}
 }
 
 // Close: flush and stop the writer.
 func (s *Store) Close() {
-	s.stopped.Do(func() {
-		close(s.ch)
-		<-s.done
-	})
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	s.stopped = true
+	close(s.ch)
+	s.mu.Unlock()
+	<-s.done
 }
 
 func (s *Store) writerLoop(ops *embeddedpb.App) {

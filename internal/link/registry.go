@@ -42,21 +42,25 @@ func (r *Registry) Register(c *Conn) []string {
 	return ids
 }
 
-// Unregister: drop an agent's connections (disconnect).
-func (r *Registry) Unregister(agent string) {
+// Unregister: drop an agent's connection on disconnect. Only removes
+// entries still pointing at THIS connection — an agent that reconnected
+// (fresh ServeAgent replaced the registry entry) must not have its new
+// registration torn down by the old socket's deferred cleanup.
+func (r *Registry) Unregister(agent string, dead *Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := r.byAg[agent]
-	if c == nil {
-		return
+	if cur := r.byAg[agent]; cur != nil && cur != dead {
+		return // a newer connection owns the label now
 	}
-	for _, e := range c.engines {
+	for _, e := range dead.engines {
 		url := VirtualURL(agent, e.Port)
-		if r.conns[url] == c {
+		if r.conns[url] == dead {
 			delete(r.conns, url)
 		}
 	}
-	delete(r.byAg, agent)
+	if r.byAg[agent] == dead {
+		delete(r.byAg, agent)
+	}
 }
 
 // Lookup: live connection for a virtual backend URL, or nil.

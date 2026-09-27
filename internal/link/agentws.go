@@ -41,7 +41,7 @@ func ServeAgent(reg *Registry, w http.ResponseWriter, r *http.Request, owner str
 	ids := reg.Register(c)
 	log.Printf("link: agent %q registered %v (owner=%s)", agent, ids, owner)
 	defer func() {
-		reg.Unregister(agent)
+		reg.Unregister(agent, c)
 		c.failAll(fmt.Errorf("link disconnected"))
 		log.Printf("link: agent %q unregistered", agent)
 	}()

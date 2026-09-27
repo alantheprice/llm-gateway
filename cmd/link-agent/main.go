@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -145,8 +146,24 @@ func run(server, token, agent string, engines []engine) error {
 	return readLoop(ws, engines)
 }
 
+// relayRequest: the kind-0 header frame's JSON shape (gateway → agent).
+type relayRequest struct {
+	ID      uint64              `json:"id"`
+	Method  string              `json:"method"`
+	Host    string              `json:"host"`
+	Path    string              `json:"path"`
+	Headers map[string][]string `json:"headers"`
+}
+
+// pendingReq: a relay request whose body frames are still arriving.
+type pendingReq struct {
+	req  relayRequest
+	body []byte
+}
+
 // readLoop: dispatch control + relay-request frames.
 func readLoop(ws *websocket.Conn, engines []engine) error {
+	pending := map[uint64]*pendingReq{}
 	for {
 		mt, data, err := ws.ReadMessage()
 		if err != nil {
@@ -158,29 +175,37 @@ func readLoop(ws *websocket.Conn, engines []engine) error {
 		id := binary.BigEndian.Uint64(data[8:16])
 		kind := data[16]
 		payload := data[17:]
-		if kind != 0 { // body/end frames belong to an active proxy, not new requests
-			continue
-		}
 
-		var req struct {
-			Method  string              `json:"method"`
-			Host    string              `json:"host"`
-			Path    string              `json:"path"`
-			Headers map[string][]string `json:"headers"`
+		switch kind {
+		case 0: // request header
+			var req relayRequest
+			if err := json.Unmarshal(payload, &req); err != nil {
+				log.Printf("agent: bad header frame: %v (payload=%.80s)", err, payload)
+				continue
+			}
+			log.Printf("agent: relay %s %s", req.Method, req.Path)
+			pending[id] = &pendingReq{req: req}
+
+		case 1: // request body chunk
+			if pr := pending[id]; pr != nil {
+				pr.body = append(pr.body, payload...)
+			}
+
+		case 2: // request end → dispatch to the engine
+			pr := pending[id]
+			delete(pending, id)
+			if pr == nil {
+				continue
+			}
+			// SSRF guard mirrors the gateway: only declared engine ports
+			// and model-serving paths.
+			eng := findEngine(engines, pr.req.Host)
+			if eng == nil || !validPath(pr.req.Path) {
+				writeError(ws, id, http.StatusForbidden, "not relayable")
+				continue
+			}
+			go proxyRequest(ws, id, eng, pr.req, pr.body)
 		}
-		if err := json.Unmarshal(payload, &req); err != nil {
-			log.Printf("agent: bad header frame: %v (payload=%.80s)", err, payload)
-			continue
-		}
-		log.Printf("agent: relay %s %s", req.Method, req.Path)
-		// SSRF guard mirrors the gateway: only declared engine ports and
-		// model-serving paths.
-		eng := findEngine(engines, req.Host)
-		if eng == nil || !validPath(req.Path) {
-			writeError(ws, id, http.StatusForbidden, "not relayable")
-			continue
-		}
-		go proxyRequest(ws, id, eng, req)
 	}
 }
 
@@ -204,14 +229,9 @@ func validPath(p string) bool {
 	return false
 }
 
-func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req struct {
-	Method  string              `json:"method"`
-	Host    string              `json:"host"`
-	Path    string              `json:"path"`
-	Headers map[string][]string `json:"headers"`
-}) {
+func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req relayRequest, body []byte) {
 	target := fmt.Sprintf("http://127.0.0.1:%d%s", eng.port, req.Path)
-	httpReq, err := http.NewRequest(req.Method, target, nil)
+	httpReq, err := http.NewRequest(req.Method, target, bytes.NewReader(body))
 	if err != nil {
 		writeError(ws, id, http.StatusBadRequest, err.Error())
 		return

@@ -586,6 +586,14 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 			s.recordConv(modelName, convMsgs, pick.URL)
 			return
 		}
+		// Abandoned candidate: drain+close any stream reader so the
+		// backend (or link pipe) sees EOF instead of a wedged writer.
+		if reader != nil {
+			io.Copy(io.Discard, reader)
+			if closer, ok := reader.(io.Closer); ok {
+				closer.Close()
+			}
+		}
 		lastStatus, lastBody = status, respBody
 		if err != nil {
 			log.Printf("pool %q member %s dispatch error: %v", modelName, pick.URL, err)
