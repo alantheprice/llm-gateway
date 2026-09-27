@@ -133,12 +133,16 @@ func (a *App) CostSeries(days int) ([]CostRow, error) {
 		days = 90
 	}
 	var rows []CostRow
+	// Latest N days, returned oldest-first for charting.
 	err := a.pb.DB().NewQuery(`
 		SELECT day, energy_usd, overhead_usd, capital_usd, tokens, value_usd
-		FROM cost_history ORDER BY day ASC LIMIT {:n}
+		FROM cost_history ORDER BY day DESC LIMIT {:n}
 	`).Bind(map[string]any{"n": days}).All(&rows)
 	if err != nil {
 		return nil, err
+	}
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
 	}
 	return rows, nil
 }

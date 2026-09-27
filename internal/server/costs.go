@@ -9,6 +9,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -342,25 +343,15 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 	}
 
-	// Freeze today's row into the cost history (chart accumulates daily).
+	// Freeze today's row into the cost history — also invoked from the
+	// poll loop (recordCostToday) so a day nobody views still gets its row.
 	var gpuCost, overhead, capital float64
 	for _, h := range hostCosts {
 		gpuCost += h.GPUCostToday
 		overhead += h.OverheadCostToday
 		capital += h.CapitalToday
 	}
-	now := time.Now()
-	s.costHistory.RecordDay(now.UTC().Format("2006-01-02"), CostDay{
-		EnergyUSD:   math.Round(gpuCost*10000) / 10000,
-		OverheadUSD: math.Round(overhead*10000) / 10000,
-		CapitalUSD:  math.Round(capital*10000) / 10000,
-		Tokens:      int64(pTok + oTok),
-		ValueUSD:    math.Round(valueToday*10000) / 10000,
-	})
-	if ops := s.Ops(); ops != nil {
-		_ = ops.UpsertCostDay(now.UTC().Format("2006-01-02"),
-			gpuCost, overhead, capital, valueToday, int64(pTok+oTok))
-	}
+	s.recordCostToday(gpuCost, overhead, capital, valueToday, int64(pTok+oTok))
 
 	// Unmatched backends (visible so admins notice uncounted GPU hosts).
 	configured := map[string]bool{}
@@ -620,4 +611,25 @@ func (s *Server) handleAdminCostsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderPage(w, r, "admin_costs.html", "admin_costs", "Costs")
+}
+
+// recordCostToday: freeze today's cost-history row (energy, overhead,
+// capital, routed tokens, value). Called from usageCostsPayload AND the
+// poll loop so a day nobody views still accumulates. MAX-merge upsert
+// keeps the value converging through the day.
+func (s *Server) recordCostToday(gpuCost, overhead, capital, valueToday float64, tokens int64) {
+	now := time.Now().UTC()
+	s.costHistory.RecordDay(now.Format("2006-01-02"), CostDay{
+		EnergyUSD:   math.Round(gpuCost*10000) / 10000,
+		OverheadUSD: math.Round(overhead*10000) / 10000,
+		CapitalUSD:  math.Round(capital*10000) / 10000,
+		Tokens:      tokens,
+		ValueUSD:    math.Round(valueToday*10000) / 10000,
+	})
+	if ops := s.Ops(); ops != nil {
+		if err := ops.UpsertCostDay(now.Format("2006-01-02"),
+			gpuCost, overhead, capital, valueToday, tokens); err != nil {
+			log.Printf("cost_history upsert: %v", err)
+		}
+	}
 }

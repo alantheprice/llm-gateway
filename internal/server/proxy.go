@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,25 +98,30 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	if stream != nil {
 		flusher, _ := w.(http.Flusher)
 		buf := make([]byte, 32*1024)
-		var captured []byte
+		var captured ringBuf // capture LAST 1MB (usage+timings live at stream end)
+		strip := wantsUsageStrip(r)
 		for {
 			n, err := stream.Read(buf)
 			if n > 0 {
-				w.Write(buf[:n])
-				if f := flusher; f != nil {
-					f.Flush()
+				out := buf[:n]
+				if strip && looksLikeUsageChunk(out) {
+					out = nil // injected usage chunk: parse, don't forward
 				}
-				if len(captured) < 1<<20 { // capture ≤1MB tail for usage
-					captured = append(captured, buf[:n]...)
+				if len(out) > 0 {
+					w.Write(out)
+					if f := flusher; f != nil {
+						f.Flush()
+					}
 				}
+				captured.write(buf[:n])
 			}
 			if err != nil {
 				break
 			}
 		}
-		pt, ot, cached := usageFromSSE(captured, est)
+		pt, ot, cached := usageFromSSE(captured.bytes(), est)
 		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
-		s.observePeak(model, backendURL, captured, false)
+		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
 	w.Write(buffered)
@@ -145,13 +151,17 @@ func (s *Server) observePeak(modelID, backendURL string, body []byte, isJSON boo
 		tg, pp = resp.Timings.PredictedPerSecond, resp.Timings.PromptPerSecond
 		prompt = float64(resp.Usage.PromptTokens)
 	} else {
-		// Last data: line with timings (the final chunk).
+		// Last data: line with timings. NInfer ends streams with
+		// "data: [DONE]" — skip it and keep scanning backwards.
 		for i := len(body) - 1; i >= 0; i-- {
 			if body[i] != '\n' {
 				continue
 			}
 			line := strings.TrimSpace(string(body[i+1:]))
 			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			if strings.TrimSpace(line[5:]) == "[DONE]" {
 				continue
 			}
 			var chunk struct {
@@ -212,10 +222,114 @@ func usageFromJSON(body []byte, est int) (int, int, int) {
 	return est, 0, 0
 }
 
-// usageFromSSE scans captured SSE text for the OpenAI usage chunk; falls
-// back to counting completion tokens from delta content + est prompt.
+type ctxKeyUsageHint struct{}
+
+// withUsageHintCtx marks a request whose upstream stream got the injected
+// usage chunk (so relay can strip it before returning to the client).
+func withUsageHintCtx(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), ctxKeyUsageHint{}, true))
+}
+
+func wantsUsageStrip(r *http.Request) bool {
+	v, ok := r.Context().Value(ctxKeyUsageHint{}).(bool)
+	return ok && v
+}
+
+// withUsageHint: for streaming chat requests, ask the engine for the
+// usage chunk (stream_options.include_usage). If the client didn't ask
+// for it, the gateway strips the extra usage chunk before relaying (the
+// engine emits it as a choices-empty final chunk). Non-streaming bodies
+// pass through unchanged.
+func withUsageHint(body []byte) []byte {
+	var req struct {
+		Stream        bool `json:"stream"`
+		StreamOptions *struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	if json.Unmarshal(body, &req) != nil || !req.Stream || req.StreamOptions != nil {
+		return body
+	}
+	var m map[string]any
+	if json.Unmarshal(body, &m) != nil {
+		return body
+	}
+	m["stream_options"] = map[string]any{"include_usage": true}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// stripUsageChunk: remove the trailing choices-empty usage chunk from an
+// SSE stream when the client did not request include_usage.
+func stripUsageChunk(captured []byte) []byte {
+	lines := strings.Split(string(captured), "\n")
+	out := lines[:0]
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "data:") {
+			p := strings.TrimSpace(strings.TrimPrefix(t, "data:"))
+			if p != "" && p != "[DONE]" {
+				var ch struct {
+					Choices []any `json:"choices"`
+				}
+				if json.Unmarshal([]byte(p), &ch) == nil && len(ch.Choices) == 0 {
+					continue // usage-only chunk injected by us
+				}
+			}
+		}
+		out = append(out, l)
+	}
+	return []byte(strings.Join(out, "\n"))
+}
+
+// ringBuf: fixed-capacity tail buffer (keeps the most recent bytes).
+type ringBuf struct {
+	buf []byte
+	cap int
+}
+
+func (r *ringBuf) write(p []byte) {
+	const capBytes = 1 << 20
+	if r.cap == 0 {
+		r.cap = capBytes
+	}
+	r.buf = append(r.buf, p...)
+	if len(r.buf) > r.cap {
+		copy(r.buf, r.buf[len(r.buf)-r.cap:])
+		r.buf = r.buf[:r.cap]
+	}
+}
+
+func (r *ringBuf) bytes() []byte { return r.buf }
+
+// looksLikeUsageChunk: choices-empty SSE chunk = injected usage.
+func looksLikeUsageChunk(b []byte) bool {
+	i := bytes.Index(b, []byte("data:"))
+	if i < 0 {
+		return false
+	}
+	p := strings.TrimSpace(string(b[i+5:]))
+	if p == "" || p == "[DONE]" {
+		return false
+	}
+	var ch struct {
+		Choices []any `json:"choices"`
+	}
+	return json.Unmarshal([]byte(p), &ch) == nil && len(ch.Choices) == 0
+}
+
+// usageFromSSE extracts usage from the captured tail. Sources in priority
+// order: (1) the OpenAI usage chunk (present when stream_options
+// include_usage is set), (2) the engine's timings block (prompt_n /
+// predicted_n / cache_n — NInfer always sends it in the final chunk),
+// (3) rough estimate. reasoning_content counts toward output.
 func usageFromSSE(captured []byte, est int) (int, int, int) {
 	pt, ot, cached := 0, 0, 0
+	var tPrompt, tPredicted, tCache float64
+	haveTimings := false
 	for _, line := range strings.Split(string(captured), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "data:") {
@@ -233,25 +347,39 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 					CachedTokens int `json:"cached_tokens"`
 				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
+			Timings *struct {
+				PromptN    int `json:"prompt_n"`
+				PredictedN int `json:"predicted_n"`
+				CacheN     int `json:"cache_n"`
+			} `json:"timings"`
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string `json:"content"`
+					Reasoning string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 		}
 		if json.Unmarshal([]byte(payload), &chunk) != nil {
 			continue
 		}
-		if chunk.Usage != nil {
+		if chunk.Timings != nil && chunk.Timings.PromptN > 0 {
+			// keep the LAST timings seen (final chunk is authoritative)
+			tPrompt = float64(chunk.Timings.PromptN)
+			tPredicted = float64(chunk.Timings.PredictedN)
+			tCache = float64(chunk.Timings.CacheN)
+			haveTimings = true
+		}
+		if chunk.Usage != nil && chunk.Usage.PromptTokens > 0 {
 			pt, ot = chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens
 			cached = chunk.Usage.PromptDetails.CachedTokens
 		}
 		for _, ch := range chunk.Choices {
-			ot4 := len([]rune(ch.Delta.Content)) // rough if usage absent
-			if ot4 > 0 && pt == 0 {
-				ot += ot4/4 + 1
-			}
+			ot += len([]rune(ch.Delta.Content)) + len([]rune(ch.Delta.Reasoning))
 		}
+	}
+	// Engine timings win: they are the engine's own exact counters.
+	if haveTimings {
+		return int(tPrompt), int(tPredicted), int(tCache)
 	}
 	if pt == 0 {
 		pt = est
@@ -262,6 +390,11 @@ func usageFromSSE(captured []byte, est int) (int, int, int) {
 // proxy handles non-pool direct requests (SPEC §2) with usage recording.
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body []byte,
 	user, keyID, reqModel, modelID string) {
+	body = withUsageHint(body)
+	injected := streamRequested(body) && !clientAskedIncludeUsage(body)
+	if injected {
+		r = withUsageHintCtx(r)
+	}
 	status, hdr, buffered, stream, err := s.dispatch(r, url, body)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -269,7 +402,30 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body 
 		w.Write([]byte(`{"error":{"message":"backend connect failed","type":"proxy_error"}}`))
 		return
 	}
-	s.relay(w, r, hdr, buffered, stream, status, user, keyID, modelID, estimateFrom(body), url)
+	s.relay(w, r, hdr, stripIfInjected(r, buffered), stream, status, user, keyID, modelID, estimateFrom(body), url)
+}
+
+func streamRequested(body []byte) bool {
+	var req struct {
+		Stream bool `json:"stream"`
+	}
+	return json.Unmarshal(body, &req) == nil && req.Stream
+}
+
+func clientAskedIncludeUsage(body []byte) bool {
+	var req struct {
+		StreamOptions *struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	return json.Unmarshal(body, &req) == nil && req.StreamOptions != nil && req.StreamOptions.IncludeUsage
+}
+
+func stripIfInjected(r *http.Request, buffered []byte) []byte {
+	if wantsUsageStrip(r) && len(buffered) > 0 {
+		return stripUsageChunk(buffered)
+	}
+	return buffered
 }
 
 // tryOverflow implements SPEC §9: if primary backend score >= threshold,

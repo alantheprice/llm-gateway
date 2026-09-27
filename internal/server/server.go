@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"llmgateway/internal/embeddedpb"
@@ -47,13 +48,14 @@ type Server struct {
 	client  *http.Client
 	pb      *pb.Client
 
-	mu          sync.Mutex
-	backends    map[string]*BackendInfo // url -> info
-	rate        map[string][]time.Time
-	probe       map[string][]time.Time
-	leader      map[string]string // pool -> leader url
-	usage       *UsageStore
-	lastMetrics map[string]map[string]any // url -> raw /usage payload for merge
+	mu             sync.Mutex
+	backends       map[string]*BackendInfo // url -> info
+	rate           map[string][]time.Time
+	probe          map[string][]time.Time
+	leader         map[string]string // pool -> leader url
+	usage          *UsageStore
+	lastMetrics    map[string]map[string]any // url -> raw /usage payload for merge
+	lastCostRecord atomic.Int64              // unix-nano of last poll-loop cost write
 	// last sane (clearly-busy) fleet throughput reading — pricing's
 	// GPU-time split needs a stable pp/tg ratio; defaults are a typical
 	// prefill/decode pair until the engines are seen working.
@@ -511,6 +513,18 @@ func probeBackend(client *http.Client, url string, cfg *config.Config) *BackendI
 // --- metrics polling (SPEC §6) ---
 
 func (s *Server) PollOnce() {
+	// Keep today's cost-history row fresh even when nobody views the page
+	// (throttled to once a minute; MAX-merge converges through the day).
+	now := time.Now().UnixNano()
+	last := s.lastCostRecord.Load()
+	if time.Since(time.Unix(0, last)) > time.Minute {
+		if s.lastCostRecord.CompareAndSwap(last, now) {
+			go func() {
+				defer func() { _ = recover() }()
+				s.usageCostsPayload()
+			}()
+		}
+	}
 	s.mu.Lock()
 	urls := make([]string, 0, len(s.backends))
 	for u := range s.backends {
@@ -557,7 +571,9 @@ func (s *Server) recordGPUDaily(backend string, raw map[string]any) {
 	if tok == 0 && kwh == 0 && total == 0 {
 		return
 	}
-	_ = ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), int64(hits), int64(total), kwh)
+	if err := ops.UpsertGPUDaily(time.Now().UTC().Format("2006-01-02"), backend, int64(tok), int64(hits), int64(total), kwh); err != nil {
+		log.Printf("gpu_daily upsert %s: %v", backend, err)
+	}
 }
 
 func getJSON(client *http.Client, url string, timeout time.Duration) (map[string]any, bool) {

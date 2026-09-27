@@ -48,12 +48,12 @@ async function load() {
     const colors = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149'];
     const maxT = Math.max(...gpuRows.map(r => r.tokens || 0));
     gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) => {
-      const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit' : '';
+      const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit (lifetime)' : '';
       return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
       esc(r.backend.replace('http://', '')) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
       (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of routed' + (rate ? ' · ' + rate : '') + '</span>';
     }).join('') + '</div>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = engine-aggregate prefix reuse. "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
+    '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = engine-aggregate prefix reuse (lifetime, from --metrics-state). "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
       gpuRows.map((r, i) => {
         const w = maxT ? Math.max(4, 100 * (r.tokens || 0) / maxT) : 0;
         return '<div style="margin:6px 0"><div style="height:14px;background:var(--border,#30363d);border-radius:7px;overflow:hidden">' +

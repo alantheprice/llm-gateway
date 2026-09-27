@@ -319,6 +319,27 @@ func (u *UsageStore) KeyUsage(username string) map[string]map[string]int {
 	return out
 }
 
+// deepCopyUser: full copy including Keys/Kinds maps — shallow copies
+// share the maps with live counters and Go fatally panics on concurrent
+// map iteration + write when callers marshal them after the lock.
+func deepCopyUser(v *UserUsage) *UserUsage {
+	if v == nil {
+		return nil
+	}
+	cp := *v
+	cp.Keys = make(map[string]*KindTally, len(v.Keys))
+	for k, kt := range v.Keys {
+		ktc := *kt
+		cp.Keys[k] = &ktc
+	}
+	cp.Kinds = make(map[string]*KindTally, len(v.Kinds))
+	for k, kt := range v.Kinds {
+		ktc := *kt
+		cp.Kinds[k] = &ktc
+	}
+	return &cp
+}
+
 // UsersSnapshot returns (all_time, today) per-user usage maps.
 func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsage) {
 	u.mu.Lock()
@@ -326,14 +347,12 @@ func (u *UsageStore) UsersSnapshot() (map[string]*UserUsage, map[string]*UserUsa
 	today := time.Now().UTC().Format("2006-01-02")
 	all := make(map[string]*UserUsage, len(u.Data.Users))
 	for k, v := range u.Data.Users {
-		cp := *v
-		all[k] = &cp
+		all[k] = deepCopyUser(v)
 	}
 	todays := u.Data.Daily[today]
 	out := make(map[string]*UserUsage, len(todays))
 	for k, v := range todays {
-		cp := *v
-		out[k] = &cp
+		out[k] = deepCopyUser(v)
 	}
 	return all, out
 }
@@ -345,8 +364,7 @@ func (u *UsageStore) TodaySnapshot() map[string]*UserUsage {
 	today := time.Now().UTC().Format("2006-01-02")
 	out := map[string]*UserUsage{}
 	for k, v := range u.Data.Daily[today] {
-		cp := *v
-		out[k] = &cp
+		out[k] = deepCopyUser(v)
 	}
 	return out
 }
@@ -389,7 +407,7 @@ func (u *UsageStore) AvgDailyTokens(n int) float64 {
 func (u *UsageStore) User(username string) *UserUsage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.Data.Users[username]
+	return deepCopyUser(u.Data.Users[username])
 }
 
 // TodayTokens returns the user's prompt+output tokens for the current UTC

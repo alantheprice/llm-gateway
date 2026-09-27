@@ -438,6 +438,14 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 	// Refresh member metrics (best-effort, concurrent).
 	s.PollOnce()
 
+	// Streaming requests: ask the engine for the usage chunk so accounting
+	// is exact (falls back to estimate otherwise). The injected chunk is
+	// stripped before the client sees it (context flag read in relay).
+	if streamRequested(body) && !clientAskedIncludeUsage(body) {
+		body = withUsageHint(body)
+		r = withUsageHintCtx(r)
+	}
+
 	s.mu.Lock()
 	membersCfg := pool.Members
 	s.mu.Unlock()
