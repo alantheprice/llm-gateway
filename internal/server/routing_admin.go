@@ -98,6 +98,22 @@ func (s *Server) requestsToday() map[string]int64 {
 	return out
 }
 
+// requestsByName: successful requests today per model name clients called.
+func (s *Server) requestsByName() map[string]int64 {
+	out := map[string]int64{}
+	ops := s.Ops()
+	if ops == nil {
+		return out
+	}
+	var rows []embeddedpb.NameCount
+	if ops.QueryRequestedDay(time.Now().UTC().Format("2006-01-02"), &rows) == nil {
+		for _, r := range rows {
+			out[r.Name] = r.Requests
+		}
+	}
+	return out
+}
+
 // engineInfoView: live view of one backend URL.
 func (s *Server) engineInfoView(url string, reqs map[string]int64) engineView {
 	id := s.gpuIdentity(url)
@@ -179,6 +195,7 @@ func (s *Server) allEngines(reqs map[string]int64) []engineView {
 // links, engines, problems, scoring knobs.
 func (s *Server) routeMap() map[string]any {
 	reqs := s.requestsToday()
+	byName := s.requestsByName()
 	s.mu.Lock()
 	pools := map[string]poolCfgT{}
 	for k, v := range s.cfg.ModelPools {
@@ -209,10 +226,14 @@ func (s *Server) routeMap() map[string]any {
 	for _, name := range poolNames {
 		p := pools[name]
 		covered[name] = true
+		for _, a := range p.Aliases {
+			covered[a] = true
+		}
 		e := routeEntry{Name: name, Kind: "pool", ModelKind: kindFor(name),
 			Pool: map[string]any{
 				"cache_affinity": p.CacheAffinity, "max_pool_share": p.MaxPoolShare,
 				"overflow_threshold": p.OverflowThreshold, "sticky_bias": p.StickyBias, "capacity_bias": p.CapacityBias,
+				"aliases": p.Aliases,
 			}}
 		var total int64
 		for _, m := range p.Members {
@@ -232,7 +253,6 @@ func (s *Server) routeMap() map[string]any {
 				serving++
 			}
 			e.Members = append(e.Members, rm)
-			e.Requests += reqs[m.Backend]
 			label := ev.GPULabel
 			switch {
 			case !ev.Known && isLinkURL(m.Backend):
@@ -251,6 +271,10 @@ func (s *Server) routeMap() map[string]any {
 			if rm.Consent == "paused" {
 				problems = append(problems, routeProblem{"info", name, label + " is paused by its owner " + ev.Owner + "."})
 			}
+		}
+		e.Requests = byName[name]
+		for _, a := range p.Aliases {
+			e.Requests += byName[a]
 		}
 		e.Summary = fmt.Sprintf("%d of %d GPUs serving", serving, len(p.Members))
 		if serving == 0 {
@@ -271,15 +295,14 @@ func (s *Server) routeMap() map[string]any {
 	for _, name := range pairNames {
 		pr := pairs[name]
 		if covered[name] {
-			problems = append(problems, routeProblem{"warning", name, "Overflow for " + name + " never applies: a pool with the same name takes these requests first."})
+			problems = append(problems, routeProblem{"warning", name, "Overflow for " + name + " never applies: a shared model with that name or alias takes these requests first."})
 			continue
 		}
 		covered[name] = true
-		e := routeEntry{Name: name, Kind: "overflow", ModelKind: kindFor(name), Threshold: pr.Threshold}
+		e := routeEntry{Name: name, Kind: "overflow", ModelKind: kindFor(name), Threshold: pr.Threshold, Requests: byName[name]}
 		if urls := discovered[name]; len(urls) > 0 {
 			pv := s.engineInfoView(urls[0], reqs)
 			e.Primary = &pv
-			e.Requests += reqs[urls[0]]
 		} else {
 			problems = append(problems, routeProblem{"error", name, "No engine serves " + name + " directly, so overflow has nothing to spill from; requests get a 404."})
 		}
@@ -311,7 +334,7 @@ func (s *Server) routeMap() map[string]any {
 			continue
 		}
 		ev := s.engineInfoView(discovered[id][0], reqs)
-		e := routeEntry{Name: id, Kind: "direct", ModelKind: kindFor(id), Engine: &ev, Requests: reqs[ev.URL]}
+		e := routeEntry{Name: id, Kind: "direct", ModelKind: kindFor(id), Engine: &ev, Requests: byName[id]}
 		e.Summary = "one engine, " + ev.GPULabel
 		if pool, ok := memberIDs[id]; ok {
 			e.Kind = "gpu-direct"
@@ -384,13 +407,17 @@ func (s *Server) dryRun(model string, promptTokens, outputTokens int) map[string
 	steps := []string{}
 	need := promptTokens + outputTokens
 
+	poolName, pool, isPool := s.poolFor(model)
 	s.mu.Lock()
-	pool, isPool := s.cfg.ModelPools[model]
 	pair, hasPair := s.cfg.OverflowPairs[model]
-	leader := s.leader[model]
+	leader := s.leader[poolName]
 	s.mu.Unlock()
 
 	if isPool {
+		if poolName != model {
+			steps = append(steps, model+" is an alias of "+poolName+".")
+		}
+		model = poolName
 		steps = append(steps, model+" is a shared pool of "+fmt.Sprint(len(pool.Members))+" GPUs.")
 		all := []map[string]any{}
 		eligible := s.poolMembers(model, &pool, need)

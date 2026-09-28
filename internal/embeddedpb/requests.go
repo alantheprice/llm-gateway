@@ -31,6 +31,9 @@ type RequestRecord struct {
 	DraftAccepted int64
 	// Engine-reported queue wait before scheduling (stats block); 0 if unknown.
 	QueueWaitms float64
+	// Requested: the model name the client called (a pool, alias or engine
+	// id); Model is what the serving engine was asked for.
+	Requested string
 }
 
 func (a *App) InitRequestsSchema() error {
@@ -66,7 +69,7 @@ func (a *App) InitRequestsSchema() error {
 		return err
 	}
 	// Columns added after the first release: add each if missing.
-	for _, col := range []string{"draft_n", "draft_accepted", "queue_ms"} {
+	for _, col := range []string{"draft_n", "draft_accepted", "queue_ms", "requested_model"} {
 		var r struct {
 			N int64 `db:"n"`
 		}
@@ -77,7 +80,7 @@ func (a *App) InitRequestsSchema() error {
 		}
 		if r.N == 0 {
 			if _, err := a.pb.DB().NewQuery(
-				"ALTER TABLE requests ADD COLUMN " + col + " " + colType(col) + " NOT NULL DEFAULT 0",
+				"ALTER TABLE requests ADD COLUMN " + col + " " + colType(col) + " NOT NULL DEFAULT " + colDefault(col),
 			).Execute(); err != nil {
 				return err
 			}
@@ -96,11 +99,11 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 			INSERT INTO requests (ts, ts_hour, day, user, key_id, model, backend,
 				kind, status, prompt, cached, output,
 				ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path,
-				draft_n, draft_accepted, queue_ms)
+				draft_n, draft_accepted, queue_ms, requested_model)
 			VALUES ({:ts}, {:ts_hour}, {:day}, {:user}, {:key_id}, {:model},
 				{:backend}, {:kind}, {:status}, {:prompt}, {:cached}, {:output},
 				{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse},
-				{:draft_n}, {:draft_acc}, {:queue})
+				{:draft_n}, {:draft_acc}, {:queue}, {:requested})
 		`).Bind(map[string]any{
 			"ts":      r.TS.UTC().Format(time.RFC3339Nano),
 			"ts_hour": r.TS.UTC().Format("2006-01-02T15"),
@@ -111,6 +114,7 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 			"ttft": r.TTFTms, "prefill": r.Prefillms, "decode": r.Decodems,
 			"total": r.Totalms, "tps": r.TokPerSec, "reuse": r.ReusePath,
 			"draft_n": r.DraftN, "draft_acc": r.DraftAccepted, "queue": r.QueueWaitms,
+			"requested": r.Requested,
 		}).Execute()
 		if err != nil {
 			return err
@@ -322,6 +326,28 @@ func (a *App) QueryBackendTokensDay(day string, dest *[]BackendTokens) error {
 	`).Bind(map[string]any{"day": day}).All(dest)
 }
 
+// NameCount: requests for one model name clients called.
+type NameCount struct {
+	Name     string `db:"name" json:"name"`
+	Requests int64  `db:"requests" json:"requests"`
+}
+
+// QueryRequestedDay: successful requests per model name clients called on a
+// UTC day. Rows logged before names were recorded count under the engine's
+// model id.
+func (a *App) QueryRequestedDay(day string, dest *[]NameCount) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT CASE WHEN requested_model = '' THEN model ELSE requested_model END AS name,
+			COUNT(*) AS requests
+		FROM requests
+		WHERE day = {:day} AND status < 400
+		GROUP BY name
+	`).Bind(map[string]any{"day": day}).All(dest)
+}
+
 // ReuseRow: prefix-reuse path distribution.
 type ReuseRow struct {
 	Path     string `db:"path" json:"path"`
@@ -344,10 +370,21 @@ func (a *App) QueryAnalyticsReuse(days int, dest *[]ReuseRow) error {
 
 // colType: SQL type for columns added by migration.
 func colType(col string) string {
-	if col == "queue_ms" {
+	switch col {
+	case "queue_ms":
 		return "REAL"
+	case "requested_model":
+		return "TEXT"
 	}
 	return "INTEGER"
+}
+
+// colDefault: the migration default for a column added later.
+func colDefault(col string) string {
+	if colType(col) == "TEXT" {
+		return "''"
+	}
+	return "0"
 }
 
 // QueryTTFTPercentile: the q-quantile (0..1) of reported time-to-first-token

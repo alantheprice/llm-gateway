@@ -129,9 +129,7 @@ func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
 		s.handleModels(w, r)
 		return
 	}
-	s.mu.Lock()
-	pool, isPool := s.cfg.ModelPools[id]
-	s.mu.Unlock()
+	poolName, pool, isPool := s.poolFor(id)
 	if !isPool {
 		if backend, _, _ := s.modelBackend(id); backend == "" {
 			// A private link: its owner sees it as an admin would (full
@@ -153,7 +151,7 @@ func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isPool {
-		s.writePoolInfo(w, id, &pool, view, isAdmin)
+		s.writePoolInfo(w, poolName, &pool, view, isAdmin)
 		return
 	}
 

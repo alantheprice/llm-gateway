@@ -50,17 +50,17 @@ func (s *Server) relayPoolPick(w http.ResponseWriter, r *http.Request,
 
 	fwdBody := rewriteModel(body, pick.ModelID)
 	rs, fwdBody := s.prepareStats(r, fwdBody, pick.URL) // per-response engine stats
-	status, respHeader, respBody, reader, err := s.dispatch(rs, pick.URL, fwdBody)
+	status, respHeader, respBody, reader, err, release := s.dispatchCounted(rs, pick.URL, fwdBody)
 	if err == nil && status < 500 && status != http.StatusRequestTimeout {
 		log.Printf("Pool '%s': cache-affinity depth=%d -> %s", modelName, pick.CacheDepth, pick.URL)
-		s.tracker.InFlightInc(pick.URL)
-		defer s.tracker.InFlightDec(pick.URL)
+		defer release()
 		s.relay(w, rs, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
 		s.recordConv(modelName, convMsgs, pick.URL)
 		return
 	}
 	// Cache hit missed at dispatch (backend hiccup): fall back to the
 	// classic picker, which re-records the conversation on success.
+	release()
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away mid-dispatch; nothing to fall back for

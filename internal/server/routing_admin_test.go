@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,5 +135,96 @@ func TestRoutingPage(t *testing.T) {
 	}
 	if w := adminDo(t, s, "user", "GET", "/admin/routing", ""); w.Code != http.StatusFound {
 		t.Fatalf("non-admin page: %d", w.Code)
+	}
+}
+
+// engineEcho answers chat completions (non-streamed) with its model id,
+// optionally holding each request until release is closed.
+func engineEcho(t *testing.T, id string, hold chan struct{}) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/models":
+			fmt.Fprintf(w, `{"data":[{"id":%q}]}`, id)
+		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
+			if hold != nil {
+				select {
+				case <-hold:
+				case <-time.After(5 * time.Second):
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"x","model":%q,"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`, id)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// An alias routes exactly like its pool, and the response names the alias.
+func TestPoolAlias(t *testing.T) {
+	a, b := engineEcho(t, "m-a", nil), engineEcho(t, "m-b", nil)
+	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_A%", a.URL)
+	conf = strings.ReplaceAll(conf, "%BACKEND_B%", b.URL)
+	conf = strings.Replace(conf, `"overflow_threshold": 0.2,`, `"overflow_threshold": 0.2, "aliases": ["old-name"],`, 1)
+	s := testServer(t, conf, nil)
+	if name, _, ok := s.poolFor("old-name"); !ok || name != "qwen" {
+		t.Fatalf("poolFor(alias) = %q %v", name, ok)
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"old-name","messages":[{"role":"user","content":"hi"}]}`))
+	r.RemoteAddr = "192.168.1.50:5555"
+	s.Handler().ServeHTTP(w, r)
+	var out map[string]any
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out["model"] != "old-name" {
+		t.Fatalf("alias chat: %d %v", w.Code, out)
+	}
+	if d := s.dryRun("old-name", 100, 10); d["result"] != "routed" {
+		t.Fatalf("alias dry run = %v", d)
+	}
+	// An alias can't claim another pool's name.
+	s2, _ := adminConfServer(t, `{"gateway":{"port":8033}}`)
+	if w := adminSessionRequest(s2, "POST", "/admin/config", `{"model_pools":{
+	  "p1":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]},
+	  "p2":{"aliases":["p1"],"members":[{"model_id":"m","backend":"http://127.0.0.1:9002"}]}}}`); w.Code != 400 {
+		t.Fatalf("conflicting alias accepted: %d %s", w.Code, w.Body)
+	}
+}
+
+// Requests count as in flight from the moment they're sent — including
+// non-streamed ones and ones that don't go through a pool.
+func TestInFlightCountedFromSend(t *testing.T) {
+	hold := make(chan struct{})
+	eng := engineEcho(t, "solo", hold)
+	s := testServer(t, `{"gateway":{"port":0,"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
+	s.mu.Lock()
+	s.backends[eng.URL] = &BackendInfo{Models: []string{"solo"}, Chat: true}
+	s.mu.Unlock()
+	done := make(chan int)
+	go func() {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/v1/chat/completions",
+			strings.NewReader(`{"model":"solo","messages":[{"role":"user","content":"hi"}]}`))
+		r.RemoteAddr = "192.168.1.50:5555"
+		s.Handler().ServeHTTP(w, r)
+		done <- w.Code
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for s.tracker.InFlight(eng.URL) != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := s.tracker.InFlight(eng.URL); n != 1 {
+		t.Fatalf("in flight while the engine works = %d, want 1", n)
+	}
+	close(hold)
+	if code := <-done; code != 200 {
+		t.Fatalf("request: %d", code)
+	}
+	if n := s.tracker.InFlight(eng.URL); n != 0 {
+		t.Fatalf("in flight after completion = %d, want 0", n)
 	}
 }

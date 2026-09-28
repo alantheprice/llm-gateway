@@ -109,6 +109,7 @@ type OpsStore interface {
 	QueryAnalyticsReuse(days int, dest *[]embeddedpb.ReuseRow) error
 	QueryBackendUsers(days int, backends []string, dest *[]embeddedpb.BackendUserRow) error
 	QueryBackendTokensDay(day string, dest *[]embeddedpb.BackendTokens) error
+	QueryRequestedDay(day string, dest *[]embeddedpb.NameCount) error
 	PruneOlderThan(days int) (int64, error)
 }
 

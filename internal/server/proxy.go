@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"llmgateway/internal/config"
@@ -95,6 +96,29 @@ func (s *Server) dispatch(r *http.Request, url string, body []byte) (
 	return status, hdr, rest, nil, nil
 }
 
+// requestedName: the model name the client called, else the engine's.
+func requestedName(r *http.Request, model string) string {
+	if cm := clientModelOf(r); cm != "" {
+		return cm
+	}
+	return model
+}
+
+// dispatchCounted is dispatch that counts the request as in flight on url
+// from the moment it is sent until release() — call release when the
+// response has been relayed (or the attempt abandoned). Load scoring blends
+// in-flight counts, so every route (pool, cache affinity, overflow, direct)
+// must count, and from send time: a non-streamed request is otherwise
+// invisible until the engine has already finished it.
+func (s *Server) dispatchCounted(r *http.Request, url string, body []byte) (
+	status int, hdr http.Header, buffered []byte, reader io.Reader, err error, release func()) {
+	s.tracker.InFlightInc(url)
+	var once sync.Once
+	release = func() { once.Do(func() { s.tracker.InFlightDec(url) }) }
+	status, hdr, buffered, reader, err = s.dispatch(r, url, body)
+	return
+}
+
 // relay writes a backend response to the client, streaming SSE if applicable,
 // and records usage once on the serving member (SPEC §8).
 func (s *Server) relay(w http.ResponseWriter, r *http.Request,
@@ -165,7 +189,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				Decodems: extras.Decodems, Totalms: extras.Totalms,
 				TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
 				DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
-				QueueWaitms: extras.QueueWaitms,
+				QueueWaitms: extras.QueueWaitms, Requested: requestedName(r, model),
 			})
 		}
 		if extras.QueueWaitms > 0 {
@@ -198,7 +222,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			Decodems: extras.Decodems, Totalms: extras.Totalms,
 			TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
 			DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
-			QueueWaitms: extras.QueueWaitms,
+			QueueWaitms: extras.QueueWaitms, Requested: requestedName(r, model),
 		})
 	}
 	if extras.QueueWaitms > 0 {
@@ -648,7 +672,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body 
 		body = withUsageHint(body)
 	}
 	r, body = s.prepareStats(r, body, url) // per-response engine stats
-	status, hdr, buffered, stream, err := s.dispatch(r, url, body)
+	status, hdr, buffered, stream, err, release := s.dispatchCounted(r, url, body)
+	defer release()
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away
@@ -704,7 +729,8 @@ func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model strin
 		}
 	}
 	r, body = s.prepareStats(r, body, pair.FallbackBackend) // per-response engine stats
-	status, hdr, buffered, stream, err := s.dispatch(r, pair.FallbackBackend, body)
+	status, hdr, buffered, stream, err, release := s.dispatchCounted(r, pair.FallbackBackend, body)
+	defer release()
 	if err != nil || status >= 500 {
 		return false // fall through to direct attempt
 	}

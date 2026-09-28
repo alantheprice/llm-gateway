@@ -203,6 +203,11 @@ func (s *Server) chatModelGroups(user string, isAdmin bool) []chatModelGroup {
 		var members []string
 		s.mu.Lock()
 		for _, pool := range s.cfg.ModelPools {
+			for _, a := range pool.Aliases {
+				seen[a] = true // routes to the pool, not one GPU
+			}
+		}
+		for _, pool := range s.cfg.ModelPools {
 			for _, m := range pool.Members {
 				if m.ModelID != "" && !seen[m.ModelID] {
 					seen[m.ModelID] = true
@@ -232,4 +237,21 @@ func flatModels(groups []chatModelGroup) []string {
 		out = append(out, g.Models...)
 	}
 	return out
+}
+
+// poolFor resolves a model name to its pool: the pool's own name or one of
+// its aliases. Returns the pool's canonical name (cache affinity, leader
+// and owner consent are keyed by it).
+func (s *Server) poolFor(name string) (string, poolCfgT, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.cfg.ModelPools[name]; ok {
+		return name, p, true
+	}
+	for pn, p := range s.cfg.ModelPools {
+		if slices.Contains(p.Aliases, name) {
+			return pn, p, true
+		}
+	}
+	return "", poolCfgT{}, false
 }

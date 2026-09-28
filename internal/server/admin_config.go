@@ -200,6 +200,26 @@ func validateConfig(c *config.Config) error {
 		}
 		c.ModelPools[name] = pool
 	}
+	// Aliases: each name routes to exactly one pool.
+	claimed := map[string]string{}
+	for name := range c.ModelPools {
+		claimed[name] = name
+	}
+	for name, pool := range c.ModelPools {
+		for _, a := range pool.Aliases {
+			a = strings.TrimSpace(a)
+			if a == "" {
+				return fmt.Errorf("model_pools.%s: empty alias", name)
+			}
+			if other, ok := claimed[a]; ok && other != name {
+				return fmt.Errorf("model_pools.%s: alias %q is already the name or an alias of %s", name, a, other)
+			}
+			if a == name {
+				return fmt.Errorf("model_pools.%s: alias %q is the pool's own name", name, a)
+			}
+			claimed[a] = name
+		}
+	}
 	for model, pair := range c.OverflowPairs {
 		if strings.TrimSpace(pair.FallbackBackend) == "" {
 			return fmt.Errorf("overflow_pairs.%s: fallback_backend required", model)

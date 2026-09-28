@@ -49,7 +49,8 @@ function entryCard(e) {
     h += '<div class="facts">' +
       '<span>Cache affinity <strong>' + (p.cache_affinity ? 'on' : 'off') + '</strong></span>' +
       '<span>Fairness cap <strong>' + (p.max_pool_share ? pct(p.max_pool_share) + ' per GPU' : 'off') + '</strong></span>' +
-      '<span>Busy at <strong>' + pct(p.overflow_threshold) + '</strong></span></div>';
+      '<span>Busy at <strong>' + pct(p.overflow_threshold) + '</strong></span>' +
+      ((p.aliases || []).length ? '<span>Also answers to <strong class="mono">' + p.aliases.map(esc).join(', ') + '</strong></span>' : '') + '</div>';
     h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load</th><th>Requests today</th><th>Context</th><th>Weight</th></tr></thead><tbody>' +
       (e.members || []).map(m => memberRow(m, e)).join('') + '</tbody></table></div>';
   } else if (e.kind === 'overflow') {
@@ -166,6 +167,8 @@ function renderEditor() {
   if (EDIT.isNew) h += field('Name clients call', '<input id="ed-name" class="mono" value="' + escAttr(EDIT.newName) + '" placeholder="' + (EDIT.kind === 'pool' ? 'qwen3.8-27b' : 'the engine’s own model id') + '">',
     EDIT.kind === 'pool' ? 'The model name clients put in their requests.' : 'Overflow applies to requests for this exact model id, served by one engine.');
   if (EDIT.kind === 'pool') {
+    h += field('Also answers to', '<input id="ed-aliases" class="mono" value="' + escAttr((d.aliases || []).join(', ')) + '" placeholder="other-name, another-name">',
+      'Other model names that route exactly like this one (same balancing and conversation affinity). Separate with commas.');
     h += '<div class="sub">GPUs</div><div class="members">' + d.members.map((m, i) =>
       '<div class="mrow" data-i="' + i + '">' +
         field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
@@ -207,6 +210,8 @@ function readEditor(box) {
       if (mc) m.max_context = mc; else delete m.max_context;
     });
     d.cache_affinity = box.querySelector('#ed-aff').checked;
+    const al = box.querySelector('#ed-aliases').value.split(',').map(x => x.trim()).filter(Boolean);
+    if (al.length) d.aliases = al; else delete d.aliases;
     d.max_pool_share = (+box.querySelector('#ed-share').value || 0) / 100;
     d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
     d.sticky_bias = +box.querySelector('#ed-sticky').value || 0;

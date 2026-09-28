@@ -73,6 +73,10 @@ type PoolCfg struct {
 	// conversations (turn 1) prefer a less-loaded sibling. Existing
 	// conversations always keep their GPU — affinity is never broken.
 	MaxPoolShare float64 `json:"max_pool_share"`
+	// Aliases: other names clients may call that route exactly like the
+	// pool (same balancing, same conversation affinity). Responses echo
+	// the name the client used.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type OverflowPair struct {

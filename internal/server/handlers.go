@@ -361,12 +361,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pool path
-	s.mu.Lock()
-	pool, isPool := s.cfg.ModelPools[req.Model]
-	s.mu.Unlock()
-	if isPool {
-		s.routePool(w, r, &pool, req.Model, body, user, keyID)
+	// Pool path (its name or an alias)
+	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
+		s.routePool(w, r, &pool, poolName, body, user, keyID)
 		return
 	}
 
@@ -596,19 +593,19 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		// use a buffering probe for non-stream requests; for streams we
 		// check the response status/CT before relaying.
 		rs, fwdBody := s.prepareStats(r, fwdBody, pick.URL) // per-response engine stats
-		status, respHeader, respBody, reader, err := s.dispatch(rs, pick.URL, fwdBody)
+		status, respHeader, respBody, reader, err, release := s.dispatchCounted(rs, pick.URL, fwdBody)
 		if err == nil && status < 500 && status != http.StatusRequestTimeout {
 			s.mu.Lock()
 			s.leader[modelName] = pick.URL
 			s.mu.Unlock()
-			s.tracker.InFlightInc(pick.URL)
-			defer s.tracker.InFlightDec(pick.URL)
+			defer release()
 			s.relay(w, rs, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
 			s.recordConv(modelName, convMsgs, pick.URL)
 			return
 		}
 		// Abandoned candidate: drain+close any stream reader so the
 		// backend (or link pipe) sees EOF instead of a wedged writer.
+		release()
 		if reader != nil {
 			io.Copy(io.Discard, reader)
 			if closer, ok := reader.(io.Closer); ok {
