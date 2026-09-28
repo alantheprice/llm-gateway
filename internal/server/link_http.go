@@ -163,15 +163,16 @@ func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	type engineView struct {
-		URL            string   `json:"url"`
-		ModelID        string   `json:"model_id"`
-		MaxConcurrency int      `json:"max_concurrency"`
-		Down           bool     `json:"down"`
-		Polled         bool     `json:"polled"`
-		Running        int      `json:"running"`
-		Lanes          int      `json:"lanes"`
-		Score          float64  `json:"score"`
-		Pools          []string `json:"pools"`
+		URL            string         `json:"url"`
+		ModelID        string         `json:"model_id"`
+		MaxConcurrency int            `json:"max_concurrency"`
+		Down           bool           `json:"down"`
+		Polled         bool           `json:"polled"`
+		Running        int            `json:"running"`
+		Lanes          int            `json:"lanes"`
+		Score          float64        `json:"score"`
+		Pools          []string       `json:"pools"`
+		CardSummary    map[string]any `json:"card_summary,omitempty"`
 	}
 	type agentView struct {
 		Agent      string       `json:"agent"`
@@ -191,7 +192,8 @@ func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
 			u := link.VirtualURL(c.Agent, e.Port)
 			live[u] = true
 			ev := engineView{URL: u, ModelID: e.ModelID, MaxConcurrency: e.MaxConcurrency,
-				Down: s.tracker.IsDown(u), Score: round3(s.tracker.Score(u)), Pools: inPools[u]}
+				Down: s.tracker.IsDown(u), Score: round3(s.tracker.Score(u)), Pools: inPools[u],
+				CardSummary: cardSummary(s.engineInfo(u).card)}
 			if l := s.tracker.Get(u); l != nil {
 				ev.Polled, ev.Running, ev.Lanes = true, l.Running, l.Lanes
 			}

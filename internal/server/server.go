@@ -658,8 +658,10 @@ const downReprobe = 5 * time.Second
 
 // ctxInfo: a backend's context window and when it was read.
 type ctxInfo struct {
-	tokens int
-	at     time.Time
+	tokens   int
+	engineID string         // model id the engine serves (first /v1/models entry)
+	card     map[string]any // engine model card (nil if the engine serves none)
+	at       time.Time
 }
 
 // maxContextRefresh: context windows only change when an engine restarts
@@ -688,21 +690,33 @@ func (s *Server) refreshMaxContext(url string) {
 	if !ok {
 		return
 	}
-	best := 0
+	best, engineID := 0, ""
 	if data, ok := models["data"].([]any); ok {
 		for _, d := range data {
 			if m, ok := d.(map[string]any); ok {
 				if n, ok := toInt(m["max_model_len"]); ok && n > best {
 					best = n
 				}
+				if id, _ := m["id"].(string); engineID == "" && id != "" {
+					engineID = id
+				}
 			}
+		}
+	}
+	// Model card (NInfer serving standard): GET /v1/models/<id> carries a
+	// "model_card" object when the engine was started with --model-card.
+	// Engines without cards simply leave it nil.
+	var card map[string]any
+	if engineID != "" {
+		if one, ok := s.backendJSON(url, "/v1/models/"+engineID, 3*time.Second); ok {
+			card, _ = one["model_card"].(map[string]any)
 		}
 	}
 	s.mu.Lock()
 	if s.maxCtx == nil {
 		s.maxCtx = map[string]ctxInfo{}
 	}
-	s.maxCtx[url] = ctxInfo{tokens: best, at: time.Now()}
+	s.maxCtx[url] = ctxInfo{tokens: best, engineID: engineID, card: card, at: time.Now()}
 	s.mu.Unlock()
 }
 

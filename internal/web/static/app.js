@@ -124,3 +124,18 @@ function gpuName(o, url) {
   const via = o.via === 'link' ? ' <span class="badge ok" title="served over a link agent">link</span>' : '';
   return '<span title="' + escAttr(raw) + '">' + esc(label) + '</span>' + via;
 }
+
+// cardLine: one line of "what is actually serving" from a model-card summary
+// (server-side cardSummary): weights · KV · speculative decoding · GPU · context.
+function cardLine(sum) {
+  if (!sum) return '';
+  const parts = [];
+  if (sum.weights) parts.push(sum.weights + ' weights');
+  if (sum.kv_cache) parts.push('KV ' + sum.kv_cache);
+  if (sum.speculative) parts.push(sum.speculative + (sum.draft_tokens ? ' ×' + sum.draft_tokens : ''));
+  if (sum.gpu) parts.push(String(sum.gpu).replace(/^NVIDIA (GeForce )?/, ''));
+  if (sum.context) parts.push(Math.round(sum.context / 1000) + 'K ctx');
+  return parts.length
+    ? '<br><span class="muted" style="font-size:12px" title="' + escAttr(sum.name || '') + '">' + esc(parts.join(' · ')) + '</span>'
+    : '';
+}

@@ -74,6 +74,14 @@ func newLinkRig(t *testing.T, keyOwner, keyRole string, agentArgs ...string) (*l
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"energy":{"today":{"kwh":1.5,"cost_usd":0.19,"tokens":100000}},"tokens":{"input":{"cache_hit_rate_pct":42}}}`)
 			return
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":[{"id":"m","max_model_len":262144}]}`)
+			return
+		case "/v1/models/m":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"m","model_card":{"schema":"ninfer-model-card/1","hardware":{"gpu":"RTX PRO 6000"}}}`)
+			return
 		}
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			w.WriteHeader(404)
@@ -444,4 +452,18 @@ func uiAdminKey(t *testing.T, s *Server) string {
 		t.Fatal(err)
 	}
 	return k
+}
+
+// A linked engine's card reaches the pool view over the relay.
+func TestLinkE2ECardOverRelay(t *testing.T) {
+	rig, _ := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	rig.s.PollOnce()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/v1/models/qwen", nil)
+	r.RemoteAddr = "192.168.1.50:5555"
+	rig.s.Handler().ServeHTTP(w, r)
+	if !strings.Contains(w.Body.String(), "RTX PRO 6000") || !strings.Contains(w.Body.String(), `"via":"link"`) {
+		t.Fatalf("link card missing from pool view: %s", w.Body.String())
+	}
 }

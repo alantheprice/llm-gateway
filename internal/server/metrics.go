@@ -185,6 +185,7 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 		}
 		perBackend[url] = map[string]any{
 			"gpu_key": id.Key, "gpu_label": id.Label, "host": id.Host, "via": id.Via,
+			"card_summary":          cardSummary(s.engineInfo(url).card),
 			"reachable":             true,
 			"model":                 usage["model"],
 			"uptime_seconds":        usageMap(usage, "uptime")["seconds"],
@@ -454,6 +455,9 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 			"gpu_key": id.Key, "gpu_label": id.Label, "host": id.Host, "via": id.Via}
 		if n := s.maxCtx[u].tokens; n > 0 { // s.mu held
 			e["max_context"] = n
+		}
+		if sum := cardSummary(s.maxCtx[u].card); sum != nil { // s.mu held
+			e["card_summary"] = sum
 		}
 		l := s.tracker.Get(u)
 		if l == nil {
