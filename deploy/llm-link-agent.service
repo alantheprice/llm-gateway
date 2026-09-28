@@ -5,6 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=llmgateway
+# Token must be role=link or admin-owned. Add --engine-key (or
+# Environment=LLM_LINK_ENGINE_KEY=...) if the local engine needs a key.
 ExecStart=/usr/local/bin/llm-link-agent --server https://YOUR-GATEWAY --token YOUR_LINK_TOKEN --name %H --engine 127.0.0.1:8006=YOUR-MODEL:4
 Restart=always
 RestartSec=5

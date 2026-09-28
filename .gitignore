@@ -8,5 +8,5 @@ usage.json
 peaks.json
 cost_history.json
 bin/
-link-agent
+/link-agent
 .sprout/

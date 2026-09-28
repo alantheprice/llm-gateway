@@ -15,9 +15,13 @@
 //	          kind 0 = request header (gw→agent) / response header (agent→gw)
 //	          kind 1 = body chunk
 //	          kind 2 = end-of-body
+//	          kind 3 = cancel (gw→agent): the client went away or the
+//	                   response was abandoned; the agent aborts the engine
+//	                   request. Older agents ignore it.
 package link
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -37,7 +41,13 @@ const (
 	kindHeader = 0
 	kindBody   = 1
 	kindEnd    = 2
+	kindCancel = 3
 )
+
+// respBufCap: per-response buffer between the socket read loop and the
+// HTTP relay. LLM streams trickle far below this; only an abandoned
+// reader fills it.
+const respBufCap = 16 << 20
 
 // Engine: one locally-served model endpoint declared by an agent.
 type Engine struct {
@@ -90,23 +100,30 @@ func (h relayHeader) header() http.Header {
 // Conn: one connected agent (possibly several engines).
 type Conn struct {
 	Agent   string // stable label; virtual URLs derive from it
+	Owner   string // gateway user whose key registered this agent
 	ws      *websocket.Conn
 	wmu     sync.Mutex // serialize writes
 	engines []Engine
 
-	mu      sync.Mutex
-	nextID  uint64
-	waiters map[uint64]chan *relayResponse // waiting for response header
-	streams map[uint64]*io.PipeWriter      // active response bodies
-	closed  bool
+	mu     sync.Mutex
+	nextID uint64
+	reqs   map[uint64]*pendingReq
+	closed bool
+}
+
+// pendingReq: one relayed exchange, from request send to end-of-body.
+type pendingReq struct {
+	hdr      chan *relayResponse // response header (or error), sent once
+	answered bool                // hdr has been sent
+	pipe     *bufPipe            // response body once the header arrived
+	fin      chan struct{}       // closed when the exchange ends
 }
 
 func newConn(agent string, engines []Engine) *Conn {
 	return &Conn{
 		Agent:   agent,
 		engines: engines,
-		waiters: map[uint64]chan *relayResponse{},
-		streams: map[uint64]*io.PipeWriter{},
+		reqs:    map[uint64]*pendingReq{},
 	}
 }
 
@@ -114,8 +131,22 @@ func newConn(agent string, engines []Engine) *Conn {
 type relayResponse struct {
 	status int
 	header http.Header
-	body   io.Reader
+	body   io.ReadCloser
 	err    error
+}
+
+// bodyReader: the caller's view of a relayed body. Closing it before the
+// end of the stream abandons the exchange, which cancels it at the agent.
+type bodyReader struct {
+	c    *Conn
+	id   uint64
+	pipe *bufPipe
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) { return b.pipe.Read(p) }
+func (b *bodyReader) Close() error {
+	b.c.cancel(b.id, io.ErrClosedPipe) // no-op once the exchange ended
+	return nil
 }
 
 func (c *Conn) sendJSON(v any) error {
@@ -161,7 +192,7 @@ func (c *Conn) Engines() []Engine {
 func (c *Conn) InFlight() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return len(c.streams)
+	return len(c.reqs)
 }
 
 // VirtualURL: pool-member backend URL for an engine on this link.
@@ -183,10 +214,16 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// Relay: send an HTTP request over the link; response body streams back
-// through a pipe. Caller must read to completion (or abandon it — a
-// dead waiter just drains).
+// Relay: RelayContext without cancellation (tests, internal probes).
 func (c *Conn) Relay(method, engineHost, path string, header http.Header, body []byte) (*http.Response, error) {
+	return c.RelayContext(context.Background(), method, engineHost, path, header, body)
+}
+
+// RelayContext sends an HTTP request over the link; the response body
+// streams back through a buffered pipe. When ctx ends first (client gone)
+// the agent is told to abort the engine request and the body closes with
+// ctx's error.
+func (c *Conn) RelayContext(ctx context.Context, method, engineHost, path string, header http.Header, body []byte) (*http.Response, error) {
 	if c.Closed() {
 		return nil, fmt.Errorf("link %q is disconnected", c.Agent)
 	}
@@ -195,27 +232,36 @@ func (c *Conn) Relay(method, engineHost, path string, header http.Header, body [
 	}
 
 	id := c.reserveID()
-	done := make(chan *relayResponse, 1)
+	p := &pendingReq{hdr: make(chan *relayResponse, 1), fin: make(chan struct{})}
 	c.mu.Lock()
-	c.waiters[id] = done
+	c.reqs[id] = p
 	c.mu.Unlock()
 
 	if err := c.sendJSONRelayRequest(id, method, engineHost, path, header); err != nil {
-		c.dropWaiter(id)
+		c.finish(id, err)
 		return nil, err
 	}
 	if len(body) > 0 {
 		if err := c.sendFrame(id, kindBody, body); err != nil {
-			c.dropWaiter(id)
+			c.finish(id, err)
 			return nil, err
 		}
 	}
 	if err := c.sendFrame(id, kindEnd, nil); err != nil {
-		c.dropWaiter(id)
+		c.finish(id, err)
 		return nil, err
 	}
 
-	res := <-done
+	// Watch the caller for the whole exchange, header wait AND body.
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.cancel(id, ctx.Err())
+		case <-p.fin:
+		}
+	}()
+
+	res := <-p.hdr
 	if res.err != nil {
 		return nil, res.err
 	}
@@ -223,7 +269,7 @@ func (c *Conn) Relay(method, engineHost, path string, header http.Header, body [
 		Status:     fmt.Sprintf("%d %s", res.status, http.StatusText(res.status)),
 		StatusCode: res.status,
 		Header:     res.header,
-		Body:       io.NopCloser(res.body),
+		Body:       res.body,
 	}, nil
 }
 
@@ -235,13 +281,49 @@ func (c *Conn) sendJSONRelayRequest(id uint64, method, host, path string, header
 	return c.sendFrame(id, kindHeader, payload)
 }
 
-func (c *Conn) dropWaiter(id uint64) {
+// finish ends exchange id: an unanswered caller gets err, an open body
+// closes with err (nil = clean EOF). Idempotent.
+func (c *Conn) finish(id uint64, err error) {
 	c.mu.Lock()
-	delete(c.waiters, id)
+	p := c.reqs[id]
+	delete(c.reqs, id)
 	c.mu.Unlock()
+	if p == nil {
+		return
+	}
+	c.settle(p, err)
 }
 
-// reader-side state machine (drive from ServeAgent's read loop).
+func (c *Conn) settle(p *pendingReq, err error) {
+	if !p.answered {
+		p.answered = true
+		if err == nil {
+			err = fmt.Errorf("link %q: exchange ended before a response header", c.Agent)
+		}
+		p.hdr <- &relayResponse{err: err}
+	}
+	if p.pipe != nil {
+		p.pipe.CloseWithError(err)
+	}
+	close(p.fin)
+}
+
+// cancel aborts exchange id locally and asks the agent to stop the
+// engine request. The frame is sent off the caller's goroutine: cancel can
+// run from the socket read loop, which must never block on a write.
+func (c *Conn) cancel(id uint64, err error) {
+	c.mu.Lock()
+	_, live := c.reqs[id]
+	c.mu.Unlock()
+	if !live {
+		return
+	}
+	c.finish(id, err)
+	go func() { _ = c.sendFrame(id, kindCancel, nil) }()
+}
+
+// reader-side state machine (driven by ServeAgent's read loop). Never
+// blocks: body chunks land in a buffered pipe.
 func (c *Conn) onFrame(id uint64, kind byte, payload []byte) error {
 	switch kind {
 	case kindHeader:
@@ -249,49 +331,38 @@ func (c *Conn) onFrame(id uint64, kind byte, payload []byte) error {
 		if err := json.Unmarshal(payload, &h); err != nil {
 			return nil // malformed header frame: ignore
 		}
-		h.ID = id
-		pr, pw := io.Pipe()
 		c.mu.Lock()
-		wait, wok := c.waiters[h.ID]
-		if wok {
-			delete(c.waiters, h.ID)
-			c.streams[h.ID] = pw
+		p := c.reqs[id]
+		if p == nil || p.answered {
+			c.mu.Unlock()
+			return nil // cancelled or duplicate
 		}
+		p.answered = true
+		p.pipe = newBufPipe(respBufCap)
 		c.mu.Unlock()
-		if !wok {
-			pw.Close()
-			return nil
-		}
-		wait <- &relayResponse{status: h.Status, header: h.header(), body: pr}
+		p.hdr <- &relayResponse{status: h.Status, header: h.header(), body: &bodyReader{c: c, id: id, pipe: p.pipe}}
 	case kindBody:
 		c.mu.Lock()
-		pw := c.streams[id]
+		p := c.reqs[id]
 		c.mu.Unlock()
-		if pw != nil {
-			_, _ = pw.Write(payload)
+		if p != nil && p.pipe != nil {
+			if _, err := p.pipe.Write(payload); err != nil {
+				c.cancel(id, err) // reader abandoned: stop the engine too
+			}
 		}
 	case kindEnd:
-		c.mu.Lock()
-		pw := c.streams[id]
-		delete(c.streams, id)
-		c.mu.Unlock()
-		if pw != nil {
-			pw.Close()
-		}
+		c.finish(id, nil)
 	}
 	return nil
 }
 
 func (c *Conn) failAll(err error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.closed = true
-	for id, pw := range c.streams {
-		pw.CloseWithError(err)
-		delete(c.streams, id)
-	}
-	for id, ch := range c.waiters {
-		ch <- &relayResponse{err: err}
-		delete(c.waiters, id)
+	reqs := c.reqs
+	c.reqs = map[uint64]*pendingReq{}
+	c.mu.Unlock()
+	for _, p := range reqs {
+		c.settle(p, err)
 	}
 }

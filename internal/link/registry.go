@@ -10,20 +10,39 @@ import (
 // (http://link/<agent>:<port>). Pool members reference that URL; the
 // relay path asks the registry for the connection instead of dialing.
 type Registry struct {
-	mu    sync.RWMutex
-	conns map[string]*Conn // virtual URL -> conn
-	byAg  map[string]*Conn // agent label -> latest conn
+	mu     sync.RWMutex
+	conns  map[string]*Conn  // virtual URL -> conn
+	byAg   map[string]*Conn  // agent label -> latest conn
+	owners map[string]string // agent label -> owning user (sticky for the process lifetime)
 }
 
 func NewRegistry() *Registry {
-	return &Registry{conns: map[string]*Conn{}, byAg: map[string]*Conn{}}
+	return &Registry{conns: map[string]*Conn{}, byAg: map[string]*Conn{}, owners: map[string]string{}}
 }
 
-// Register: attach a fresh agent connection (after hello).
+// RegisterAs attaches an agent connection owned by owner. The first
+// owner of a label keeps it: another user's agent announcing the same
+// name is refused, so it cannot take over (and read) traffic routed to
+// that label. The same owner reconnecting replaces its old connection.
+func (r *Registry) RegisterAs(c *Conn, owner string) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if prev, ok := r.owners[c.Agent]; ok && prev != owner {
+		return nil, fmt.Errorf("agent name %q is registered to another user", c.Agent)
+	}
+	r.owners[c.Agent] = owner
+	return r.registerLocked(c), nil
+}
+
+// Register attaches c without an ownership check (tests only).
 // Same-label re-registration replaces the old entry.
 func (r *Registry) Register(c *Conn) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.registerLocked(c)
+}
+
+func (r *Registry) registerLocked(c *Conn) []string {
 	if old := r.byAg[c.Agent]; old != nil {
 		for _, e := range old.engines {
 			url := VirtualURL(c.Agent, e.Port)

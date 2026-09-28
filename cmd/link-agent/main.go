@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -35,6 +37,7 @@ func main() {
 		agent    = flag.String("name", "", "agent label (default: hostname)")
 		engines  engineFlags
 		interval = flag.Duration("retry-max", 30*time.Second, "max reconnect backoff")
+		engKey   = flag.String("engine-key", os.Getenv("LLM_LINK_ENGINE_KEY"), "bearer key the local engine requires, if any (never taken from relayed requests)")
 	)
 	flag.Var(&engines, "engine", "local engine, host:port=model-id[:max-conc] (repeatable)")
 	flag.Parse()
@@ -51,7 +54,7 @@ func main() {
 
 	backoff := time.Second
 	for {
-		err := run(*server, *token, agentName, engines)
+		err := run(*server, *token, agentName, *engKey, engines)
 		log.Printf("link down: %v — reconnecting in %v", err, backoff)
 		time.Sleep(backoff + time.Duration(rand.Intn(1000))*time.Millisecond)
 		if backoff < *interval {
@@ -88,7 +91,7 @@ func (e *engineFlags) Set(v string) error {
 	return nil
 }
 
-func run(server, token, agent string, engines []engine) error {
+func run(server, token, agent, engineKey string, engines []engine) error {
 	wsURL, err := url.Parse(server)
 	if err != nil {
 		return fmt.Errorf("bad --server: %w", err)
@@ -131,19 +134,28 @@ func run(server, token, agent string, engines []engine) error {
 		return err
 	}
 
-	// ping loop keeps NAT mappings open and detects half-dead sockets.
+	// ping loop keeps NAT mappings open and lets the gateway detect a dead
+	// socket. WriteControl is safe alongside the frame writer.
 	go func() {
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
 		for range t.C {
-			ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
 				return
 			}
 		}
 	}()
 
-	return readLoop(ws, engines)
+	return readLoop(&wsWriter{ws: ws}, ws, engines, engineKey)
+}
+
+// wsWriter serializes data frames: gorilla/websocket allows one writer at
+// a time, and every relayed request writes from its own goroutine.
+// Concurrent writes panic the agent ("concurrent write to websocket
+// connection"), dropping every in-flight request on the link.
+type wsWriter struct {
+	mu sync.Mutex
+	ws *websocket.Conn
 }
 
 // relayRequest: the kind-0 header frame's JSON shape (gateway → agent).
@@ -162,11 +174,18 @@ type pendingReq struct {
 }
 
 // readLoop: dispatch control + relay-request frames.
-func readLoop(ws *websocket.Conn, engines []engine) error {
+func readLoop(w *wsWriter, ws *websocket.Conn, engines []engine, engineKey string) error {
 	pending := map[uint64]*pendingReq{}
+	var cmu sync.Mutex
+	cancels := map[uint64]context.CancelFunc{} // in-flight engine requests
 	for {
 		mt, data, err := ws.ReadMessage()
 		if err != nil {
+			cmu.Lock()
+			for _, cancel := range cancels {
+				cancel() // gateway gone: stop every engine request
+			}
+			cmu.Unlock()
 			return err
 		}
 		if mt != websocket.BinaryMessage || len(data) < 17 {
@@ -201,10 +220,30 @@ func readLoop(ws *websocket.Conn, engines []engine) error {
 			// and model-serving paths.
 			eng := findEngine(engines, pr.req.Host)
 			if eng == nil || !validPath(pr.req.Path) {
-				writeError(ws, id, http.StatusForbidden, "not relayable")
+				writeError(w, id, http.StatusForbidden, "not relayable")
 				continue
 			}
-			go proxyRequest(ws, id, eng, pr.req, pr.body)
+			ctx, cancel := context.WithCancel(context.Background())
+			cmu.Lock()
+			cancels[id] = cancel
+			cmu.Unlock()
+			go func() {
+				defer func() {
+					cmu.Lock()
+					delete(cancels, id)
+					cmu.Unlock()
+					cancel()
+				}()
+				proxyRequest(ctx, w, id, eng, pr.req, pr.body, engineKey)
+			}()
+
+		case 3: // cancel: client gone or response abandoned at the gateway
+			delete(pending, id)
+			cmu.Lock()
+			if cancel := cancels[id]; cancel != nil {
+				cancel()
+			}
+			cmu.Unlock()
 		}
 	}
 }
@@ -229,22 +268,38 @@ func validPath(p string) bool {
 	return false
 }
 
-func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req relayRequest, body []byte) {
+// stripHeaders: never forwarded to the engine, whatever the gateway sent.
+var stripHeaders = map[string]bool{
+	"Authorization": true, "Proxy-Authorization": true, "Cookie": true,
+	"Host": true, "Connection": true, "Content-Length": true,
+	"Transfer-Encoding": true, "Upgrade": true, "Keep-Alive": true,
+}
+
+func proxyRequest(ctx context.Context, w *wsWriter, id uint64, eng *engine, req relayRequest, body []byte, engineKey string) {
 	target := fmt.Sprintf("http://127.0.0.1:%d%s", eng.port, req.Path)
-	httpReq, err := http.NewRequest(req.Method, target, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, target, bytes.NewReader(body))
 	if err != nil {
-		writeError(ws, id, http.StatusBadRequest, err.Error())
+		writeError(w, id, http.StatusBadRequest, err.Error())
 		return
 	}
 	for k, vs := range req.Headers {
+		if stripHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
 		for _, v := range vs {
 			httpReq.Header.Add(k, v)
 		}
 	}
-	client := &http.Client{Timeout: 0} // streams have no deadline
+	if engineKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+engineKey)
+	}
+	client := &http.Client{Timeout: 0} // streams have no deadline; ctx cancels
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		writeError(ws, id, http.StatusBadGateway, err.Error())
+		if ctx.Err() != nil {
+			return // cancelled by the gateway; nobody is waiting
+		}
+		writeError(w, id, http.StatusBadGateway, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -253,7 +308,7 @@ func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req relayRequest, 
 	hdr, _ := json.Marshal(map[string]any{
 		"id": id, "status": resp.StatusCode, "headers": resp.Header,
 	})
-	if err := writeFrame(ws, id, 0, hdr); err != nil {
+	if err := w.writeFrame(id, 0, hdr); err != nil {
 		return
 	}
 	// body chunks (streamed as they arrive — SSE safe)
@@ -261,7 +316,7 @@ func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req relayRequest, 
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			if err := writeFrame(ws, id, 1, buf[:n]); err != nil {
+			if err := w.writeFrame(id, 1, buf[:n]); err != nil {
 				return
 			}
 		}
@@ -269,22 +324,28 @@ func proxyRequest(ws *websocket.Conn, id uint64, eng *engine, req relayRequest, 
 			break
 		}
 	}
-	_ = writeFrame(ws, id, 2, nil) // end
+	if ctx.Err() != nil {
+		return // cancelled mid-stream: the gateway already closed its side
+	}
+	_ = w.writeFrame(id, 2, nil) // end
 }
 
-func writeFrame(ws *websocket.Conn, id uint64, kind byte, payload []byte) error {
-	ws.SetWriteDeadline(time.Now().Add(30 * time.Second))
+func (w *wsWriter) writeFrame(id uint64, kind byte, payload []byte) error {
 	buf := make([]byte, 17+len(payload))
 	binary.BigEndian.PutUint64(buf[8:16], id)
 	buf[16] = kind
 	copy(buf[17:], payload)
-	return ws.WriteMessage(websocket.BinaryMessage, buf)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ws.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	return w.ws.WriteMessage(websocket.BinaryMessage, buf)
 }
 
-func writeError(ws *websocket.Conn, id uint64, status int, msg string) {
+func writeError(w *wsWriter, id uint64, status int, msg string) {
 	hdr, _ := json.Marshal(map[string]any{"id": id, "status": status,
 		"headers": map[string][]string{"Content-Type": {"application/json"}}})
-	_ = writeFrame(ws, id, 0, hdr)
-	_ = writeFrame(ws, id, 1, []byte(`{"error":{"message":"`+msg+`"}}`))
-	_ = writeFrame(ws, id, 2, nil)
+	body, _ := json.Marshal(map[string]any{"error": map[string]string{"message": msg}})
+	_ = w.writeFrame(id, 0, hdr)
+	_ = w.writeFrame(id, 1, body)
+	_ = w.writeFrame(id, 2, nil)
 }
