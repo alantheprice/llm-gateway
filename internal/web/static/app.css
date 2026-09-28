@@ -15,6 +15,7 @@
   --warn: #d29922;
   --info: #1f6feb;
   --accent: #e3b341;
+  --brand: #58a6ff;
   --chart-1: #3fb950;
   --chart-2: #58a6ff;
   --chart-3: #e3b341;
@@ -36,6 +37,7 @@
   --warn: #9a6700;
   --info: #0969da;
   --accent: #9a6700;
+  --brand: #0969da;
   --chart-1: #1a7f37;
   --chart-2: #0969da;
   --chart-3: #9a6700;
@@ -74,7 +76,7 @@ code, .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size:
   border-bottom: 1px solid var(--border2);
   font-weight: 600; font-size: 15px;
 }
-.brand-mark { color: var(--accent); font-size: 18px; display: flex; }
+.brand-mark { color: var(--brand); font-size: 18px; display: flex; }
 .brand-mark .brand-svg { width: 20px; height: 20px; display: block; }
 .auth-card h1 .brand-svg { width: 22px; height: 22px; }
 .nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }

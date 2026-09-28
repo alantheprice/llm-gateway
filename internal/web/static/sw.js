@@ -1,7 +1,7 @@
 /* LLM Gateway service worker: app-shell caching + update flow.
    Strategy: network-first for pages/API (fresh always), cache-first for
    static assets (immutable-ish: versioned URLs). Never caches /v1/*. */
-const CACHE = 'llmgw-v3'; // bump when shell assets change (v3: new logo)
+const CACHE = 'llmgw-v4'; // bump when shell assets change (v4: doorway logo)
 const SHELL = [
   '/static/app.css', '/static/app.js', '/static/icons.js',
   '/static/favicon.svg', '/static/manifest.json'
