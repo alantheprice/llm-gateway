@@ -553,14 +553,15 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 		// Failover happens BEFORE any bytes are committed to the client:
 		// use a buffering probe for non-stream requests; for streams we
 		// check the response status/CT before relaying.
-		status, respHeader, respBody, reader, err := s.dispatch(r, pick.URL, fwdBody)
+		rs, fwdBody := s.prepareStats(r, fwdBody, pick.URL) // per-response engine stats
+		status, respHeader, respBody, reader, err := s.dispatch(rs, pick.URL, fwdBody)
 		if err == nil && status < 500 && status != http.StatusRequestTimeout {
 			s.mu.Lock()
 			s.leader[modelName] = pick.URL
 			s.mu.Unlock()
 			s.tracker.InFlightInc(pick.URL)
 			defer s.tracker.InFlightDec(pick.URL)
-			s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
+			s.relay(w, rs, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
 			s.recordConv(modelName, convMsgs, pick.URL)
 			return
 		}

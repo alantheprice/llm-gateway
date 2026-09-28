@@ -113,6 +113,12 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 		var captured ringBuf // capture LAST 1MB (usage+timings live at stream end)
 		strip := wantsUsageStrip(r)
 		filter := newSSEFilter(strip)
+		switch statsModeOf(r) {
+		case statsInjected:
+			filter.stripStats = true
+		case statsClient:
+			filter.gateway = s.gatewayBlock(backendURL, model)
+		}
 		for {
 			n, err := stream.Read(buf)
 			if n > 0 {
@@ -158,17 +164,21 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				Decodems: extras.Decodems, Totalms: extras.Totalms,
 				TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
 				DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
+				QueueWaitms: extras.QueueWaitms,
 			})
 		}
 		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
-	w.Write(stripIfInjected(r, buffered))
+	w.Write(s.finalizeJSONStats(r, stripIfInjected(r, buffered), backendURL, model))
 	pt, ot, cached, extras := usageFromJSON(buffered, est)
 	if extras.TTFTms == 0 {
-		// Non-streamed: nothing reaches the client before the end, so the
-		// closest "first token" figure is the engine's prefill time.
-		extras.TTFTms = extras.Prefillms
+		// Non-streamed: nothing reaches the client before the end. Prefer
+		// the engine's own ttft (stats block); else its prefill time.
+		extras.TTFTms = extras.EngineTTFTms
+		if extras.TTFTms == 0 {
+			extras.TTFTms = extras.Prefillms
+		}
 	}
 	if status < 400 {
 		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
@@ -180,6 +190,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			Decodems: extras.Decodems, Totalms: extras.Totalms,
 			TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
 			DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
+			QueueWaitms: extras.QueueWaitms,
 		})
 	}
 	s.observePeak(model, backendURL, buffered, true)
@@ -278,6 +289,7 @@ func usageFromJSON(body []byte, est int) (int, int, int, SSEExtras) {
 			DraftN      int64   `json:"draft_n"`
 			DraftAcc    int64   `json:"draft_n_accepted"`
 		} `json:"timings"`
+		Stats *engineStats `json:"stats"`
 	}
 	if json.Unmarshal(body, &resp) != nil || resp.Usage.PromptTokens <= 0 {
 		return est, 0, 0, SSEExtras{}
@@ -291,6 +303,7 @@ func usageFromJSON(body []byte, est int) (int, int, int, SSEExtras) {
 		DraftN:        resp.Timings.DraftN,
 		DraftAccepted: resp.Timings.DraftAcc,
 	}
+	applyEngineStats(&extras, resp.Stats)
 	if resp.Timings.PredictedMS > 0 {
 		extras.TokPerSec = float64(resp.Usage.CompletionTokens) /
 			(resp.Timings.PredictedMS / 1000)
@@ -386,14 +399,18 @@ func (r *ringBuf) bytes() []byte { return r.buf }
 // a data event with an empty choices array and a usage block (the chunk
 // injected by withUsageHint). Buffers partial lines across reads.
 type sseFilter struct {
-	strip bool
-	carry []byte // partial line carried between reads
+	strip      bool           // drop the usage chunk the gateway injected
+	stripStats bool           // drop the stats chunk the gateway injected
+	gateway    map[string]any // client asked for stats: add this block to the stats chunk
+	carry      []byte         // partial line carried between reads
 }
 
 func newSSEFilter(strip bool) *sseFilter { return &sseFilter{strip: strip} }
 
+func (f *sseFilter) active() bool { return f.strip || f.stripStats || f.gateway != nil }
+
 func (f *sseFilter) write(p []byte) []byte {
-	if !f.strip {
+	if !f.active() {
 		return p
 	}
 	data := append(f.carry, p...)
@@ -408,10 +425,7 @@ func (f *sseFilter) write(p []byte) []byte {
 			f.carry = append(f.carry, line...) // incomplete: carry over
 			break
 		}
-		if f.isInjectedUsage(line) {
-			continue
-		}
-		out = append(out, line...)
+		out = append(out, f.transform(line)...)
 	}
 	return out
 }
@@ -422,10 +436,49 @@ func (f *sseFilter) flush() []byte {
 	}
 	tail := f.carry
 	f.carry = nil
-	if f.isInjectedUsage(string(tail)) {
-		return nil
+	return []byte(f.transform(string(tail)))
+}
+
+// transform applies the filter to one SSE line: drops injected usage/stats
+// chunks, or adds the gateway block to a client-requested stats chunk.
+func (f *sseFilter) transform(line string) string {
+	if f.strip && f.isInjectedUsage(line) {
+		return ""
 	}
-	return tail
+	if !f.stripStats && f.gateway == nil {
+		return line
+	}
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "data:") {
+		return line
+	}
+	p := strings.TrimSpace(strings.TrimPrefix(t, "data:"))
+	if p == "" || p == "[DONE]" || !strings.Contains(p, `"stats"`) {
+		return line
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(p), &m) != nil {
+		return line
+	}
+	if _, has := m["stats"]; !has {
+		return line
+	}
+	if choices, _ := m["choices"].([]any); len(choices) > 0 {
+		return line // stats only ride on the terminal choices-empty chunk
+	}
+	if f.stripStats {
+		delete(m, "stats")
+		if _, hasUsage := m["usage"]; !hasUsage || f.strip {
+			return "" // nothing left the client asked for
+		}
+	} else {
+		m["gateway"] = f.gateway
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return line
+	}
+	return "data: " + string(b) + "\n"
 }
 
 // isInjectedUsage: a data line whose event has empty choices + a usage block.
@@ -460,6 +513,9 @@ type SSEExtras struct {
 	// draft_n / draft_n_accepted; 0 when the engine runs no draft model).
 	DraftN        int64
 	DraftAccepted int64
+	// From the engine's opt-in "stats" block (return_stats).
+	EngineTTFTms float64
+	QueueWaitms  float64
 }
 
 // usageFromSSE extracts usage from the captured tail. Sources in priority
@@ -472,6 +528,7 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 	pt, ot, cached := 0, 0, 0
 	var tPrompt, tPredicted, tCache float64
 	var extras SSEExtras
+	var stats *engineStats // opt-in engine stats chunk (return_stats)
 	haveTimings := false
 	for _, line := range strings.Split(string(captured), "\n") {
 		line = strings.TrimSpace(line)
@@ -501,6 +558,7 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 				DraftN      int64   `json:"draft_n"`
 				DraftAcc    int64   `json:"draft_n_accepted"`
 			} `json:"timings"`
+			Stats   *engineStats `json:"stats"`
 			Choices []struct {
 				Delta struct {
 					Content   string `json:"content"`
@@ -528,6 +586,9 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 		if chunk.Timings != nil && chunk.Timings.TTFTS > 0 {
 			extras.TTFTms = chunk.Timings.TTFTS * 1000
 		}
+		if chunk.Stats != nil {
+			stats = chunk.Stats
+		}
 		if chunk.Timings != nil && chunk.Timings.DraftN > 0 {
 			extras.DraftN, extras.DraftAccepted = chunk.Timings.DraftN, chunk.Timings.DraftAcc
 		}
@@ -544,6 +605,7 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 			ot += (len([]rune(ch.Delta.Content)) + len([]rune(ch.Delta.Reasoning))) / 4
 		}
 	}
+	applyEngineStats(&extras, stats)
 	// Priority: (1) the OpenAI usage block — always present now that we
 	// request include_usage, and prompt_tokens is the FULL prompt;
 	// (2) engine timings — exact but prompt_n counts only the UNCACHED
@@ -568,6 +630,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, url string, body 
 		r = withUsageHintCtx(r)
 		body = withUsageHint(body)
 	}
+	r, body = s.prepareStats(r, body, url) // per-response engine stats
 	status, hdr, buffered, stream, err := s.dispatch(r, url, body)
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -620,6 +683,7 @@ func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model strin
 			body = nb
 		}
 	}
+	r, body = s.prepareStats(r, body, pair.FallbackBackend) // per-response engine stats
 	status, hdr, buffered, stream, err := s.dispatch(r, pair.FallbackBackend, body)
 	if err != nil || status >= 500 {
 		return false // fall through to direct attempt

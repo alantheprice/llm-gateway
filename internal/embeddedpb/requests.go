@@ -29,6 +29,8 @@ type RequestRecord struct {
 	// Speculative decoding (engine timings); 0 when not reported.
 	DraftN        int64
 	DraftAccepted int64
+	// Engine-reported queue wait before scheduling (stats block); 0 if unknown.
+	QueueWaitms float64
 }
 
 func (a *App) InitRequestsSchema() error {
@@ -64,7 +66,7 @@ func (a *App) InitRequestsSchema() error {
 		return err
 	}
 	// Columns added after the first release: add each if missing.
-	for _, col := range []string{"draft_n", "draft_accepted"} {
+	for _, col := range []string{"draft_n", "draft_accepted", "queue_ms"} {
 		var r struct {
 			N int64 `db:"n"`
 		}
@@ -75,7 +77,7 @@ func (a *App) InitRequestsSchema() error {
 		}
 		if r.N == 0 {
 			if _, err := a.pb.DB().NewQuery(
-				"ALTER TABLE requests ADD COLUMN " + col + " INTEGER NOT NULL DEFAULT 0",
+				"ALTER TABLE requests ADD COLUMN " + col + " " + colType(col) + " NOT NULL DEFAULT 0",
 			).Execute(); err != nil {
 				return err
 			}
@@ -94,11 +96,11 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 			INSERT INTO requests (ts, ts_hour, day, user, key_id, model, backend,
 				kind, status, prompt, cached, output,
 				ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path,
-				draft_n, draft_accepted)
+				draft_n, draft_accepted, queue_ms)
 			VALUES ({:ts}, {:ts_hour}, {:day}, {:user}, {:key_id}, {:model},
 				{:backend}, {:kind}, {:status}, {:prompt}, {:cached}, {:output},
 				{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse},
-				{:draft_n}, {:draft_acc})
+				{:draft_n}, {:draft_acc}, {:queue})
 		`).Bind(map[string]any{
 			"ts":      r.TS.UTC().Format(time.RFC3339Nano),
 			"ts_hour": r.TS.UTC().Format("2006-01-02T15"),
@@ -108,7 +110,7 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 			"prompt": r.Prompt, "cached": r.Cached, "output": r.Output,
 			"ttft": r.TTFTms, "prefill": r.Prefillms, "decode": r.Decodems,
 			"total": r.Totalms, "tps": r.TokPerSec, "reuse": r.ReusePath,
-			"draft_n": r.DraftN, "draft_acc": r.DraftAccepted,
+			"draft_n": r.DraftN, "draft_acc": r.DraftAccepted, "queue": r.QueueWaitms,
 		}).Execute()
 		if err != nil {
 			return err
@@ -265,4 +267,12 @@ func (a *App) QueryAnalyticsReuse(days int, dest *[]ReuseRow) error {
 		WHERE day >= {:start}
 		GROUP BY path ORDER BY requests DESC
 	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+}
+
+// colType: SQL type for columns added by migration.
+func colType(col string) string {
+	if col == "queue_ms" {
+		return "REAL"
+	}
+	return "INTEGER"
 }

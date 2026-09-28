@@ -49,12 +49,13 @@ func (s *Server) relayPoolPick(w http.ResponseWriter, r *http.Request,
 	s.mu.Unlock()
 
 	fwdBody := rewriteModel(body, pick.ModelID)
-	status, respHeader, respBody, reader, err := s.dispatch(r, pick.URL, fwdBody)
+	rs, fwdBody := s.prepareStats(r, fwdBody, pick.URL) // per-response engine stats
+	status, respHeader, respBody, reader, err := s.dispatch(rs, pick.URL, fwdBody)
 	if err == nil && status < 500 && status != http.StatusRequestTimeout {
 		log.Printf("Pool '%s': cache-affinity depth=%d -> %s", modelName, pick.CacheDepth, pick.URL)
 		s.tracker.InFlightInc(pick.URL)
 		defer s.tracker.InFlightDec(pick.URL)
-		s.relay(w, r, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
+		s.relay(w, rs, respHeader, respBody, reader, status, user, keyID, pick.ModelID, est, pick.URL)
 		s.recordConv(modelName, convMsgs, pick.URL)
 		return
 	}
