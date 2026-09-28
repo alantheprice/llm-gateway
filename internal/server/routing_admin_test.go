@@ -291,3 +291,44 @@ func TestPoolServesEmbeddingsAndCompletions(t *testing.T) {
 		t.Fatalf("engine hits = %v", hits)
 	}
 }
+
+// Discovery picks up new engines, keeps one through a couple of failed
+// probes, drops it after discoveryMaxMisses, and drops unscanned ones at once.
+func TestDiscoveryRefresh(t *testing.T) {
+	up := true
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up {
+			w.WriteHeader(500)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"m1"}]}`)
+	}))
+	defer eng.Close()
+	port := strings.TrimPrefix(eng.URL, "http://127.0.0.1:")
+	s := testServer(t, `{"gateway":{"port":0},"discovery":{"local_ports":[`+port+`]}}`, nil)
+	s.Discover()
+	if u, _ := s.resolve("m1"); u != eng.URL {
+		t.Fatalf("not discovered: %q", u)
+	}
+	up = false
+	for i := 1; i < discoveryMaxMisses; i++ {
+		s.Discover()
+		if u, _ := s.resolve("m1"); u == "" {
+			t.Fatalf("dropped after %d missed probe(s)", i)
+		}
+	}
+	s.Discover()
+	if u, _ := s.resolve("m1"); u != "" {
+		t.Fatal("still listed after repeated failures")
+	}
+	// Back up, then removed from the scan list: gone on the next pass.
+	up = true
+	s.Discover()
+	s.mu.Lock()
+	s.cfg.Discovery.LocalPorts = nil
+	s.mu.Unlock()
+	s.Discover()
+	if u, _ := s.resolve("m1"); u != "" {
+		t.Fatal("unscanned engine still listed")
+	}
+}

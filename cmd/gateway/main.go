@@ -185,6 +185,20 @@ func main() {
 	defer cancel()
 
 	// Background: metrics polling + config hot-reload + usage flush.
+	// Rediscover engines every minute: models deployed (or removed) after
+	// the gateway started are picked up without a restart.
+	go func() {
+		tick := time.NewTicker(time.Minute)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				srv.Discover()
+			}
+		}
+	}()
 	go func() {
 		tick := time.NewTicker(time.Duration(cfg.Metrics.PollInterval) * time.Second)
 		defer tick.Stop()

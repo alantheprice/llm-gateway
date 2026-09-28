@@ -51,6 +51,7 @@ type Server struct {
 
 	mu                   sync.Mutex
 	backends             map[string]*BackendInfo // url -> info
+	discoverMiss         map[string]int          // url -> consecutive failed discovery probes
 	rate                 map[string][]time.Time
 	probe                map[string][]time.Time
 	leader               map[string]string // pool -> leader url
@@ -494,35 +495,79 @@ func unauthorized(w http.ResponseWriter) {
 // route to itself. Discovery is a convenience; explicit pool members need
 // no scanning and are the recommended setup.
 func (s *Server) Discover() {
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
 	urls := []string{}
-	own := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.Gateway.Port)
-	for _, p := range s.cfg.Discovery.LocalPorts {
+	own := fmt.Sprintf("http://127.0.0.1:%d", cfg.Gateway.Port)
+	for _, p := range cfg.Discovery.LocalPorts {
 		u := fmt.Sprintf("http://127.0.0.1:%d", p)
 		if u == own {
 			continue
 		}
 		urls = append(urls, u)
 	}
-	for _, p := range s.cfg.Discovery.RemotePorts {
-		urls = append(urls, fmt.Sprintf("http://%s:%d", s.cfg.Discovery.RemoteHost, p))
+	if cfg.Discovery.RemoteHost != "" {
+		for _, p := range cfg.Discovery.RemotePorts {
+			urls = append(urls, fmt.Sprintf("http://%s:%d", cfg.Discovery.RemoteHost, p))
+		}
 	}
+	found := map[string]*BackendInfo{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for _, u := range urls {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
-			info := probeBackend(s.client, u, s.cfg)
-			if info == nil {
-				return
+			if info := probeBackend(s.client, u, cfg); info != nil {
+				mu.Lock()
+				found[u] = info
+				mu.Unlock()
 			}
-			mu.Lock()
-			s.backends[u] = info
-			mu.Unlock()
 		}(u)
 	}
 	wg.Wait()
+
+	// Swap in the new set. An engine that is still scanned but failed this
+	// probe keeps its entry until discoveryMaxMisses probes in a row fail
+	// (one slow answer must not hide a model); one no longer scanned goes
+	// at once.
+	scanned := map[string]bool{}
+	for _, u := range urls {
+		scanned[u] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.discoverMiss == nil {
+		s.discoverMiss = map[string]int{}
+	}
+	next := map[string]*BackendInfo{}
+	for u, info := range found {
+		next[u] = info
+		delete(s.discoverMiss, u)
+	}
+	for u, info := range s.backends {
+		if _, ok := next[u]; ok || !scanned[u] {
+			continue
+		}
+		s.discoverMiss[u]++
+		if s.discoverMiss[u] < discoveryMaxMisses {
+			next[u] = info
+		} else {
+			log.Printf("discovery: %s stopped answering; removed", u)
+			delete(s.discoverMiss, u)
+		}
+	}
+	for u := range s.backends {
+		if !scanned[u] {
+			log.Printf("discovery: %s no longer scanned; removed", u)
+		}
+	}
+	s.backends = next
 }
+
+// discoveryMaxMisses: consecutive failed probes before an engine is dropped.
+const discoveryMaxMisses = 3
 
 func probeBackend(client *http.Client, url string, cfg *config.Config) *BackendInfo {
 	c := &http.Client{Timeout: 3 * time.Second}
