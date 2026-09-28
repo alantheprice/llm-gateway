@@ -37,17 +37,25 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 		rate = 0.125
 	}
 
-	// Gather energy.daily per backend from the poller's captured payloads.
+	// Gather energy.daily per GPU from the poller's captured payloads. One
+	// engine can appear under two backend URLs (its old direct URL and its
+	// link); both report the same counters, so per GPU and day the max is
+	// taken, never the sum.
 	type dayAgg struct {
 		kwh    float64
 		energy float64
 	}
-	perDay := map[string]*dayAgg{}
+	perGPUDay := map[string]map[string]*dayAgg{} // gpu key -> day -> energy
 
 	s.mu.Lock()
+	hosts := s.cfg.Hosts
 	for backendURL, raw := range s.lastMetrics {
 		if _, ok := s.hostByIP(backendHostIP(backendURL)); !ok {
 			continue
+		}
+		gpu := identifyGPU(hosts, backendURL).Key
+		if perGPUDay[gpu] == nil {
+			perGPUDay[gpu] = map[string]*dayAgg{}
 		}
 		energy, ok := raw["energy"].(map[string]any)
 		if !ok {
@@ -62,18 +70,26 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
-			kwh := usageNum(dm, "kwh")
-			cost := usageNum(dm, "cost_usd")
-			agg := perDay[day]
+			agg := perGPUDay[gpu][day]
 			if agg == nil {
 				agg = &dayAgg{}
-				perDay[day] = agg
+				perGPUDay[gpu][day] = agg
 			}
-			agg.kwh += kwh
-			agg.energy += cost
+			agg.kwh = max(agg.kwh, usageNum(dm, "kwh"))
+			agg.energy = max(agg.energy, usageNum(dm, "cost_usd"))
 		}
 	}
 	s.mu.Unlock()
+	perDay := map[string]*dayAgg{}
+	for _, days := range perGPUDay {
+		for day, a := range days {
+			if perDay[day] == nil {
+				perDay[day] = &dayAgg{}
+			}
+			perDay[day].kwh += a.kwh
+			perDay[day].energy += a.energy
+		}
+	}
 
 	// Host daily capital for overhead/capital rows.
 	today := time.Now().UTC().Format("2006-01-02")
@@ -83,12 +99,16 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 			continue // today is still live; never rewrite it here
 		}
 		var overhead, capital float64
-		for _, h := range s.cfg.Hosts {
+		for _, h := range hosts {
+			if !hostExisted(h, day) {
+				continue // no charges before the hardware was bought
+			}
 			overhead += h.OverheadWatts / 1000 * 24 * rate
 			capital += dayCapital(h.HardwareCostUSD, h.AmortizeYears)
 		}
-		// Historical routed-token counts aren't recoverable per day.
-		if err := replaceCostDay(ops, day, agg.energy, overhead, capital, 0, 0); err != nil {
+		// Routed tokens and book value from the per-user daily usage rows.
+		tokens, value := s.tokensValueForDay(day)
+		if err := replaceCostDay(ops, day, agg.energy, overhead, capital, value, tokens); err != nil {
 			continue
 		}
 		repaired++
@@ -96,7 +116,7 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":   "ok",
 		"repaired": repaired,
-		"note":     "energy from engine energy.daily; overhead+capital from host config; today not touched; historical token counts unrecoverable (0)",
+		"note":     "energy from engine energy.daily (per GPU); overhead+capital from host config; tokens+value from usage_daily; today not touched",
 	})
 }
 
