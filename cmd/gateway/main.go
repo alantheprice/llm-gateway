@@ -84,6 +84,13 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "key" {
+		if err := keyCmd(usersPath, os.Args[2:]); err != nil {
+			log.Fatalf("key: %v", err)
+		}
+		return
+	}
+
 	store, err := auth.Open(usersPath)
 	if err != nil {
 		log.Fatalf("users store: %v", err)
