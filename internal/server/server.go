@@ -671,6 +671,11 @@ func (s *Server) PollOnce() {
 				s.refreshMaxContext(u)
 				return
 			}
+			if l := s.pollLlamaCpp(u); l != nil {
+				s.tracker.Set(u, l)
+				s.refreshMaxContext(u)
+				return
+			}
 			if l := s.pollVLLM(u); l != nil {
 				s.tracker.Set(u, l)
 				s.refreshMaxContext(u)
@@ -686,6 +691,10 @@ func (s *Server) PollOnce() {
 				s.lastMetrics[u] = raw
 				s.mu.Unlock()
 				s.recordGPUDaily(u, raw)
+				return
+			}
+			if l := s.pollLlamaCpp(u); l != nil {
+				s.tracker.Set(u, l)
 				return
 			}
 			if l := s.pollVLLM(u); l != nil {
@@ -863,6 +872,33 @@ func (s *Server) pollNinferFull(backend string) (*routing.Load, map[string]any) 
 	return l, usage
 }
 
+// pollLlamaCpp reads a llama.cpp-style server (llama-server and compatible
+// engines): /slots is a JSON array of lanes with is_processing, and
+// /metrics may add llamacpp:requests_deferred (queued requests).
+func (s *Server) pollLlamaCpp(backend string) *routing.Load {
+	status, body, err := s.backendGet(backend, "/slots", 3*time.Second)
+	if err != nil || status != 200 {
+		return nil
+	}
+	var slots []struct {
+		IsProcessing *bool `json:"is_processing"`
+	}
+	if json.Unmarshal(body, &slots) != nil || len(slots) == 0 || slots[0].IsProcessing == nil {
+		return nil // not the llama.cpp /slots shape
+	}
+	l := &routing.Load{Engine: "llamacpp", Lanes: len(slots), MaxSeqs: len(slots), LastUpdated: time.Now()}
+	for _, sl := range slots {
+		if sl.IsProcessing != nil && *sl.IsProcessing {
+			l.Running++
+		}
+	}
+	if st, text, err := s.backendGet(backend, "/metrics", 3*time.Second); err == nil && st == 200 {
+		vals := parsePrometheus(string(text))
+		l.Waiting = int(vals["llamacpp:requests_deferred"])
+	}
+	return l
+}
+
 func (s *Server) pollVLLM(backend string) *routing.Load {
 	status, text, err := s.backendGet(backend, "/metrics", 3*time.Second)
 	if err != nil || status != 200 {
@@ -875,10 +911,11 @@ func (s *Server) pollVLLM(backend string) *routing.Load {
 	}
 	waiting := vals["vllm:num_requests_waiting"]
 	kv := vals["vllm:kv_cache_usage_perc"]
+	maxSeqs := s.cfg.MaxSeqsFor(backend)
 	l := &routing.Load{
 		Engine:  "vllm",
 		Running: int(running), Waiting: int(waiting), KVUsage: kv,
-		MaxSeqs: s.cfg.MaxSeqsFor(backend), LastUpdated: time.Now(),
+		MaxSeqs: maxSeqs, Lanes: maxSeqs, LastUpdated: time.Now(),
 	}
 	return l
 }

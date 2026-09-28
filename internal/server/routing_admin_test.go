@@ -332,3 +332,48 @@ func TestDiscoveryRefresh(t *testing.T) {
 		t.Fatal("unscanned engine still listed")
 	}
 }
+
+// llama.cpp-style engines (array /slots + llamacpp: metrics) are polled and
+// scored by their real lanes; vLLM reports its configured concurrency.
+func TestPollLlamaCppAndVLLMLanes(t *testing.T) {
+	llama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slots":
+			fmt.Fprint(w, `[{"id":0,"is_processing":true},{"id":1,"is_processing":false},{"id":2,"is_processing":false}]`)
+		case "/metrics":
+			fmt.Fprint(w, "llamacpp:requests_processing 1\nllamacpp:requests_deferred 2\n")
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"fim"}]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer llama.Close()
+	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			fmt.Fprint(w, "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:kv_cache_usage_perc 0.1\n")
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"emb"}]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer vllm.Close()
+	s := testServer(t, `{"gateway":{"port":0},"metrics":{"default_max_seqs":4}}`, nil)
+	s.mu.Lock()
+	s.backends[llama.URL] = &BackendInfo{Models: []string{"fim"}, Chat: true}
+	s.backends[vllm.URL] = &BackendInfo{Models: []string{"emb"}, Embeds: true}
+	s.mu.Unlock()
+	s.PollOnce()
+	l := s.tracker.Get(llama.URL)
+	if l == nil || l.Engine != "llamacpp" || l.Lanes != 3 || l.Running != 1 || l.Waiting != 2 {
+		t.Fatalf("llama.cpp load = %+v", l)
+	}
+	if sc := s.tracker.Score(llama.URL); sc < 0.75 {
+		t.Fatalf("queued llama.cpp engine scored %.2f, want saturated", sc)
+	}
+	if v := s.tracker.Get(vllm.URL); v == nil || v.Lanes != 4 {
+		t.Fatalf("vLLM lanes = %+v, want 4 from default_max_seqs", v)
+	}
+}

@@ -201,7 +201,8 @@ func (t *Tracker) Score(url string) float64 {
 	if !l.LastUpdated.IsZero() && time.Since(l.LastUpdated).Seconds() > t.weights.StaleSeconds {
 		return 0.0
 	}
-	if l.Engine == "ninfer" {
+	// Lane-based engines (NInfer, llama.cpp) report real lanes and a queue.
+	if l.Engine == "ninfer" || l.Engine == "llamacpp" {
 		lanes := l.Lanes
 		if lanes < 1 {
 			lanes = 1
