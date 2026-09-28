@@ -258,6 +258,48 @@ func (a *App) QueryAnalyticsPerUser(days int, dest *[]UserRow) error {
 	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
 }
 
+// BackendUserRow: one user's traffic on one backend.
+type BackendUserRow struct {
+	Backend  string  `db:"backend" json:"backend"`
+	User     string  `db:"user" json:"user"`
+	Requests int64   `db:"requests" json:"requests"`
+	Prompt   int64   `db:"prompt" json:"prompt"`
+	Output   int64   `db:"output" json:"output"`
+	TTFTAvg  float64 `db:"ttft_avg" json:"ttft_avg"`
+	Errors   int64   `db:"errors" json:"errors"`
+	LastDay  string  `db:"last_day" json:"last_day"`
+}
+
+// QueryBackendUsers: per-(backend, user) aggregates for a set of backends —
+// what a GPU owner sees about who used their GPU.
+func (a *App) QueryBackendUsers(days int, backends []string, dest *[]BackendUserRow) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	if len(backends) == 0 {
+		return nil
+	}
+	params := map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}
+	in := make([]string, len(backends))
+	for i, b := range backends {
+		k := fmt.Sprintf("b%d", i)
+		params[k] = b
+		in[i] = "{:" + k + "}"
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT backend, user,
+			COUNT(*) AS requests,
+			SUM(prompt) AS prompt,
+			SUM(output) AS output,
+			ROUND(AVG(ttft_ms), 0) AS ttft_avg,
+			SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
+			MAX(day) AS last_day
+		FROM requests
+		WHERE day >= {:start} AND backend IN (` + strings.Join(in, ",") + `)
+		GROUP BY backend, user ORDER BY SUM(output) DESC
+	`).Bind(params).All(dest)
+}
+
 // ReuseRow: prefix-reuse path distribution.
 type ReuseRow struct {
 	Path     string `db:"path" json:"path"`

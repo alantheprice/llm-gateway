@@ -199,7 +199,7 @@ func (s *Server) handleChatConfig(w http.ResponseWriter, r *http.Request) {
 		"username": sess.U,
 		"role":     sess.Role,
 		"api_key":  apiKey,
-		"models":   s.modelIDs(),
+		"models":   append(s.modelIDs(), s.privateModelNames(sess.U)...),
 	})
 }
 

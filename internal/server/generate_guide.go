@@ -24,7 +24,7 @@ func main() {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		panic(err)
 	}
-	for _, slug := range []string{"start", "install", "ninfer-engine", "operations"} {
+	for _, slug := range []string{"start", "install", "ninfer-engine", "operations", "link-gpu"} {
 		in := filepath.Join(docs, slug+".md")
 		md, err := os.ReadFile(in)
 		if err != nil {

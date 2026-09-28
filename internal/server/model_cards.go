@@ -129,14 +129,29 @@ func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
 		s.handleModels(w, r)
 		return
 	}
+	s.mu.Lock()
+	pool, isPool := s.cfg.ModelPools[id]
+	s.mu.Unlock()
+	if !isPool {
+		if backend, _, _ := s.modelBackend(id); backend == "" {
+			// A private link: its owner sees it as an admin would (full
+			// card, live details); users it is shared with see the
+			// redacted card.
+			if pm, ok := s.resolvePrivate(s.requestUser(r), id); ok {
+				full := isAdmin || !pm.Shared
+				if view == "details" && !full {
+					errBody(w, http.StatusForbidden, "model details are for the GPU's owner")
+					return
+				}
+				s.writeEngineInfo(w, pm.URL, pm.ModelID, view, full)
+				return
+			}
+		}
+	}
 	if view == "details" && !isAdmin {
 		errBody(w, http.StatusForbidden, "model details are admin-only")
 		return
 	}
-
-	s.mu.Lock()
-	pool, isPool := s.cfg.ModelPools[id]
-	s.mu.Unlock()
 	if isPool {
 		s.writePoolInfo(w, id, &pool, view, isAdmin)
 		return

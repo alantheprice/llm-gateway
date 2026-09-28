@@ -1,0 +1,490 @@
+{{define "title"}}My GPUs — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+const GUIDE = '/guide/link-gpu';
+const ENGINES = {
+  ninfer: {port: 8006, label: 'NInfer',
+    cmd: 'ninfer-serve model.ninfer --host 127.0.0.1 --port 8006 \\\n  --model-id my-model --model-card card.json',
+    id: 'the <code>--model-id</code> value',
+    note: 'Best fit: reports load, cache and energy, and serves a model card that shows up as <em>Stats for nerds</em>.'},
+  vllm: {port: 8000, label: 'vLLM',
+    cmd: 'vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000 \\\n  --served-model-name my-model',
+    id: 'the <code>--served-model-name</code> value (or the HF repo id if you did not set one)',
+    note: 'Load is read from its Prometheus metrics.'},
+  llamacpp: {port: 8080, label: 'llama.cpp',
+    cmd: 'llama-server -m model.gguf --host 127.0.0.1 --port 8080 --alias my-model',
+    id: 'the <code>--alias</code> value',
+    note: 'Serving works; the gateway reads lanes from <code>/slots</code>.'},
+  ollama: {port: 11434, label: 'Ollama',
+    cmd: 'ollama serve            # listens on 127.0.0.1:11434\nollama pull llama3.1:8b',
+    id: 'the model tag, e.g. <code>llama3.1:8b</code>',
+    note: 'Serving works through its OpenAI-compatible API; fewer metrics.'},
+};
+let engineKind = 'ninfer', step = 1, created = null, lastData = null, pollTimer = null;
+
+// ---------- your links ----------
+function statusBadge(row) {
+  if (!row.active) return '<span class="badge off">revoked</span>';
+  if (row.settings && row.settings.paused) return '<span class="badge grace">paused</span>';
+  return row.agent ? '<span class="badge ok">connected</span>' : '<span class="badge grace">not connected</span>';
+}
+function linkName(keyID) { return keyID.replace(/^link-/, ''); }
+function fmtN(n) { n = Number(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n); }
+
+function engineBlock(e, row, isAdmin) {
+  const state = !e.polled ? 'waiting for first poll' : (e.up ? e.running + '/' + e.lanes + ' lanes busy' : 'down');
+  let h = '<div class="eng"><div><strong>' + esc(e.model_id) + '</strong> <span class="muted">(' + esc(state) + ')</span>' + cardLine(e.card_summary) + '</div>';
+  if (e.polled && !e.up) h += '<div class="hint warn">The agent is connected but the engine isn\'t answering. Start it, then check <code>curl http://127.0.0.1:' +
+    esc(e.url.split(':').pop()) + '/v1/models</code> on the GPU machine.</div>';
+  h += '<div class="callme">Call it as <code>' + esc(e.model) + '</code>' +
+    ' <button class="btn sm" data-copy="' + escAttr(e.model) + '">Copy</button>' +
+    ' <a class="hint" href="/chat">Try it in chat →</a></div>';
+  // Platform models (pools / overflow) that list this engine.
+  const pools = e.pools || [];
+  if (pools.length) {
+    h += '<div class="sub">Platform models that list this GPU <a class="hint" href="' + GUIDE + '#platform-models">what’s this?</a></div>';
+    if (isAdmin) {
+      h += '<div class="hint">You’re an admin, so this GPU serves them as configured: ' + pools.map(p => '<code>' + esc(p) + '</code>').join(', ') + '.</div>';
+    } else {
+      const mine = (row.settings && row.settings.pools) || [];
+      h += pools.map(p => '<label class="consent"><input type="checkbox" data-pool="' + escAttr(p) + '" data-key="' + escAttr(row.key_id) + '"' +
+        (mine.includes(p) ? ' checked' : '') + '> serve <code>' + esc(p) + '</code> for everyone who can use it' +
+        ((e.serving || []).includes(p) ? ' <span class="badge ok">serving</span>' : '') + '</label>').join('');
+      h += '<div class="hint">Unchecked, the platform can’t route anyone’s traffic here. Checked, other people’s prompts for that model can reach your machine.</div>';
+    }
+  }
+  return h + '</div>';
+}
+
+function sharingBlock(row) {
+  const shared = (row.settings && row.settings.shared_with) || [];
+  return '<div class="sub">Shared with</div>' +
+    '<div class="chips">' + (shared.length ? shared.map(u => '<span class="chip">' + esc(u) +
+      ' <button title="Stop sharing" data-unshare="' + escAttr(u) + '" data-key="' + escAttr(row.key_id) + '">×</button></span>').join('')
+      : '<span class="muted">Only you. Nobody else can see or call this GPU.</span>') + '</div>' +
+    '<div class="sharebar"><input placeholder="username" data-shareinput="' + escAttr(row.key_id) + '" autocomplete="off">' +
+    '<button class="btn sm" data-share="' + escAttr(row.key_id) + '">Share</button></div>' +
+    '<div class="hint">People you share with call it by the same name with their own API key. Their requests count against their quota, and their prompts reach your machine.</div>';
+}
+
+function usageBlock(row) {
+  const u = row.usage || [];
+  if (!row.agent) return '';
+  if (!u.length) return '<div class="sub">Usage, last 7 days</div><div class="muted">No requests yet.</div>';
+  return '<div class="sub">Usage, last 7 days</div><div class="tablewrap"><table class="mini"><thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>TTFT avg</th><th>Errors</th><th>Last</th></tr></thead><tbody>' +
+    u.map(r => '<tr><td>' + esc(r.user || 'anonymous') + '</td><td>' + r.requests + '</td><td>' + fmtN(r.prompt) + '</td><td>' + fmtN(r.output) +
+      '</td><td>' + (r.ttft_avg ? Math.round(r.ttft_avg) + ' ms' : '—') + '</td><td>' + r.errors + '</td><td>' + esc(r.last_day) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+}
+
+function linkCard(row, isAdmin) {
+  const name = linkName(row.key_id), a = row.agent;
+  let h = '<div class="linkcard"><div class="lc-head"><div><strong>' + esc(name) + '</strong> ' + statusBadge(row) +
+    '<div class="muted">created ' + esc((row.created || '').slice(0, 10)) +
+    (a ? ' · agent v' + esc(a.agent_version || '?') + ' connected since ' + esc(new Date(a.connected_since).toLocaleString()) : '') + '</div></div>';
+  if (row.active) h += '<div class="lc-actions">' +
+    '<button class="btn sm" data-pause="' + escAttr(row.key_id) + '" data-to="' + (row.settings.paused ? 'false' : 'true') + '">' +
+    (row.settings.paused ? 'Resume' : 'Pause') + '</button> ' +
+    '<button class="btn sm danger" data-revoke="' + escAttr(row.key_id) + '">Revoke</button></div>';
+  h += '</div>';
+  if (!row.active) return h + '<div class="muted">Token revoked. The agent can’t reconnect with it.</div></div>';
+  if (row.settings.paused) h += '<div class="hint warn">Paused: nobody, including you, is routed to this GPU. The agent stays connected.</div>';
+  if (!a) {
+    h += '<div class="hint">No agent is connected with this token. Run the install script on the GPU machine, then check its log:<br>' +
+      '<code>journalctl --user -u llm-link-agent-' + esc(name) + ' -n 30</code> · <a href="' + GUIDE + '#troubleshooting">troubleshooting</a></div>';
+  } else {
+    h += (a.engines || []).map(e => engineBlock(e, row, isAdmin)).join('') || '<div class="muted">No engines registered.</div>';
+  }
+  return h + sharingBlock(row) + usageBlock(row) + '</div>';
+}
+
+async function post(body) {
+  const r = await api('/api/gpus', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) { if (r.status === 401) { location = '/'; return null; } flash(r.data.error || 'failed', true); return null; }
+  return r.data;
+}
+function rowOf(keyID) { return ((lastData && lastData.links) || []).find(l => l.key_id === keyID); }
+async function setShares(keyID, list, msg) {
+  if (await post({action: 'update_link', key_id: keyID, shared_with: list})) { flash(msg); load(true); }
+}
+
+function bindLinkCards(root) {
+  root.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', () => revoke(b.dataset.revoke)));
+  root.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () =>
+    navigator.clipboard.writeText(b.dataset.copy).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1500); })));
+  root.querySelectorAll('[data-pause]').forEach(b => b.addEventListener('click', async () => {
+    const paused = b.dataset.to === 'true';
+    if (await post({action: 'update_link', key_id: b.dataset.pause, paused})) {
+      flash(paused ? 'Paused ' + linkName(b.dataset.pause) + '. No traffic is routed to it.' : 'Resumed ' + linkName(b.dataset.pause) + '.');
+      load(true);
+    }
+  }));
+  root.querySelectorAll('[data-share]').forEach(b => {
+    const input = root.querySelector('[data-shareinput="' + CSS.escape(b.dataset.share) + '"]');
+    const go = () => {
+      const u = input.value.trim();
+      if (!u) return;
+      const cur = (rowOf(b.dataset.share).settings.shared_with || []);
+      setShares(b.dataset.share, cur.concat([u]), 'Shared ' + linkName(b.dataset.share) + ' with ' + u + '.');
+    };
+    b.addEventListener('click', go);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  });
+  root.querySelectorAll('[data-unshare]').forEach(b => b.addEventListener('click', () => {
+    const cur = (rowOf(b.dataset.key).settings.shared_with || []).filter(u => u !== b.dataset.unshare);
+    setShares(b.dataset.key, cur, 'Stopped sharing with ' + b.dataset.unshare + '.');
+  }));
+  root.querySelectorAll('[data-pool]').forEach(cb => cb.addEventListener('change', async () => {
+    const keyID = cb.dataset.key;
+    if (cb.checked && !confirm('Serve "' + cb.dataset.pool + '" from this GPU? Traffic from anyone using that model can be routed here, and their prompts will reach your machine.')) {
+      cb.checked = false; return;
+    }
+    const pools = Array.from(root.querySelectorAll('[data-pool][data-key="' + CSS.escape(keyID) + '"]:checked')).map(x => x.dataset.pool);
+    if (await post({action: 'update_link', key_id: keyID, pools})) {
+      flash(cb.checked ? 'This GPU now serves ' + cb.dataset.pool + '.' : 'This GPU no longer serves ' + cb.dataset.pool + '.');
+      load(true);
+    }
+  }));
+}
+
+function editing() {
+  const el = document.activeElement;
+  return el && el.tagName === 'INPUT' && document.getElementById('links').contains(el) && el.value;
+}
+
+async function load(force) {
+  const r = await api('/api/gpus');
+  if (!r.ok) { if (r.status === 401) location = '/'; return; }
+  const d = lastData = r.data;
+  document.getElementById('limit').textContent = d.is_admin ? '' : '(' + (d.links || []).filter(l => l.active).length + ' of ' + d.max_links + ')';
+  document.querySelectorAll('.admin-only').forEach(el => el.hidden = !d.is_admin);
+  document.querySelectorAll('.user-only').forEach(el => el.hidden = d.is_admin);
+  if (force || !editing()) {
+    const box = document.getElementById('links');
+    const rows = (d.links || []).slice().sort((x, y) => (y.active - x.active));
+    box.innerHTML = rows.length ? rows.map(row => linkCard(row, d.is_admin)).join('')
+      : '<div class="muted">No linked GPUs yet. Use the walkthrough below to link one.</div>';
+    bindLinkCards(box);
+  }
+  const sw = d.shared_with_me || [];
+  document.getElementById('sharedcard').hidden = !sw.length;
+  document.getElementById('sharedrows').innerHTML = sw.map(x =>
+    '<tr><td data-label="Model"><code>' + esc(x.model) + '</code></td><td data-label="Owner">' + esc(x.owner) + '</td></tr>').join('');
+  if (d.is_admin) {
+    document.getElementById('allcard').hidden = false;
+    const agents = d.all_agents || [];
+    document.getElementById('allrows').innerHTML = agents.length ? agents.map(a =>
+      '<tr><td data-label="Owner">' + esc(a.owner) + '</td><td data-label="Agent">' + esc(a.name) + ' <span class="muted">v' + esc(a.agent_version || '?') + '</span></td>' +
+      '<td data-label="Engines">' + (a.engines || []).map(e => '<div><code>' + esc(e.model) + '</code> <span class="muted">' +
+        (!e.polled ? 'waiting' : e.up ? e.running + '/' + e.lanes + ' lanes' : 'down') + '</span>' +
+        ((e.pools || []).length ? '<br><span class="hint">listed in ' + e.pools.map(esc).join(', ') + '; serving ' + ((e.serving || []).map(esc).join(', ') || 'none — owner hasn’t consented') + '</span>' : '') +
+        '</div>').join('') + '</td></tr>').join('')
+      : '<tr><td colspan="3" class="muted">No agents connected.</td></tr>';
+  }
+  if (created) updateVerify();
+}
+async function revoke(id) {
+  if (!confirm('Revoke "' + linkName(id) + '"? Its agent is disconnected immediately and can\'t reconnect with this token. Sharing and pool settings are removed.')) return;
+  const d = await post({action: 'revoke_link', key_id: id});
+  if (!d) return;
+  flash('Revoked ' + linkName(id) + (d.disconnected ? '. Agent disconnected.' : '.'));
+  load(true);
+}
+
+// ---------- walkthrough ----------
+function goStep(n) {
+  if (n > 3 && !created) return;
+  step = n;
+  document.querySelectorAll('.wz-pane').forEach(p => p.hidden = Number(p.dataset.step) !== n);
+  document.querySelectorAll('.wz-steps li').forEach(li => {
+    const s = Number(li.dataset.step);
+    li.classList.toggle('cur', s === n);
+    li.classList.toggle('done', s < n || (s <= 3 && created && s !== n));
+    li.classList.toggle('locked', s > 3 && !created);
+  });
+  clearInterval(pollTimer);
+  if (n === 4) { load(); pollTimer = setInterval(load, 3000); }
+}
+function pickEngine(kind) {
+  engineKind = kind;
+  const e = ENGINES[kind];
+  document.querySelectorAll('[data-engine]').forEach(b => b.classList.toggle('on', b.dataset.engine === kind));
+  document.getElementById('enginecmd').textContent = e.cmd;
+  document.getElementById('engineid').innerHTML = e.id;
+  document.getElementById('enginenote').innerHTML = e.note;
+  document.getElementById('modelsport').textContent = e.port;
+  const eng = document.getElementById('engine');
+  if (!eng.dataset.touched) eng.value = '127.0.0.1:' + e.port;
+  preview();
+}
+function preview() {
+  const name = document.getElementById('gpuname').value.trim().toLowerCase();
+  const model = document.getElementById('modelid').value.trim();
+  const ok = /^[a-z0-9._-]{1,63}$/.test(name);
+  document.getElementById('nameerr').hidden = !name || ok;
+  document.getElementById('vurl').textContent = (ok ? name : '<gpu-name>') + '/' + (model || '<model-id>');
+}
+async function createLink() {
+  const name = document.getElementById('gpuname').value.trim();
+  const engine = document.getElementById('engine').value.trim();
+  const model = document.getElementById('modelid').value.trim();
+  if (!name || !model) { flash('Give the GPU a name and the model id your engine serves', true); return; }
+  const btn = document.getElementById('create');
+  btn.disabled = true;
+  const r = await api('/api/gpus', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'create_link', name, engine, model_id: model})});
+  btn.disabled = false;
+  if (!r.ok) { if (r.status === 401) { location = '/'; return; } flash(r.data.error || 'failed', true); return; }
+  created = r.data;
+  const file = 'link-' + created.name + '.sh';
+  document.getElementById('scripttext').textContent = created.script;
+  document.querySelectorAll('.scriptname').forEach(el => el.textContent = file);
+  document.querySelectorAll('.agentname').forEach(el => el.textContent = created.name);
+  document.querySelectorAll('.vurl2').forEach(el => el.textContent = created.virtual_url);
+  document.querySelectorAll('.privname').forEach(el => el.textContent = created.model);
+  const dl = document.getElementById('dlscript');
+  dl.href = URL.createObjectURL(new Blob([created.script], {type: 'text/x-shellscript'}));
+  dl.download = file;
+  ['gpuname', 'modelid'].forEach(id => document.getElementById(id).value = '');
+  flash('Link created for ' + created.name + '. Save the install script now — it contains the token and is shown once.');
+  load();
+  goStep(3);
+}
+function check(id, state, text) {
+  const el = document.getElementById(id);
+  el.className = 'chk ' + state;
+  el.querySelector('.chk-t').innerHTML = text;
+}
+function updateVerify() {
+  const row = (lastData.links || []).find(l => l.key_id === created.key_id);
+  const a = row && row.agent;
+  const e = a && (a.engines || [])[0];
+  check('chk-token', row && row.active ? 'ok' : 'bad', row && row.active ? 'Link token created' : 'Link token revoked');
+  check('chk-agent', a ? 'ok' : 'wait', a
+    ? 'Agent connected (v' + esc(a.agent_version || '?') + ')'
+    : 'Waiting for the agent to connect… run the script on the GPU machine');
+  check('chk-engine', !e ? 'wait' : !e.polled ? 'wait' : e.up ? 'ok' : 'bad',
+    !e ? 'Engine: waits for the agent'
+      : !e.polled ? 'Engine registered, waiting for the first metrics poll (~10 s)'
+      : e.up ? 'Engine responding — ' + esc(e.model_id) + ', ' + e.lanes + ' lanes' + cardLine(e.card_summary)
+      : 'Engine not answering — is it running on the address you entered?');
+  check('chk-pool', e && e.polled && e.up ? 'ok' : 'todo', e
+    ? 'Ready for you as <code>' + esc(e.model) + '</code>. Private until you share it.'
+    : 'Your private model name appears once the agent connects');
+  document.getElementById('verifyhelp').hidden = !!(a && e && e.polled && e.up);
+  if (a && e && e.polled && e.up) document.getElementById('tostep5').classList.add('primary');
+}
+
+document.querySelectorAll('[data-engine]').forEach(b => b.addEventListener('click', () => pickEngine(b.dataset.engine)));
+document.querySelectorAll('.wz-steps li').forEach(li => li.addEventListener('click', () => goStep(Number(li.dataset.step))));
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => goStep(Number(b.dataset.go))));
+document.getElementById('gpuname').addEventListener('input', preview);
+document.getElementById('modelid').addEventListener('input', preview);
+document.getElementById('engine').addEventListener('input', e => { e.target.dataset.touched = '1'; preview(); });
+document.getElementById('create').addEventListener('click', createLink);
+document.getElementById('restart').addEventListener('click', () => { created = null; pickEngine(engineKind); goStep(1); });
+document.getElementById('copyscript').addEventListener('click', () => {
+  const b = document.getElementById('copyscript');
+  navigator.clipboard.writeText(document.getElementById('scripttext').textContent).then(() => {
+    b.textContent = 'Copied!'; setTimeout(() => b.textContent = 'Copy script', 2000);
+  });
+});
+pickEngine('ninfer');
+goStep(1);
+load();
+setInterval(() => { if (step !== 4) load(); }, 15000);
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.wz-steps { display: flex; gap: 6px; flex-wrap: wrap; list-style: none; padding: 0; margin: 0 0 16px; counter-reset: s; }
+.wz-steps li { counter-increment: s; flex: 1; min-width: 110px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; font-size: 13px; color: var(--muted); background: var(--card2); }
+.wz-steps li::before { content: counter(s); display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 6px;
+  border-radius: 50%; border: 1px solid var(--border); font-size: 11px; }
+.wz-steps li.cur { border-color: var(--info); color: var(--text); }
+.wz-steps li.cur::before { background: var(--info); border-color: var(--info); color: #fff; }
+.wz-steps li.done::before { content: "✓"; background: var(--primary); border-color: var(--primary); color: #fff; }
+.wz-steps li.locked { opacity: .5; cursor: default; }
+.wz-pane h3 { margin: 0 0 6px; font-size: 15px; }
+.wz-pane p { margin: 6px 0; }
+.wz-pane pre { background: var(--card2); border: 1px solid var(--border2); border-radius: 6px; padding: 10px; font-size: 12px;
+  overflow-x: auto; white-space: pre; margin: 6px 0; }
+.wz-nav { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0; }
+.seg button { padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card2); color: var(--muted); cursor: pointer; }
+.seg button.on { border-color: var(--info); color: var(--text); }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; max-width: 520px; }
+.field label { font-weight: 600; font-size: 13px; }
+.field input { width: 100%; }
+.callout { border-left: 3px solid var(--info); background: var(--card2); padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 10px 0; font-size: 13px; }
+.callout.warn { border-color: var(--warn); }
+.hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.hint.warn { color: var(--warn); }
+.eng { margin-top: 8px; }
+.linkcard { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 10px 0; background: var(--card2); }
+.lc-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+.lc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sub { font-weight: 600; font-size: 12.5px; margin: 12px 0 4px; }
+.callme { margin-top: 4px; font-size: 13px; }
+.consent { display: flex; gap: 6px; align-items: baseline; font-size: 13px; margin: 3px 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12.5px; }
+.chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+.chip button:hover { color: var(--danger); }
+.sharebar { display: flex; gap: 6px; margin-top: 6px; max-width: 360px; }
+.sharebar input { flex: 1; min-width: 0; }
+table.mini { font-size: 12px; }
+.chk { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; }
+.chk::before { content: "○"; width: 16px; text-align: center; color: var(--muted); }
+.chk.ok::before { content: "✓"; color: var(--primary-h); }
+.chk.bad::before { content: "✕"; color: var(--danger); }
+.chk.wait::before { content: "◌"; color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.help-list { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.help-list li { margin: 3px 0; }
+</style>
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>My GPUs</h1></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Your GPUs <span class="muted" id="limit"></span></h2>
+    <p class="muted" style="margin-top:0">Each linked GPU runs a small agent that connects <em>out</em> to this gateway, so you don't open ports or set up a VPN.
+      <strong>A linked GPU is private to you</strong> until you share it with named people. You control who can use it, whether it helps serve platform models, and you can see who used it.
+      Link tokens are separate from your <a href="/keys">API keys</a>. <a href="/guide/link-gpu">Read the full guide →</a></p>
+    <div id="links"><div class="muted">Loading…</div></div>
+    <details style="margin-top:10px"><summary class="muted" style="cursor:pointer">What do the statuses and controls mean?</summary>
+      <ul class="help-list">
+        <li><span class="badge ok">connected</span> the agent is online and relaying for its engines.</li>
+        <li><span class="badge grace">not connected</span> the token exists but no agent is using it. Run the install script, or check the agent's log.</li>
+        <li><span class="badge grace">paused</span> the agent stays connected but nobody is routed to it. Resume any time.</li>
+        <li><span class="badge off">revoked</span> the token no longer works. Create a new link if you still want this GPU.</li>
+        <li><strong>Share</strong> names people who may call your GPU with their own API keys. Remove them with ×.</li>
+        <li><strong>Platform models</strong>: if an admin lists your GPU in a shared model (like <code>qwen3.8-27b</code>), it only serves that model once you tick the box. <a href="/guide/link-gpu#platform-models">More →</a></li>
+        <li>To <strong>replace a token</strong>, create a new link, run its script, then revoke the old one.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="card" id="sharedcard" hidden>
+    <h2>Shared with me</h2>
+    <p class="muted" style="margin-top:0">GPUs other people have shared with you. Call them by these names with your API key or pick them in chat. The owner can see prompts sent to their GPU.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Model</th><th>Owner</th></tr></thead>
+      <tbody id="sharedrows"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Link a GPU</h2>
+    <ol class="wz-steps">
+      <li data-step="1">Prepare engine</li>
+      <li data-step="2">Name &amp; details</li>
+      <li data-step="3">Install agent</li>
+      <li data-step="4">Verify</li>
+      <li data-step="5">Serve traffic</li>
+    </ol>
+
+    <div class="wz-pane" data-step="1">
+      <h3>Run an OpenAI-compatible engine on the GPU machine</h3>
+      <p>Bind it to <code>127.0.0.1</code>, so only the agent on that machine can reach it. Pick your engine for an example:</p>
+      <div class="seg">
+        <button data-engine="ninfer">NInfer</button><button data-engine="vllm">vLLM</button>
+        <button data-engine="llamacpp">llama.cpp</button><button data-engine="ollama">Ollama</button>
+      </div>
+      <pre id="enginecmd"></pre>
+      <p class="hint" id="enginenote"></p>
+      <p><strong>Find the model id</strong>. It's <span id="engineid"></span>. To check what the engine actually serves:</p>
+      <pre>curl -s http://127.0.0.1:<span id="modelsport"></span>/v1/models   # use the "id" field</pre>
+      <div class="callout"><strong>Requirements:</strong> Linux x86-64 with systemd, and outbound HTTPS to this gateway. No inbound ports and no root.
+        <a href="/guide/link-gpu#requirements">Details</a></div>
+      <div class="wz-nav"><span></span><button class="btn primary" data-go="2">My engine is running →</button></div>
+    </div>
+
+    <div class="wz-pane" data-step="2" hidden>
+      <h3>Describe this GPU</h3>
+      <div class="field">
+        <label for="gpuname">GPU name</label>
+        <input id="gpuname" placeholder="office-4090" maxlength="63" autocomplete="off">
+        <span class="hint">A short name for this machine: lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>. You'll see it in analytics and the agent's service name.</span>
+        <span class="hint warn" id="nameerr" hidden>Use only a–z, 0–9, <code>.</code>, <code>_</code> and <code>-</code> (max 63).</span>
+      </div>
+      <div class="field">
+        <label for="engine">Engine address</label>
+        <input id="engine" placeholder="127.0.0.1:8000" autocomplete="off">
+        <span class="hint"><code>host:port</code> as the agent sees it, normally <code>127.0.0.1:&lt;port&gt;</code> from step 1.</span>
+      </div>
+      <div class="field">
+        <label for="modelid">Model id</label>
+        <input id="modelid" placeholder="my-model" autocomplete="off">
+        <span class="hint">Exactly what <code>/v1/models</code> returns as <code>id</code>.</span>
+      </div>
+      <p class="hint">You'll call it as <code id="vurl"></code>. It's private to you until you share it.</p>
+      <p class="hint user-only">Regular accounts can hold up to 3 active links.</p>
+      <div class="wz-nav"><button class="btn" data-go="1">← Back</button><button class="btn primary" id="create">Create link</button></div>
+    </div>
+
+    <div class="wz-pane" data-step="3" hidden>
+      <h3>Install the agent on the GPU machine</h3>
+      <div class="callout warn"><strong>This script contains your link token and is shown only once.</strong> Save it now. If you lose it, revoke this link and create a new one.</div>
+      <p>Save it as <code class="scriptname"></code> on the GPU machine and run:</p>
+      <pre>bash <span class="scriptname"></span></pre>
+      <p>It downloads <code>llm-link-agent</code> into <code>~/.local/bin</code>, stores the token in a private (0600) file, and starts the user service <code>llm-link-agent-<span class="agentname"></span></code>.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+        <button class="btn" id="copyscript">Copy script</button>
+        <a class="btn" id="dlscript" href="#">Download <span class="scriptname"></span></a>
+      </div>
+      <details><summary class="muted" style="cursor:pointer">Show the script</summary>
+        <pre id="scripttext" style="white-space:pre-wrap;max-height:320px;overflow:auto"></pre></details>
+      <div class="callout">To keep the agent running after you log out, run this once: <code>sudo loginctl enable-linger $USER</code></div>
+      <div class="wz-nav"><span></span><button class="btn primary" data-go="4">I ran it →</button></div>
+    </div>
+
+    <div class="wz-pane" data-step="4" hidden>
+      <h3>Verify the connection</h3>
+      <p class="muted">This checks every few seconds.</p>
+      <div class="chk" id="chk-token"><span class="chk-t"></span></div>
+      <div class="chk" id="chk-agent"><span class="chk-t"></span></div>
+      <div class="chk" id="chk-engine"><span class="chk-t"></span></div>
+      <div class="chk" id="chk-pool"><span class="chk-t"></span></div>
+      <div id="verifyhelp">
+        <p style="margin-top:12px"><strong>Not connecting?</strong> Check the agent's log on the GPU machine:</p>
+        <pre>journalctl --user -u llm-link-agent-<span class="agentname"></span> -n 30</pre>
+        <ul class="help-list">
+          <li><code>refused the link token (401)</code>: the link was revoked or the token was mistyped. Create a new link.</li>
+          <li><code>agent version … is too old</code>: re-run the script; it downloads the current agent.</li>
+          <li><code>registered to another user</code>: that GPU name is taken. Create a link with a different name.</li>
+          <li><code>link down … reconnecting</code> repeating: the machine can't reach this gateway over HTTPS.</li>
+          <li>Engine not answering: confirm with <code>curl http://127.0.0.1:&lt;port&gt;/v1/models</code>.</li>
+        </ul>
+        <p class="hint"><a href="/guide/link-gpu#troubleshooting">Full troubleshooting table →</a></p>
+      </div>
+      <div class="wz-nav"><button class="btn" data-go="3">← Back</button><button class="btn" id="tostep5" data-go="5">Next: serve traffic →</button></div>
+    </div>
+
+    <div class="wz-pane" data-step="5" hidden>
+      <h3>Use it, share it</h3>
+      <p><strong>It's yours first.</strong> Only you can see or call this GPU. Use the name below with any OpenAI-compatible client and your API key, or pick it in <a href="/chat">chat</a>:</p>
+      <pre>curl $GATEWAY/v1/chat/completions -H "Authorization: Bearer $YOUR_API_KEY" \
+  -d '{"model": "<span class="privname"></span>", "messages": [{"role": "user", "content": "hi"}]}'</pre>
+      <p><strong>Share it with people</strong> by adding their usernames under <em>Shared with</em> on the link (above). They call it by the same name with their own key, and you see their usage on the link.</p>
+      <p><strong>Help serve a platform model</strong> (optional). If an admin lists your GPU in a shared model, it appears on the link with a checkbox. It only serves that model once you tick it.
+        <span class="admin-only" hidden>As an admin, you list it by adding a member with backend <code class="vurl2"></code> in <a href="/admin/config/page">Config → pools</a>. Your own links serve as configured.</span></p>
+      <div class="callout warn">Whoever runs a GPU can see the prompts sent to it. When you share, your guests' prompts reach your machine. <a href="/guide/link-gpu#how-it-works">What the gateway can and can't reach</a></div>
+      <div class="wz-nav"><button class="btn" data-go="4">← Back</button><button class="btn" id="restart">Link another GPU</button></div>
+    </div>
+  </div>
+
+  <div class="card" id="allcard" hidden>
+    <h2>All connected GPUs (admin)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Owner</th><th>Agent</th><th>Engines</th></tr></thead>
+      <tbody id="allrows"></tbody>
+    </table></div>
+  </div>
+</div>
+{{end}}

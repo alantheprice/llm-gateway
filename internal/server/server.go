@@ -107,6 +107,7 @@ type OpsStore interface {
 	QueryTTFTPercentile(days int, backends []string, q float64) (float64, error)
 	QueryAnalyticsPerUser(days int, dest *[]embeddedpb.UserRow) error
 	QueryAnalyticsReuse(days int, dest *[]embeddedpb.ReuseRow) error
+	QueryBackendUsers(days int, backends []string, dest *[]embeddedpb.BackendUserRow) error
 	PruneOlderThan(days int) (int64, error)
 }
 
@@ -401,7 +402,9 @@ func (s *Server) authRequired(r *http.Request) bool {
 func (s *Server) authorized(r *http.Request) (string, string, bool) {
 	key := bearerKey(r)
 	if key != "" {
-		if user, rec, ok := s.store.LookupKey(key); ok {
+		if user, rec, ok := s.store.LookupKey(key); ok && rec.Role != auth.RoleLink {
+			// Link tokens only open agent connections (/link/agent); they
+			// are not API keys.
 			return user, rec.KeyID, true
 		}
 		for _, lk := range s.store.LegacyKeys() {

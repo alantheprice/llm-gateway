@@ -678,6 +678,9 @@ func stripIfInjected(r *http.Request, buffered []byte) []byte {
 func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model string,
 	pair *config.OverflowPair, body []byte, user, keyID string) bool {
 
+	if !s.linkServesPool(pair.FallbackBackend, model) {
+		return false // a user's link overflows only with its owner's consent
+	}
 	url, _ := s.resolve(model)
 	if score := s.tracker.Score(url); score < pair.Threshold {
 		return false // primary has headroom; caller proxies directly

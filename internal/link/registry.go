@@ -144,3 +144,20 @@ func ValidateRelay(host, path string) error {
 	}
 	return nil
 }
+
+// DisconnectKey closes every live agent that authenticated with owner's
+// link token keyID (the token was revoked). Returns how many were closed.
+func (r *Registry) DisconnectKey(owner, keyID string) int {
+	r.mu.RLock()
+	var victims []*Conn
+	for _, c := range r.byAg {
+		if c.Owner == owner && c.KeyID == keyID {
+			victims = append(victims, c)
+		}
+	}
+	r.mu.RUnlock()
+	for _, c := range victims {
+		c.Close()
+	}
+	return len(victims)
+}

@@ -25,8 +25,7 @@ func (s *Server) handleLinkAgent(w http.ResponseWriter, r *http.Request) {
 		errBody(w, 401, "invalid link token")
 		return
 	}
-	_ = keyID
-	link.ServeAgent(s.linkReg, w, r, user)
+	link.ServeAgentAs(s.linkReg, w, r, user, keyID)
 }
 
 // authenticateLinkToken: resolve the bearer token to (user, key id);

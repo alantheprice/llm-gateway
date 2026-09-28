@@ -15,8 +15,8 @@ import (
 // (agents ping every 15s).
 const agentIdleTimeout = 60 * time.Second
 
-// validAgentLabel: labels become virtual-URL hosts (http://link/<label>:port).
-func validAgentLabel(s string) bool {
+// ValidAgentLabel: labels become virtual-URL hosts (http://link/<label>:port).
+func ValidAgentLabel(s string) bool {
 	if s == "" || len(s) > 63 {
 		return false
 	}
@@ -34,6 +34,12 @@ func validAgentLabel(s string) bool {
 // link token's user: it owns the agent label (fallback label if the hello
 // carries none), and no other user can take the label over.
 func ServeAgent(reg *Registry, w http.ResponseWriter, r *http.Request, owner string) {
+	ServeAgentAs(reg, w, r, owner, "")
+}
+
+// ServeAgentAs is ServeAgent recording which of the owner's link tokens the
+// agent used, so revoking that token can disconnect it (Registry.DisconnectKey).
+func ServeAgentAs(reg *Registry, w http.ResponseWriter, r *http.Request, owner, keyID string) {
 	log.Printf("link: agent connection from %s (upgrade)", r.RemoteAddr)
 	up := websocket.Upgrader{ReadBufferSize: 64 * 1024, WriteBufferSize: 64 * 1024}
 	ws, err := up.Upgrade(w, r, nil)
@@ -70,12 +76,13 @@ func ServeAgent(reg *Registry, w http.ResponseWriter, r *http.Request, owner str
 	if agent == "" {
 		agent = strings.ToLower(owner)
 	}
-	if !validAgentLabel(agent) {
+	if !ValidAgentLabel(agent) {
 		_ = ws.WriteJSON(map[string]string{"type": "error", "error": "agent name must be 1-63 chars of a-z 0-9 . _ -"})
 		return
 	}
 	c := newConn(agent, hello.Links)
 	c.Owner = owner
+	c.KeyID = keyID
 	c.Version = hello.AgentVersion
 	c.RemoteAddr = r.RemoteAddr
 	c.Since = time.Now()

@@ -102,6 +102,7 @@ func (h relayHeader) header() http.Header {
 type Conn struct {
 	Agent      string // stable label; virtual URLs derive from it
 	Owner      string // gateway user whose key registered this agent
+	KeyID      string // the owner's link token this agent authenticated with
 	Version    string // agent_version from hello
 	RemoteAddr string
 	Since      time.Time
@@ -392,5 +393,13 @@ func (c *Conn) failAll(err error) {
 	c.mu.Unlock()
 	for _, p := range reqs {
 		c.settle(p, err)
+	}
+}
+
+// Close drops the agent's socket; the read loop then unregisters the link
+// and fails its in-flight requests.
+func (c *Conn) Close() {
+	if c.ws != nil {
+		_ = c.ws.Close()
 	}
 }

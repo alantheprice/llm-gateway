@@ -176,3 +176,28 @@ func TestLegacyKeys(t *testing.T) {
 		t.Fatalf("legacy = %v", got)
 	}
 }
+
+// Link tokens are not API keys and say nothing about the account's role.
+func TestLinkKeysSeparateFromRoles(t *testing.T) {
+	s, _ := Open(t.TempDir() + "/users.json")
+	s.CreateKey("alice", "laptop", "admin", false)
+	s.CreateKey("alice", "link-gpu", RoleLink, false)
+	if got := s.RoleOf("alice"); got != "admin" {
+		t.Fatalf("RoleOf = %q; a link token must not change the account role", got)
+	}
+	s.SetAllKeyRoles("alice", "user")
+	for _, k := range s.LocalKeys["alice"] {
+		if k.KeyID == "link-gpu" && k.Role != RoleLink {
+			t.Fatalf("SetAllKeyRoles overwrote the link token's role: %q", k.Role)
+		}
+	}
+	if keys := s.ListKeys("alice"); len(keys) != 1 || keys[0].KeyID != "laptop" {
+		t.Fatalf("ListKeys = %+v, want API keys only", keys)
+	}
+	if links := s.ListLinkKeys("alice"); len(links) != 1 || links[0].KeyID != "link-gpu" {
+		t.Fatalf("ListLinkKeys = %+v", links)
+	}
+	if s.CountActiveKeys("alice") != 1 || s.CountActiveLinkKeys("alice") != 1 {
+		t.Fatalf("counts: api=%d link=%d", s.CountActiveKeys("alice"), s.CountActiveLinkKeys("alice"))
+	}
+}

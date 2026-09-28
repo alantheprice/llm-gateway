@@ -1,0 +1,227 @@
+<h1 id="linking-a-gpu">Linking a GPU</h1>
+<p>Link a GPU you run to this gateway, so you can use it from anywhere through the gateway's API, with its analytics, keys and rate limits.</p>
+<p><strong>A linked GPU is private to you.</strong> Only you can see or call it until you share it with people you name. You administer it the way a platform admin administers the gateway's own GPUs: who may use it, whether it helps serve platform models, pausing it, and who used it.</p>
+<p>You don't open ports, set up a VPN, or give the gateway access to your network. A small agent on your GPU machine connects <strong>out</strong> to the gateway, and requests reach your engine through that connection.</p>
+<p>Do it from <strong>My GPUs</strong> in the gateway's menu. This guide explains each step.</p>
+<h2 id="how-it-works">How it works</h2>
+<pre><code>your app ──HTTPS──&gt; gateway ──(the agent's own outbound connection)──&gt; llm-link-agent ──&gt; your engine (127.0.0.1)
+</code></pre>
+<p><strong>The agent:</strong></p>
+<ul>
+<li>runs as a systemd <em>user</em> service on your GPU machine (no root needed)</li>
+<li>dials out to the gateway over TLS, registers the engine(s) you declared, and relays requests to them</li>
+<li>reconnects on its own if the connection drops</li>
+</ul>
+<p><strong>What the gateway can reach on your machine:</strong> only the engine address you declared (for example <code>127.0.0.1:8000</code>), and on it only model-serving paths: <code>/v1/*</code>, <code>/health</code>, <code>/usage</code>, <code>/slots</code>, <code>/metrics</code>. Nothing else on your machine or network.</p>
+<p><strong>Your link token:</strong></p>
+<ul>
+<li>can only connect an agent; it is <strong>not an API key</strong> and can't call models</li>
+<li>is shown once, inside the install script, and is stored on your machine in a <code>0600</code> file</li>
+</ul>
+<p><strong>Revoking:</strong> revoking the link in the UI disconnects the agent immediately.</p>
+<p><strong>Privacy:</strong> whoever runs a GPU can see the prompts sent to it. If you share your GPU, or let it serve a platform model, <em>you</em> can see other people's prompts on your machine. Treat that responsibly. The reverse holds too: when you call a GPU someone shared with you, its owner can see your prompts.</p>
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li><strong>Linux, x86-64, with systemd.</strong> This is what the installer supports today.</li>
+<li><strong>An OpenAI-compatible engine</strong> running on the machine (step 1). The agent works with any server that answers <code>/v1/chat/completions</code>.</li>
+<li><strong>Outbound HTTPS</strong> to the gateway. No inbound access is needed.</li>
+</ul>
+<h2 id="step-1-prepare-your-engine">Step 1: Prepare your engine</h2>
+<p>Start your engine bound to <code>127.0.0.1</code>, so only the agent (on the same machine) can reach it. Note its <strong>port</strong> and the <strong>model id</strong> it serves.</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Example</th>
+<th>Default port</th>
+<th>Model id</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NInfer</strong> (full stats + model card)</td>
+<td><code>ninfer-serve model.ninfer --host 127.0.0.1 --port 8006 --model-id my-model --model-card card.json</code></td>
+<td>set with <code>--port</code></td>
+<td><code>--model-id</code></td>
+</tr>
+<tr>
+<td><strong>vLLM</strong></td>
+<td><code>vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000 --served-model-name my-model</code></td>
+<td>8000</td>
+<td><code>--served-model-name</code></td>
+</tr>
+<tr>
+<td><strong>llama.cpp</strong></td>
+<td><code>llama-server -m model.gguf --host 127.0.0.1 --port 8080 --alias my-model</code></td>
+<td>8080</td>
+<td><code>--alias</code></td>
+</tr>
+<tr>
+<td><strong>Ollama</strong></td>
+<td><code>ollama serve</code> (then <code>ollama pull llama3.1:8b</code>)</td>
+<td>11434</td>
+<td>the model tag, e.g. <code>llama3.1:8b</code></td>
+</tr>
+</tbody>
+</table>
+<p>To confirm the model id your engine serves:</p>
+<pre><code class="language-bash">curl -s http://127.0.0.1:&lt;port&gt;/v1/models
+</code></pre>
+<p>The <code>id</code> field is the value to enter as <strong>Model id</strong>.</p>
+<p><strong>NInfer engines get the most out of the gateway.</strong> They report load, cache and energy, and can serve a model card (weights, quantization, hardware), which shows up as <strong>Stats for nerds</strong> in the chat. Other engines work for serving, with fewer metrics.</p>
+<h2 id="step-2-create-the-link">Step 2: Create the link</h2>
+<p>In <strong>My GPUs → Link a GPU</strong>, enter:</p>
+<ul>
+<li><strong>GPU name:</strong> a short name for this machine, e.g. <code>office-4090</code> (lowercase letters, digits, <code>.</code>, <code>_</code>, <code>-</code>). You'll call the GPU as <code>&lt;name&gt;/&lt;model-id&gt;</code>, e.g. <code>office-4090/qwen3-8b</code>.</li>
+<li><strong>Engine address:</strong> <code>host:port</code> of your engine as the agent sees it, normally <code>127.0.0.1:&lt;port&gt;</code>.</li>
+<li><strong>Model id:</strong> from step 1.</li>
+</ul>
+<p>Click <strong>Create link</strong>. You get an install script with your link token inside. <strong>It's shown once</strong>, so copy it now.</p>
+<p>Regular users can hold up to 3 active links.</p>
+<h2 id="step-3-install-the-agent">Step 3: Install the agent</h2>
+<p>On the GPU machine:</p>
+<pre><code class="language-bash">bash link-&lt;name&gt;.sh
+</code></pre>
+<p><strong>The script:</strong></p>
+<ol>
+<li>downloads <code>llm-link-agent</code> from the gateway into <code>~/.local/bin</code></li>
+<li>stores the token in <code>~/.config/llm-link-agent-&lt;name&gt;.env</code> (mode 0600)</li>
+<li>creates and starts the user service <code>llm-link-agent-&lt;name&gt;</code></li>
+</ol>
+<p><strong>Keep it running after you log out:</strong></p>
+<pre><code class="language-bash">sudo loginctl enable-linger $USER
+</code></pre>
+<h2 id="step-4-verify">Step 4: Verify</h2>
+<p><strong>My GPUs</strong> shows the link as <strong>connected</strong> within a few seconds. After the first metrics poll (up to ~10 s) the engine shows its lanes, and, for NInfer engines with a model card, a summary like <code>nvfp4 weights · KV nvfp4 · dflash2 ×7 · RTX 5090 · 240K ctx</code>.</p>
+<p><strong>Check the agent's log on the GPU machine:</strong></p>
+<pre><code class="language-bash">journalctl --user -u llm-link-agent-&lt;name&gt; -f
+</code></pre>
+<p>A healthy start looks like:</p>
+<pre><code>connected to https://&lt;gateway&gt;
+registered: [http://link/&lt;name&gt;:&lt;port&gt;]
+agent: relay GET /slots
+</code></pre>
+<h2 id="step-5-use-it-and-share-it">Step 5: Use it and share it</h2>
+<p><strong>Call it.</strong> Your GPU is listed in <code>GET /v1/models</code> (for you) and in the chat's model picker as <code>&lt;gpu-name&gt;/&lt;model-id&gt;</code>:</p>
+<pre><code class="language-bash">curl $GATEWAY/v1/chat/completions -H &quot;Authorization: Bearer $YOUR_API_KEY&quot; \
+  -d '{&quot;model&quot;: &quot;office-4090/qwen3-8b&quot;, &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;hi&quot;}]}'
+</code></pre>
+<p>You also get the admin views for it: <code>GET /v1/models/&lt;gpu-name&gt;/&lt;model-id&gt;</code> returns the full model card, and <code>/details</code> returns live host and GPU facts. Other people get the redacted card only.</p>
+<p><strong>Share it.</strong> On <strong>My GPUs</strong>, add usernames under <strong>Shared with</strong>. Those users:</p>
+<ul>
+<li>see the model in their <code>/v1/models</code> and chat picker, and under <strong>My GPUs → Shared with me</strong></li>
+<li>call it with their own API key; the requests count against their own quota</li>
+<li>can be removed at any time with ×; the next request is refused</li>
+</ul>
+<p>The link's <strong>Usage</strong> table shows who used it over the last 7 days: requests, tokens, latency and errors.</p>
+<h2 id="platform-models">Platform models</h2>
+<p>A platform model is a shared name such as <code>qwen3.8-27b</code>, which the gateway routes across several GPUs by load, cache affinity and context window. Everyone with an API key can call it.</p>
+<p>A GPU helps serve a platform model <strong>only when both sides agree</strong>:</p>
+<ol>
+<li>An <strong>admin</strong> lists the GPU in that model's configuration (a pool member or overflow target with backend <code>http://link/&lt;gpu-name&gt;:&lt;port&gt;</code>).</li>
+<li><strong>You</strong> tick that model on the link in <strong>My GPUs</strong>.</li>
+</ol>
+<p>Until you tick it, no platform traffic reaches your GPU, even if an admin has listed it. Ticking it means anyone's prompts for that model may be routed to your machine. Untick it, or pause the link, to stop at once.</p>
+<p>GPUs linked by admins are platform infrastructure and serve the models that list them without the extra step.</p>
+<p>Once serving, the GPU's requests appear in <strong>Analytics → Per GPU</strong>, and NInfer model cards appear in <code>GET /v1/models/&lt;platform-model&gt;</code> and in <strong>Stats for nerds</strong>.</p>
+<h2 id="managing-a-link">Managing a link</h2>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>connected</strong></td>
+<td>The agent is online and registered</td>
+<td>Nothing</td>
+</tr>
+<tr>
+<td><strong>not connected</strong></td>
+<td>The token exists, but no agent is connected with it</td>
+<td>Run the install script, or check the agent's log (step 4)</td>
+</tr>
+<tr>
+<td><strong>revoked</strong></td>
+<td>The token was revoked; the agent can't connect</td>
+<td>Create a new link if you still want this GPU</td>
+</tr>
+<tr>
+<td><strong>paused</strong></td>
+<td>You paused it; the agent stays connected, and nobody is routed to it</td>
+<td><strong>Resume</strong></td>
+</tr>
+<tr>
+<td>engine <strong>waiting for first poll</strong></td>
+<td>Just connected</td>
+<td>Wait ~10 s</td>
+</tr>
+<tr>
+<td>engine <strong>down</strong></td>
+<td>The agent is connected, but the engine isn't answering</td>
+<td>Check the engine is running on the declared address</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Pause / Resume:</strong> stops all routing to the GPU (yours, shared users', platform models) without touching the machine.</li>
+<li><strong>Revoke:</strong> the agent disconnects at once and can't reconnect with that token. Sharing and platform-model settings are removed.</li>
+<li><strong>Replace a token:</strong> create a new link (a new name, or revoke the old one first), run its script, then revoke the old link.</li>
+<li><strong>Several engines on one machine:</strong> create one link per engine, or add more <code>--engine host:port=model-id</code> flags to the service (<code>systemctl --user edit --full llm-link-agent-&lt;name&gt;</code>).</li>
+</ul>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Agent log / symptom</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gateway refused the link token (401)</code></td>
+<td>The link was revoked, or the token is wrong</td>
+<td>Create a new link and run its script</td>
+</tr>
+<tr>
+<td><code>gateway refused registration: agent version … is too old</code></td>
+<td>The agent binary is outdated</td>
+<td>Re-run the install script; it downloads the current agent</td>
+</tr>
+<tr>
+<td><code>gateway refused registration: agent name &quot;…&quot; is registered to another user</code></td>
+<td>Someone else's agent holds that name</td>
+<td>Create a link with a different name</td>
+</tr>
+<tr>
+<td><code>link down: … — reconnecting in …</code> repeating</td>
+<td>Network or gateway unreachable</td>
+<td>Check outbound HTTPS to the gateway; the agent keeps retrying (1 s → 30 s)</td>
+</tr>
+<tr>
+<td>Connected, but the engine is <strong>down</strong></td>
+<td>The engine isn't listening on the declared address</td>
+<td>Start the engine; confirm with <code>curl http://127.0.0.1:&lt;port&gt;/v1/models</code></td>
+</tr>
+<tr>
+<td>Stops after logout</td>
+<td>User services end at logout without lingering</td>
+<td><code>sudo loginctl enable-linger $USER</code></td>
+</tr>
+<tr>
+<td>macOS / Windows</td>
+<td>Not supported by the installer yet</td>
+<td>Use a Linux machine</td>
+</tr>
+</tbody>
+</table>
+<h2 id="uninstall">Uninstall</h2>
+<pre><code class="language-bash">systemctl --user disable --now llm-link-agent-&lt;name&gt;
+rm ~/.config/systemd/user/llm-link-agent-&lt;name&gt;.service ~/.config/llm-link-agent-&lt;name&gt;.env
+systemctl --user daemon-reload
+</code></pre>
+<p>Then revoke the link in <strong>My GPUs</strong>.</p>

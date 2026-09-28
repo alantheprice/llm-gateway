@@ -127,6 +127,9 @@ func (s *Server) Handler() http.Handler {
 		http.MethodGet:  s.handleChangePWPage,
 		http.MethodPost: s.handleChangePWSubmit,
 	}))
+	mux.HandleFunc("/gpus", s.handleGPUsPage)
+	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
+	mux.HandleFunc("/downloads/llm-link-agent-linux-amd64", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  s.handleKeysPage, // page (Python parity)
 		http.MethodPost: s.handleKeys,     // API action
@@ -254,8 +257,18 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	data := s.catalog()
+	listed := map[string]bool{}
+	for _, e := range data {
+		listed[e.ID] = true
+	}
+	for _, pm := range s.privateModels(s.requestUser(r)) {
+		if !listed[pm.Name] { // platform names win
+			data = append(data, ModelEntry{ID: pm.Name, Object: "model", OwnedBy: pm.Owner})
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": s.catalog()})
+	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
 // catalog builds the model list, mirroring the live Python gateway's
@@ -354,6 +367,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Direct resolution
 	url, mid := s.resolve(req.Model)
 	if url == "" {
+		// A private GPU link the caller owns or was shared (never shadows
+		// a platform model: resolved last).
+		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
+			s.proxy(w, r, pm.URL, rewriteModel(body, pm.ModelID), user, keyID, req.Model, pm.ModelID)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
@@ -377,7 +396,7 @@ func (s *Server) resolve(model string) (url, modelID string) {
 }
 
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.checkAuth(w, r)
+	user, keyID, ok := s.checkAuth(w, r)
 	if !ok {
 		return
 	}
@@ -389,6 +408,10 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(body, &req)
 	url, mid := s.resolve(req.Model)
 	if url == "" {
+		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
+			s.proxy(w, r, pm.URL, rewriteModel(body, pm.ModelID), user, keyID, req.Model, pm.ModelID)
+			return
+		}
 		http.Error(w, `{"error":{"message":"no backend"}}`, http.StatusNotFound)
 		return
 	}
@@ -453,7 +476,7 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 	}
 
 	est := estimateFrom(body)
-	members := s.poolMembers(pool, est+requestedOutputTokens(body))
+	members := s.poolMembers(modelName, pool, est+requestedOutputTokens(body))
 	if len(members) == 0 {
 		poolUnavailable(w)
 		return
@@ -523,7 +546,7 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	leader := s.leader[modelName]
 	s.mu.Unlock()
 
-	members := s.poolMembers(pool, est+requestedOutputTokens(body))
+	members := s.poolMembers(modelName, pool, est+requestedOutputTokens(body))
 	if len(members) == 0 {
 		poolUnavailable(w)
 		return
@@ -605,12 +628,15 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 // poolMembers: the pool's routable members for a request needing `need`
 // tokens (prompt estimate + requested output): down members removed, and
 // members whose context window cannot hold the request skipped.
-func (s *Server) poolMembers(pool *poolCfgT, need int) []routing.Member {
+func (s *Server) poolMembers(name string, pool *poolCfgT, need int) []routing.Member {
 	s.mu.Lock()
 	membersCfg := pool.Members
 	s.mu.Unlock()
 	members := make([]routing.Member, 0, len(membersCfg))
 	for _, m := range membersCfg {
+		if !s.linkServesPool(m.Backend, name) {
+			continue // a user's link serves a pool only with its owner's consent
+		}
 		lanes := 0
 		if l := s.tracker.Get(m.Backend); l != nil {
 			lanes = l.Lanes

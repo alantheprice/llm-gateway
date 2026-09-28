@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 )
 
@@ -22,6 +24,7 @@ var guidePages = []struct{ Slug, Title string }{
 	{"install", "Installation Runbook"},
 	{"ninfer-engine", "NInfer Engine Runbook"},
 	{"operations", "Operations Runbook"},
+	{"link-gpu", "Linking a GPU"},
 }
 
 // guideHandler: GET /guide and /guide/<slug>.
@@ -60,7 +63,7 @@ func (s *Server) guideHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	html2 := `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
 		`<title>` + title + ` — llm-gateway guide</title>` +
-		`<style>body{font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:860px;margin:2rem auto;padding:0 1.2rem;color:#1f2328}nav{display:flex;gap:1rem;flex-wrap:wrap;padding-bottom:1rem;border-bottom:1px solid #d0d7de;margin-bottom:1.5rem;font-size:14px}nav a{color:#0969da;text-decoration:none}h1,h2{line-height:1.25}code,pre{background:#f6f8fa;border-radius:6px}code{padding:.15em .4em}pre{padding:1em;overflow-x:auto}pre code{padding:0;background:none}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #d0d7de;padding:.45rem .7rem;text-align:left}th{background:#f6f8fa}</style></head><body>` +
+		`<style>body{font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:860px;margin:2rem auto;padding:0 1.2rem;color:#1f2328}nav{display:flex;gap:1rem;flex-wrap:wrap;padding-bottom:1rem;border-bottom:1px solid #d0d7de;margin-bottom:1.5rem;font-size:14px}nav a{color:#0969da;text-decoration:none}h1,h2{line-height:1.25}code,pre{background:#f6f8fa;border-radius:6px}code{padding:.15em .4em}pre{padding:1em;overflow-x:auto}pre code{padding:0;background:none}table{border-collapse:collapse;width:100%;margin:1rem 0;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .7rem;text-align:left}th{background:#f6f8fa}</style></head><body>` +
 		`<nav>` + strings.Join(nav, "") + `</nav>` +
 		string(body) +
 		`<p style="margin-top:3rem;font-size:13px;color:#656d76"><a href="/">← back to llm-gateway</a></p></body></html>`
@@ -72,7 +75,11 @@ func (s *Server) guideHandler(w http.ResponseWriter, r *http.Request) {
 // mdToHTML renders markdown bytes to HTML (used by go:generate).
 func MDToHTML(md []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	md2 := goldmark.New(goldmark.WithRendererOptions(html.WithHardWraps()))
+	md2 := goldmark.New(
+		goldmark.WithExtensions(extension.Table, extension.Strikethrough),
+		goldmark.WithParserOptions(parser.WithAutoHeadingID()), // #anchors for deep links from the UI
+		goldmark.WithRendererOptions(html.WithHardWraps()),
+	)
 	if err := md2.Convert(md, &buf); err != nil {
 		return nil, err
 	}

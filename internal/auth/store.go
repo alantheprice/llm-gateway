@@ -96,6 +96,9 @@ type Store struct {
 	// UserSettings: gateway-owned per-user policy (daily quotas etc.).
 	// 0 limit = unlimited.
 	UserSettings map[string]UserSettings `json:"user_settings,omitempty"`
+	// LinkSettings: owner-controlled policy per GPU link, keyed by owner
+	// then link key id. A link is private to its owner until shared.
+	LinkSettings map[string]map[string]LinkSettings `json:"link_settings,omitempty"`
 
 	// legacy key file path ("" disables)
 	LegacyKeysFile string
@@ -108,6 +111,45 @@ type Store struct {
 }
 
 // UserSettings carries per-user service policy.
+// LinkSettings: what a link's owner allows. Zero value = private: only the
+// owner can call the GPU, it joins no pool, it is serving.
+type LinkSettings struct {
+	SharedWith []string `json:"shared_with,omitempty"` // users who may call it
+	Pools      []string `json:"pools,omitempty"`       // pools the owner consents to serve
+	Paused     bool     `json:"paused,omitempty"`      // stop serving without revoking
+}
+
+// LinkSettingsOf returns the owner's settings for a link (zero = private).
+func (s *Store) LinkSettingsOf(owner, keyID string) LinkSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ls := s.LinkSettings[owner][keyID]
+	ls.SharedWith = append([]string(nil), ls.SharedWith...)
+	ls.Pools = append([]string(nil), ls.Pools...)
+	return ls
+}
+
+// SetLinkSettings persists a link's settings; the zero value deletes them.
+func (s *Store) SetLinkSettings(owner, keyID string, ls LinkSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.LinkSettings == nil {
+		s.LinkSettings = map[string]map[string]LinkSettings{}
+	}
+	if len(ls.SharedWith) == 0 && len(ls.Pools) == 0 && !ls.Paused {
+		delete(s.LinkSettings[owner], keyID)
+		if len(s.LinkSettings[owner]) == 0 {
+			delete(s.LinkSettings, owner)
+		}
+	} else {
+		if s.LinkSettings[owner] == nil {
+			s.LinkSettings[owner] = map[string]LinkSettings{}
+		}
+		s.LinkSettings[owner][keyID] = ls
+	}
+	return s.saveLocked()
+}
+
 type UserSettings struct {
 	DailyTokenLimit int `json:"daily_token_limit"` // prompt+output per server-local day; 0 = unlimited
 }
@@ -330,11 +372,20 @@ func last4(s string) string {
 
 // CountActiveKeys returns the user's active (non-rotating) key count.
 func (s *Store) CountActiveKeys(username string) int {
+	return s.countActive(username, false)
+}
+
+// CountActiveLinkKeys: the user's active GPU link tokens.
+func (s *Store) CountActiveLinkKeys(username string) int {
+	return s.countActive(username, true)
+}
+
+func (s *Store) countActive(username string, links bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
 	for _, k := range s.LocalKeys[username] {
-		if k.Active && !k.Rotating {
+		if k.Active && !k.Rotating && (k.Role == RoleLink) == links {
 			n++
 		}
 	}

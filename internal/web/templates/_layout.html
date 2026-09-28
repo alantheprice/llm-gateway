@@ -25,6 +25,7 @@
     <nav class="nav">
       <a href="/chat" class="nav-item {{if eq .Nav "chat"}}active{{end}}">{{Icon "message-square"}}<span>Chat</span></a>
       <a href="/keys" class="nav-item {{if eq .Nav "keys"}}active{{end}}">{{Icon "key-round"}}<span>API Keys</span></a>
+      <a href="/gpus" class="nav-item {{if eq .Nav "gpus"}}active{{end}}">{{Icon "cpu"}}<span>My GPUs</span></a>
       <a href="/account" class="nav-item {{if eq .Nav "account"}}active{{end}}">{{Icon "shield"}}<span>Account</span></a>
       <a href="/usage/me" class="nav-item {{if eq .Nav "myusage"}}active{{end}}">{{Icon "bar-chart-3"}}<span>My Usage</span></a>
       {{if eq .Role "admin"}}

@@ -98,7 +98,7 @@ func (s *Store) RoleOf(username string) string {
 	defer s.mu.Unlock()
 	var fallback string
 	for _, k := range s.LocalKeys[username] {
-		if k.Role != "" {
+		if k.Role != "" && k.Role != RoleLink { // link tokens say nothing about the account's role
 			if k.UI {
 				return k.Role
 			}
@@ -130,6 +130,9 @@ func (s *Store) SetAllKeyRoles(username, role string) {
 	defer s.mu.Unlock()
 	changed := false
 	for _, k := range s.LocalKeys[username] {
+		if k.Role == RoleLink {
+			continue // a link token's role marks it as a link token; never overwrite it
+		}
 		if k.Role != role {
 			k.Role = role
 			changed = true
@@ -205,12 +208,29 @@ type KeyView struct {
 	Usage      map[string]int `json:"usage"`
 }
 
-// ListKeys renders redacted key views (Python /keys GET parity).
+// RoleLink marks a key as a GPU link token: it can open a link-agent
+// connection and nothing else (no model calls, no account role).
+const RoleLink = "link"
+
+// ListKeys renders redacted API-key views (Python /keys GET parity). Link
+// tokens are managed on the GPUs page and listed by ListLinkKeys.
 func (s *Store) ListKeys(username string) []KeyView {
+	return s.listKeys(username, false)
+}
+
+// ListLinkKeys renders the user's GPU link tokens.
+func (s *Store) ListLinkKeys(username string) []KeyView {
+	return s.listKeys(username, true)
+}
+
+func (s *Store) listKeys(username string, links bool) []KeyView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []KeyView{}
 	for _, k := range s.LocalKeys[username] {
+		if (k.Role == RoleLink) != links {
+			continue
+		}
 		out = append(out, KeyView{
 			KeyID: k.KeyID, Prefix: k.Prefix, Created: k.Created,
 			Active: k.Active, Rotating: k.Rotating, GraceUntil: k.GraceUntil, UI: k.UI,
@@ -229,3 +249,11 @@ type UsageReader interface {
 var _ = json.Marshal
 var _ = time.Now
 var _ = rand.Read
+
+// HasUser: the user holds (or held) at least one key here — everyone who
+// has signed in to the UI or been issued a key.
+func (s *Store) HasUser(username string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.LocalKeys[username]) > 0
+}
