@@ -83,16 +83,27 @@ const Charts = (() => {
       const x = padL + i * step;
       g += `<text x="${x}" y="${H-6}" text-anchor="middle" class="chart-tick">${esc(l)}</text>`;
     });
-    // Catmull-Rom → cubic Bézier: smooth curve through the points (no
-    // overshoot beyond neighbors), falls back to straight lines for <3 pts.
+    // Monotone cubic (Fritsch–Carlson, same as d3.curveMonotoneX): smooth,
+    // but never overshoots between two points, so a drop to 0 stays on the
+    // axis (no phantom negatives) and a peak is never exceeded. Straight
+    // lines for <3 points.
     function smoothPath(pts) {
-      if (pts.length < 3) return 'M' + pts.map(p => p.join(',')).join(' L');
+      const n = pts.length;
+      if (n < 3) return 'M' + pts.map(p => p.join(',')).join(' L');
+      const m = [], t = new Array(n);
+      for (let i = 0; i < n - 1; i++) m.push((pts[i+1][1] - pts[i][1]) / (pts[i+1][0] - pts[i][0]));
+      t[0] = m[0]; t[n-1] = m[n-2];
+      for (let i = 1; i < n - 1; i++) t[i] = m[i-1] * m[i] <= 0 ? 0 : (m[i-1] + m[i]) / 2;
+      for (let i = 0; i < n - 1; i++) {
+        if (m[i] === 0) { t[i] = 0; t[i+1] = 0; continue; }
+        const a = t[i] / m[i], b = t[i+1] / m[i], h = a*a + b*b;
+        if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i+1] = k * b * m[i]; }
+      }
       let d = `M${pts[0][0]},${pts[0][1]}`;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(pts.length-1, i+2)];
-        const c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
-        const c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
-        d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0]},${p2[1]}`;
+      for (let i = 0; i < n - 1; i++) {
+        const dx = (pts[i+1][0] - pts[i][0]) / 3;
+        d += ` C${(pts[i][0] + dx).toFixed(1)},${(pts[i][1] + t[i]*dx).toFixed(1)} ` +
+             `${(pts[i+1][0] - dx).toFixed(1)},${(pts[i+1][1] - t[i+1]*dx).toFixed(1)} ${pts[i+1][0]},${pts[i+1][1]}`;
       }
       return d;
     }
