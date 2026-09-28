@@ -146,7 +146,7 @@ func (s *Server) gatherUsage(urls []string) map[string]map[string]any {
 	ch := make(chan res, len(urls))
 	for _, u := range urls {
 		go func(u string) {
-			p, ok := getJSON(s.client, u+"/usage", 4*time.Second)
+			p, ok := s.backendJSON(u, "/usage", 4*time.Second)
 			if ok {
 				ch <- res{u, p}
 			} else {

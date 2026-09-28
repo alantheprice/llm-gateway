@@ -261,7 +261,7 @@ func (s *Server) energyByDay() map[string]map[string]float64 {
 	}
 	s.mu.Unlock()
 	for _, u := range urls {
-		payload, ok := getJSON(s.client, u+"/usage", 3*time.Second)
+		payload, ok := s.backendJSON(u, "/usage", 3*time.Second)
 		if !ok {
 			continue
 		}

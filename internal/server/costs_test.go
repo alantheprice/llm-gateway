@@ -1,6 +1,7 @@
 package server
 
 import (
+	"llmgateway/internal/config"
 	"math"
 	"testing"
 	"time"
@@ -132,5 +133,20 @@ func TestBackendHostIP(t *testing.T) {
 		if got := backendHostIP(in); got != want {
 			t.Fatalf("backendHostIP(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Link engines have no IP: hosts claim them by agent name.
+func TestBackendHostKeyForLinks(t *testing.T) {
+	if got := backendHostIP("http://link/GPU-B:8006"); got != "link:gpu-b" {
+		t.Fatalf("link host key = %q", got)
+	}
+	if got := backendHostIP("http://192.168.1.200:8006"); got != "192.168.1.200" {
+		t.Fatalf("lan host key = %q", got)
+	}
+	h := config.HostCfg{IPs: []string{"127.0.0.1"}, Links: []string{"GPU-B"}}
+	keys := h.HostKeys()
+	if len(keys) != 2 || keys[1] != "link:gpu-b" {
+		t.Fatalf("HostKeys = %v", keys)
 	}
 }

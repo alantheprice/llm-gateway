@@ -612,7 +612,7 @@ func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	for _, u := range urls {
-		if m, ok := getJSON(s.client, u+"/slots", 3*time.Second); ok {
+		if m, ok := s.backendJSON(u, "/slots", 3*time.Second); ok {
 			out[u] = m
 		}
 	}
@@ -661,7 +661,7 @@ func (s *Server) usageMerge() map[string]map[string]any {
 	}
 	s.mu.Unlock()
 	for _, u := range urls {
-		if m, ok := getJSON(s.client, u+"/usage", 3*time.Second); ok {
+		if m, ok := s.backendJSON(u, "/usage", 3*time.Second); ok {
 			out[u] = m
 		}
 	}

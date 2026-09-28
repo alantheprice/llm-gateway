@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/bootstrap", s.handleBootstrapPage)
 	mux.HandleFunc("/static/setup-key.sh", s.handleSetupKeyScript)
 	mux.HandleFunc("/link/agent", s.handleLinkAgent)
+	mux.HandleFunc("/admin/links", s.handleAdminLinks)
 	mux.HandleFunc("/guide", s.guideHandler)
 	mux.HandleFunc("/guide/", s.guideHandler)
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)

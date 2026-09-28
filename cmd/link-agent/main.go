@@ -23,6 +23,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// agentVersion: protocol level (see link.MinAgentVersion on the gateway).
+const agentVersion = "0.2"
+
 type engine struct {
 	port    int
 	modelID string
@@ -105,13 +108,17 @@ func run(server, token, agent, engineKey string, engines []engine) error {
 		return fmt.Errorf("--server must be http(s)")
 	}
 	wsURL.Path = "/link/agent"
-	q := wsURL.Query()
-	q.Set("key", token)
-	wsURL.RawQuery = q.Encode()
+	wsURL.RawQuery = ""
 
+	// Token in the Authorization header, never the URL: query strings
+	// end up in proxy and access logs.
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-	ws, _, err := dialer.Dial(wsURL.String(), nil)
+	hdr := http.Header{"Authorization": {"Bearer " + token}}
+	ws, resp, err := dialer.Dial(wsURL.String(), hdr)
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("gateway refused the link token (401): it must be a role=link or admin-owned key")
+		}
 		return err
 	}
 	defer ws.Close()
@@ -119,7 +126,7 @@ func run(server, token, agent, engineKey string, engines []engine) error {
 
 	hello := map[string]any{
 		"type":          "hello",
-		"agent_version": "0.1",
+		"agent_version": agentVersion,
 		"agent":         agent,
 	}
 	links := make([]map[string]any, 0, len(engines))
@@ -145,6 +152,21 @@ func run(server, token, agent, engineKey string, engines []engine) error {
 			}
 		}
 	}()
+
+	// The gateway answers hello with welcome, or with an error (too-old
+	// agent, name owned by another user) and closes.
+	var ack struct {
+		Type    string   `json:"type"`
+		Error   string   `json:"error"`
+		LinkIDs []string `json:"link_ids"`
+	}
+	if err := ws.ReadJSON(&ack); err != nil {
+		return fmt.Errorf("no welcome from gateway: %w", err)
+	}
+	if ack.Type != "welcome" {
+		return fmt.Errorf("gateway refused registration: %s", ack.Error)
+	}
+	log.Printf("registered: %v", ack.LinkIDs)
 
 	return readLoop(&wsWriter{ws: ws}, ws, engines, engineKey)
 }

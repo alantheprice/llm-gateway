@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -64,6 +65,16 @@ func newLinkRig(t *testing.T, keyOwner, keyRole string, agentArgs ...string) (*l
 	bin := buildAgent(t)
 	rig := &linkRig{engAuth: make(chan string, 64), engGone: make(chan struct{}, 64), agentOut: &syncBuf{}}
 	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slots": // NInfer shape, so the poller scores this engine
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"max_concurrency":8,"requests_processing":1,"requests_waiting":0}`)
+			return
+		case "/usage":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"energy":{"today":{"kwh":1.5,"cost_usd":0.19,"tokens":100000}},"tokens":{"input":{"cache_hit_rate_pct":42}}}`)
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			w.WriteHeader(404)
 			return
@@ -256,5 +267,117 @@ func TestLinkE2EClientDisconnectCancelsEngine(t *testing.T) {
 	case <-rig.engGone:
 	case <-time.After(5 * time.Second):
 		t.Fatalf("engine request not cancelled after client disconnect:\n%s", rig.agentOut.String())
+	}
+}
+
+// Link engines are polled over the agent socket: load score, lanes and the
+// raw /usage payload exist exactly as for LAN backends.
+func TestLinkE2EPolledOverRelay(t *testing.T) {
+	rig, _ := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	u := "http://link/e2e:" + rig.engPort
+	rig.s.PollOnce()
+	l := rig.s.tracker.Get(u)
+	if l == nil || l.Lanes != 8 || l.Running != 1 || l.CacheHitPct != 42 {
+		t.Fatalf("link engine not polled over the relay: %+v", l)
+	}
+	if rig.s.tracker.IsDown(u) {
+		t.Fatal("polled link engine marked down")
+	}
+	rig.s.mu.Lock()
+	raw := rig.s.lastMetrics[u]
+	rig.s.mu.Unlock()
+	if usageNum(raw, "energy", "today", "kwh") != 1.5 {
+		t.Fatalf("link /usage payload not captured: %v", raw)
+	}
+}
+
+// An agent that disconnects takes its engines out of rotation at once.
+func TestLinkE2EDisconnectMarksDown(t *testing.T) {
+	rig, _ := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	u := "http://link/e2e:" + rig.engPort
+	rig.agent.Process.Kill()
+	for i := 0; i < 50 && !rig.s.tracker.IsDown(u); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !rig.s.tracker.IsDown(u) {
+		t.Fatal("disconnected link engine still in rotation")
+	}
+}
+
+// A linked engine is reachable only through the pools that name it —
+// never by its raw model id, which could shadow another model.
+func TestLinkE2ENotResolvableByRawModelID(t *testing.T) {
+	rig, key := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	rig.s.PollOnce()
+	body := `{"model":"m","messages":[{"role":"user","content":"hi"}]}`
+	req, _ := http.NewRequest("POST", rig.gw.URL+"/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == 200 {
+		t.Fatal("raw engine model id routed to the linked engine")
+	}
+}
+
+// The token must travel in the Authorization header; ?key= is refused.
+func TestLinkQueryTokenRefused(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	key, _, _ := s.store.CreateKey("admin", "k", "admin", false)
+	gw := httptest.NewServer(s.Handler())
+	defer gw.Close()
+	req, _ := http.NewRequest("GET", gw.URL+"/link/agent?key="+key, nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query-string token: status %d, want 401", resp.StatusCode)
+	}
+}
+
+// /admin/links shows the agent, its owner and each engine's poll state.
+func TestLinkE2EAdminView(t *testing.T) {
+	rig, key := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	rig.s.PollOnce()
+	req, _ := http.NewRequest("GET", rig.gw.URL+"/admin/links", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var v struct {
+		Agents []struct {
+			Agent   string `json:"agent"`
+			Owner   string `json:"owner"`
+			Version string `json:"agent_version"`
+			Engines []struct {
+				URL    string   `json:"url"`
+				Polled bool     `json:"polled"`
+				Pools  []string `json:"pools"`
+			} `json:"engines"`
+		} `json:"agents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("status %d err %v", resp.StatusCode, err)
+	}
+	if len(v.Agents) != 1 || len(v.Agents[0].Engines) != 1 {
+		t.Fatalf("admin view = %+v", v)
+	}
+	e := v.Agents[0].Engines[0]
+	if !e.Polled || len(e.Pools) != 1 || e.Pools[0] != "qwen" {
+		t.Fatalf("engine view = %+v", e)
 	}
 }

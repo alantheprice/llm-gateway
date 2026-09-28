@@ -1,11 +1,15 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"llmgateway/internal/link"
 )
@@ -28,14 +32,11 @@ func (s *Server) handleLinkAgent(w http.ResponseWriter, r *http.Request) {
 // authenticateLinkToken: resolve the bearer token to (user, key id);
 // requires an active key with role "link" or an admin owner.
 func (s *Server) authenticateLinkToken(r *http.Request) (string, string, error) {
-	h := r.Header.Get("Authorization")
-	tok := strings.TrimPrefix(h, "Bearer ")
+	// Header only: a token in the query string ends up in proxy and
+	// access logs. (Agents before 0.2 sent ?key= and are refused.)
+	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if tok == "" {
-		// also accept ?key= for agent convenience behind restrictive shells
-		tok = r.URL.Query().Get("key")
-	}
-	if tok == "" {
-		return "", "", fmt.Errorf("missing token")
+		return "", "", fmt.Errorf("missing Authorization: Bearer <link token>")
 	}
 	user, rec, ok := s.store.LookupKey(tok)
 	if !ok || !rec.Active {
@@ -64,9 +65,7 @@ func (s *Server) relayViaLink(virtualURL, path string, r *http.Request, body []b
 	}
 	// virtual URL http://link/<agent>:<port> → the agent relays to its
 	// OWN loopback engine on <port>.
-	rest := strings.TrimPrefix(virtualURL, "http://link/")
-	port := rest[strings.LastIndex(rest, ":")+1:]
-	engineHost := "127.0.0.1:" + port
+	engineHost := linkEngineHost(virtualURL)
 	fwd := http.Header{}
 	for _, k := range linkForwardHeaders {
 		if v := r.Header.Values(k); len(v) > 0 {
@@ -89,4 +88,130 @@ func (s *Server) relayViaLink(virtualURL, path string, r *http.Request, body []b
 		return http.StatusBadGateway, nil, nil, nil, err
 	}
 	return resp.StatusCode, resp.Header, b, nil, nil
+}
+
+// isLinkURL: virtual backend served over a link agent's socket.
+func isLinkURL(u string) bool { return strings.HasPrefix(u, "http://link/") }
+
+// linkEngineHost: the agent-local engine address behind a virtual URL
+// (http://link/<agent>:<port> → 127.0.0.1:<port>).
+func linkEngineHost(virtualURL string) string {
+	rest := strings.TrimPrefix(virtualURL, "http://link/")
+	return "127.0.0.1:" + rest[strings.LastIndex(rest, ":")+1:]
+}
+
+// backendGet: GET path from a backend, directly or over its link. Every
+// metrics/health fetch goes through here so link engines are polled,
+// scored and metered exactly like LAN backends.
+func (s *Server) backendGet(backend, path string, timeout time.Duration) (int, []byte, error) {
+	if isLinkURL(backend) {
+		conn := s.linkReg.Lookup(backend)
+		if conn == nil {
+			return 0, nil, fmt.Errorf("link %s is not connected", backend)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		resp, err := conn.RelayContext(ctx, http.MethodGet, linkEngineHost(backend), path,
+			http.Header{"Accept": {"application/json"}}, nil)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		return resp.StatusCode, b, err
+	}
+	c := &http.Client{Timeout: timeout}
+	resp, err := c.Get(backend + path)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	return resp.StatusCode, b, err
+}
+
+// backendJSON: backendGet decoded as a JSON object (200 only).
+func (s *Server) backendJSON(backend, path string, timeout time.Duration) (map[string]any, bool) {
+	status, b, err := s.backendGet(backend, path, timeout)
+	if err != nil || status != http.StatusOK {
+		return nil, false
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return nil, false
+	}
+	return m, true
+}
+
+// handleAdminLinks: GET /admin/links — live link agents and the health of
+// each engine they serve (admin only). The operator's view for moving
+// GPUs behind links: is the agent connected, is each engine polled and
+// up, which pools reference it.
+func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.adminIdentity(w, r); !ok {
+		errBody(w, http.StatusForbidden, "admin only")
+		return
+	}
+	s.mu.Lock()
+	inPools := map[string][]string{}
+	for name, pool := range s.cfg.ModelPools {
+		for _, m := range pool.Members {
+			if isLinkURL(m.Backend) {
+				inPools[m.Backend] = append(inPools[m.Backend], name)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	type engineView struct {
+		URL            string   `json:"url"`
+		ModelID        string   `json:"model_id"`
+		MaxConcurrency int      `json:"max_concurrency"`
+		Down           bool     `json:"down"`
+		Polled         bool     `json:"polled"`
+		Running        int      `json:"running"`
+		Lanes          int      `json:"lanes"`
+		Score          float64  `json:"score"`
+		Pools          []string `json:"pools"`
+	}
+	type agentView struct {
+		Agent      string       `json:"agent"`
+		Owner      string       `json:"owner"`
+		Version    string       `json:"agent_version"`
+		RemoteAddr string       `json:"remote_addr"`
+		Since      time.Time    `json:"connected_since"`
+		InFlight   int          `json:"in_flight"`
+		Engines    []engineView `json:"engines"`
+	}
+	out := []agentView{}
+	live := map[string]bool{}
+	for _, c := range s.linkReg.Conns() {
+		av := agentView{Agent: c.Agent, Owner: c.Owner, Version: c.Version,
+			RemoteAddr: c.RemoteAddr, Since: c.Since.UTC(), InFlight: c.InFlight()}
+		for _, e := range c.Engines() {
+			u := link.VirtualURL(c.Agent, e.Port)
+			live[u] = true
+			ev := engineView{URL: u, ModelID: e.ModelID, MaxConcurrency: e.MaxConcurrency,
+				Down: s.tracker.IsDown(u), Score: round3(s.tracker.Score(u)), Pools: inPools[u]}
+			if l := s.tracker.Get(u); l != nil {
+				ev.Polled, ev.Running, ev.Lanes = true, l.Running, l.Lanes
+			}
+			av.Engines = append(av.Engines, ev)
+		}
+		out = append(out, av)
+	}
+	// Pool members pointing at links that are not connected right now.
+	missing := []string{}
+	for u := range inPools {
+		if !live[u] {
+			missing = append(missing, u)
+		}
+	}
+	sort.Strings(missing)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"agents":                  out,
+		"pool_members_not_linked": missing,
+		"min_agent_version":       link.MinAgentVersion,
+	})
 }

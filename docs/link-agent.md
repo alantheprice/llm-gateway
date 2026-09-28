@@ -45,7 +45,10 @@ engines. If the local engine requires its own API key, pass
 `--engine-key` (or `LLM_LINK_ENGINE_KEY`). Agent names are lowercased and
 limited to `a-z 0-9 . _ -`. The agent:
 
-- dials the gateway over outbound TLS only (NAT/firewall friendly)
+- dials the gateway over outbound TLS only (NAT/firewall friendly), with
+  the token in the `Authorization` header (never in the URL)
+- must be version 0.2 or newer; older agents are refused with an upgrade
+  message
 - reconnects automatically (1s→30s backoff)
 - relays ONLY the declared engine port(s) and ONLY model-serving paths
   (`/v1/*`, `/health`, `/usage`, `/slots`, `/metrics`) — everything else
@@ -59,8 +62,32 @@ limited to `a-z 0-9 . _ -`. The agent:
 Run it under systemd (`Restart=always`); a systemd template ships in
 `deploy/llm-link-agent.service`.
 
+## Monitoring and costs
+
+- **Polled like LAN backends.** The gateway polls every connected engine's
+  `/slots` and `/usage` *through the agent socket*. Link engines get the
+  same load score, down detection and energy metrics, and appear in
+  per-GPU analytics under their virtual URL.
+- **Pools only.** A link engine is reachable only through the pools that
+  list it. It is never matched by its raw model id, so a linked engine
+  cannot shadow another model's name.
+- **Status view.** `GET /admin/links` (admin) lists each connected agent
+  with:
+  - its owner, version and address
+  - each engine's poll state, score and pool memberships
+  - pool members whose link is not connected right now
+- **Costs.** Hosts in the cost config claim link engines by agent name,
+  since link engines have no IP:
+
+  ```json
+  "hosts": [{"label": "gpu-b", "ips": [], "links": ["gpu-b"],
+             "overhead_watts": 100, "hardware_cost_usd": 11120,
+             "purchased": "2026-01-10", "amortize_years": 4}]
+  ```
+
 ## Failure behaviour
 
+- An agent that disconnects takes its engines out of rotation at once.
 - The gateway treats an agent socket that is silent for 60 s as dead
   (agents ping every 15 s); every in-flight request on it fails and the
   link's backends drop out of the pool.

@@ -189,10 +189,10 @@ func validateConfig(c *config.Config) error {
 	}
 	seenIP := map[string]bool{}
 	for i, h := range c.Hosts {
-		if len(h.IPs) == 0 {
-			return fmt.Errorf("hosts[%d] (%s): at least one ip required", i, h.Label)
+		if len(h.IPs) == 0 && len(h.Links) == 0 {
+			return fmt.Errorf("hosts[%d] (%s): at least one ip or link required", i, h.Label)
 		}
-		for _, ip := range h.IPs {
+		for _, ip := range h.HostKeys() {
 			if ip == "" {
 				return fmt.Errorf("hosts[%d] (%s): empty ip entry", i, h.Label)
 			}

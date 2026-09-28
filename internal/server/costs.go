@@ -215,8 +215,17 @@ func ComputeCosts(p CostsParams) []HostCost {
 	return out
 }
 
-// backendHostIP extracts the host part of a backend URL.
+// backendHostIP extracts the host key of a backend URL: the IP/hostname
+// for LAN backends, "link:<agent>" for link engines (which have no IP —
+// hosts claim them via their `links` list).
 func backendHostIP(backend string) string {
+	if isLinkURL(backend) {
+		rest := strings.TrimPrefix(backend, "http://link/")
+		if i := strings.LastIndex(rest, ":"); i > 0 {
+			rest = rest[:i]
+		}
+		return "link:" + strings.ToLower(rest)
+	}
 	u, err := url.Parse(backend)
 	if err != nil || u.Host == "" {
 		// bare "host:port"
@@ -234,7 +243,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	hosts := make([]HostConfig, len(s.cfg.Hosts))
 	for i, h := range s.cfg.Hosts {
 		hosts[i] = HostConfig{
-			Label: h.Label, IPs: h.IPs, OverheadWatts: h.OverheadWatts,
+			Label: h.Label, IPs: h.HostKeys(), OverheadWatts: h.OverheadWatts,
 			HardwareUSD: h.HardwareCostUSD, Purchased: h.Purchased,
 			AmortizeYears: h.AmortizeYears,
 		}
@@ -251,6 +260,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	for u := range s.backends {
 		backends = append(backends, u)
 	}
+	backends = append(backends, s.linkReg.LiveURLs()...) // link engines cost like LAN ones
 	port := s.cfg.Gateway.Port
 	// Host idle-watt allowances (fixed-cost layer; 0 → 40 default).
 	idleByHost := map[string]float64{}
@@ -259,7 +269,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		if w <= 0 {
 			w = 40
 		}
-		for _, ip := range h.IPs {
+		for _, ip := range h.HostKeys() {
 			idleByHost[ip] = w
 		}
 	}

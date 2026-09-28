@@ -5,7 +5,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -222,6 +221,14 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		return "", ""
 	})
 	s.pb.SetSuperuser(pbSuperuserIdent(), pbSuperuserPass(cfg))
+	// A disconnecting agent's engines leave rotation immediately rather
+	// than on the next request that fails against them.
+	s.linkReg.OnDrop = func(urls []string) {
+		for _, u := range urls {
+			s.tracker.MarkDown(u)
+		}
+		log.Printf("link: %v left rotation (agent disconnected)", urls)
+	}
 	if a := os.Getenv("AGENT_URL"); a != "" {
 		s.agentURL = a
 	} else {
@@ -563,6 +570,11 @@ func (s *Server) PollOnce() {
 		urls = append(urls, u)
 	}
 	s.mu.Unlock()
+	// Live link engines are polled over their agent socket like any LAN
+	// backend (load score, down detection, energy). They are deliberately
+	// NOT in s.backends: that map feeds raw model-id resolution, and a
+	// linked engine must only be reachable through the pools that name it.
+	urls = append(urls, s.linkReg.LiveURLs()...)
 	// A member already known to be down is re-probed at most every
 	// downReprobe: PollOnce runs on every pool request, and polling an
 	// unreachable host costs a full timeout per request.
@@ -585,7 +597,7 @@ func (s *Server) PollOnce() {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
-			if l, raw := pollNinferFull(s.client, u); l != nil {
+			if l, raw := s.pollNinferFull(u); l != nil {
 				s.tracker.Set(u, l)
 				s.mu.Lock()
 				s.lastMetrics[u] = raw // raw /usage payload for /backends extras
@@ -593,7 +605,7 @@ func (s *Server) PollOnce() {
 				s.recordGPUDaily(u, raw)
 				return
 			}
-			if l := pollVLLM(s.client, u, s.cfg); l != nil {
+			if l := s.pollVLLM(u); l != nil {
 				s.tracker.Set(u, l)
 				return
 			}
@@ -601,7 +613,7 @@ func (s *Server) PollOnce() {
 			// load (race builds, GC, port contention) a single probe can
 			// exceed the 1s timeout; a genuinely dead engine fails twice.
 			time.Sleep(50 * time.Millisecond)
-			if l, raw := pollNinferFull(s.client, u); l != nil {
+			if l, raw := s.pollNinferFull(u); l != nil {
 				s.tracker.Set(u, l)
 				s.mu.Lock()
 				s.lastMetrics[u] = raw
@@ -609,7 +621,7 @@ func (s *Server) PollOnce() {
 				s.recordGPUDaily(u, raw)
 				return
 			}
-			if l := pollVLLM(s.client, u, s.cfg); l != nil {
+			if l := s.pollVLLM(u); l != nil {
 				s.tracker.Set(u, l)
 				return
 			}
@@ -675,16 +687,12 @@ func getJSON(client *http.Client, url string, timeout time.Duration) (map[string
 	return m, true
 }
 
-func pollNinfer(client *http.Client, backend string) *routing.Load {
-	l, _ := pollNinferFull(client, backend)
-	return l
-}
-
 // pollNinferFull fetches /slots + /usage and returns both the routing Load
 // and the raw /usage payload (uptime, KV windows, lane breakdown — the
 // /backends view needs them; see Python's _backend_load field list).
-func pollNinferFull(client *http.Client, backend string) (*routing.Load, map[string]any) {
-	slots, ok := getJSON(client, backend+"/slots", 3*time.Second)
+// Works for LAN backends and link engines alike (s.backendJSON).
+func (s *Server) pollNinferFull(backend string) (*routing.Load, map[string]any) {
+	slots, ok := s.backendJSON(backend, "/slots", 3*time.Second)
 	if !ok {
 		return nil, nil
 	}
@@ -699,7 +707,7 @@ func pollNinferFull(client *http.Client, backend string) (*routing.Load, map[str
 		Engine: "ninfer", Running: int(proc), Waiting: int(wait), Lanes: lanes,
 		MaxSeqs: lanes, LastUpdated: time.Now(),
 	}
-	usage, ok := getJSON(client, backend+"/usage", 3*time.Second)
+	usage, ok := s.backendJSON(backend, "/usage", 3*time.Second)
 	if !ok {
 		return l, nil
 	}
@@ -724,17 +732,11 @@ func pollNinferFull(client *http.Client, backend string) (*routing.Load, map[str
 	return l, usage
 }
 
-func pollVLLM(client *http.Client, backend string, cfg *config.Config) *routing.Load {
-	c := &http.Client{Timeout: 3 * time.Second}
-	resp, err := c.Get(backend + "/metrics")
-	if err != nil {
+func (s *Server) pollVLLM(backend string) *routing.Load {
+	status, text, err := s.backendGet(backend, "/metrics", 3*time.Second)
+	if err != nil || status != 200 {
 		return nil
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil
-	}
-	text, _ := io.ReadAll(resp.Body)
 	vals := parsePrometheus(string(text))
 	running, okR := vals["vllm:num_requests_running"]
 	if !okR {
@@ -745,7 +747,7 @@ func pollVLLM(client *http.Client, backend string, cfg *config.Config) *routing.
 	l := &routing.Load{
 		Engine:  "vllm",
 		Running: int(running), Waiting: int(waiting), KVUsage: kv,
-		MaxSeqs: cfg.MaxSeqsFor(backend), LastUpdated: time.Now(),
+		MaxSeqs: s.cfg.MaxSeqsFor(backend), LastUpdated: time.Now(),
 	}
 	return l
 }
@@ -814,7 +816,7 @@ func (s *Server) preferredModel() string {
 // hostByIP: the cost-config host owning this backend IP, if any.
 func (s *Server) hostByIP(ip string) (config.HostCfg, bool) {
 	for _, h := range s.cfg.Hosts {
-		for _, hip := range h.IPs {
+		for _, hip := range h.HostKeys() {
 			if hip == ip {
 				return h, true
 			}

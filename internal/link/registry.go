@@ -10,6 +10,11 @@ import (
 // (http://link/<agent>:<port>). Pool members reference that URL; the
 // relay path asks the registry for the connection instead of dialing.
 type Registry struct {
+	// OnDrop, if set, is called (outside the lock) with the virtual URLs
+	// a disconnecting or replaced agent stops serving, so routing can
+	// take them out of rotation at once instead of on the next failure.
+	OnDrop func(urls []string)
+
 	mu     sync.RWMutex
 	conns  map[string]*Conn  // virtual URL -> conn
 	byAg   map[string]*Conn  // agent label -> latest conn
@@ -67,19 +72,37 @@ func (r *Registry) registerLocked(c *Conn) []string {
 // registration torn down by the old socket's deferred cleanup.
 func (r *Registry) Unregister(agent string, dead *Conn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if cur := r.byAg[agent]; cur != nil && cur != dead {
+		r.mu.Unlock()
 		return // a newer connection owns the label now
 	}
+	var dropped []string
 	for _, e := range dead.engines {
 		url := VirtualURL(agent, e.Port)
 		if r.conns[url] == dead {
 			delete(r.conns, url)
+			dropped = append(dropped, url)
 		}
 	}
 	if r.byAg[agent] == dead {
 		delete(r.byAg, agent)
 	}
+	hook := r.OnDrop
+	r.mu.Unlock()
+	if hook != nil && len(dropped) > 0 {
+		hook(dropped)
+	}
+}
+
+// Conns: one entry per live agent connection (admin views).
+func (r *Registry) Conns() []*Conn {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*Conn, 0, len(r.byAg))
+	for _, c := range r.byAg {
+		out = append(out, c)
+	}
+	return out
 }
 
 // Lookup: live connection for a virtual backend URL, or nil.

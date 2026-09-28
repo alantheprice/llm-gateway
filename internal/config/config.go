@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,6 +91,7 @@ type PriceBook struct {
 type HostCfg struct {
 	Label           string   `json:"label"`
 	IPs             []string `json:"ips"`               // backend URL hosts on this box
+	Links           []string `json:"links,omitempty"`   // link agent names on this box (http://link/<name>:port)
 	OverheadWatts   float64  `json:"overhead_watts"`    // CPU/RAM/fans/PSU, GPU excluded
 	HardwareCostUSD float64  `json:"hardware_cost_usd"` // original purchase price
 	Purchased       string   `json:"purchased"`         // ISO date
@@ -255,4 +257,15 @@ func (c *Config) MaxSeqsFor(backend string) int {
 		return v
 	}
 	return c.Metrics.DefaultMaxSeqs
+}
+
+// HostKeys: every backend-host key that belongs to this host — its IPs
+// plus "link:<agent>" for each link agent it runs. Cost attribution
+// matches backends against these (see server.backendHostIP).
+func (h HostCfg) HostKeys() []string {
+	out := append([]string(nil), h.IPs...)
+	for _, l := range h.Links {
+		out = append(out, "link:"+strings.ToLower(strings.TrimSpace(l)))
+	}
+	return out
 }

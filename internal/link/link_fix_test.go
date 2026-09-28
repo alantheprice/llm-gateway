@@ -90,7 +90,7 @@ func TestRelayCancelSendsCancelFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ws.Close()
-	ws.WriteJSON(map[string]any{"type": "hello", "agent": "c1",
+	ws.WriteJSON(map[string]any{"type": "hello", "agent": "c1", "agent_version": MinAgentVersion,
 		"links": []map[string]any{{"model_id": "m", "port": 9}}})
 	var welcome map[string]any
 	ws.ReadJSON(&welcome)
@@ -137,5 +137,60 @@ func TestRelayCancelSendsCancelFrame(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no cancel frame sent to the agent")
 		}
+	}
+}
+
+func TestVersionAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		have, want string
+		ok         bool
+	}{
+		{"0.2", "0.2", true}, {"0.3", "0.2", true}, {"0.10", "0.9", true}, {"1.0", "0.2", true},
+		{"0.1", "0.2", false}, {"", "0.2", false}, {"test", "0.2", false}, {"0.2.1", "0.2", true},
+	} {
+		if got := VersionAtLeast(c.have, c.want); got != c.ok {
+			t.Errorf("VersionAtLeast(%q, %q) = %v, want %v", c.have, c.want, got, c.ok)
+		}
+	}
+}
+
+// Agents older than MinAgentVersion are refused with an explanatory error.
+func TestOldAgentRefused(t *testing.T) {
+	reg := NewRegistry()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ServeAgent(reg, w, r, "owner")
+	}))
+	defer srv.Close()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	ws.WriteJSON(map[string]any{"type": "hello", "agent": "old", "agent_version": "0.1",
+		"links": []map[string]any{{"model_id": "m", "port": 9}}})
+	var reply map[string]string
+	if err := ws.ReadJSON(&reply); err != nil || reply["type"] != "error" || !strings.Contains(reply["error"], "too old") {
+		t.Fatalf("reply = %v, err %v", reply, err)
+	}
+	if reg.Lookup("http://link/old:9") != nil {
+		t.Fatal("old agent registered")
+	}
+}
+
+// A disconnect fires OnDrop with the engines that left.
+func TestOnDropFires(t *testing.T) {
+	r := NewRegistry()
+	got := make(chan []string, 1)
+	r.OnDrop = func(urls []string) { got <- urls }
+	c := newConn("gpu", []Engine{{Port: 8006}})
+	r.RegisterAs(c, "alice")
+	r.Unregister("gpu", c)
+	select {
+	case urls := <-got:
+		if len(urls) != 1 || urls[0] != "http://link/gpu:8006" {
+			t.Fatalf("OnDrop urls = %v", urls)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OnDrop not called")
 	}
 }

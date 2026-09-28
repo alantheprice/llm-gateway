@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -99,11 +100,14 @@ func (h relayHeader) header() http.Header {
 
 // Conn: one connected agent (possibly several engines).
 type Conn struct {
-	Agent   string // stable label; virtual URLs derive from it
-	Owner   string // gateway user whose key registered this agent
-	ws      *websocket.Conn
-	wmu     sync.Mutex // serialize writes
-	engines []Engine
+	Agent      string // stable label; virtual URLs derive from it
+	Owner      string // gateway user whose key registered this agent
+	Version    string // agent_version from hello
+	RemoteAddr string
+	Since      time.Time
+	ws         *websocket.Conn
+	wmu        sync.Mutex // serialize writes
+	engines    []Engine
 
 	mu     sync.Mutex
 	nextID uint64
@@ -193,6 +197,30 @@ func (c *Conn) InFlight() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.reqs)
+}
+
+// MinAgentVersion: oldest agent protocol the gateway accepts. 0.2 added
+// header-only token auth, cancel frames and serialized socket writes;
+// 0.1 agents panic under concurrent load and leak nothing but also
+// cannot be cancelled, so they are refused.
+const MinAgentVersion = "0.2"
+
+// VersionAtLeast compares dotted numeric versions ("0.10" > "0.9").
+func VersionAtLeast(have, want string) bool {
+	hp, wp := strings.Split(have, "."), strings.Split(want, ".")
+	for i := 0; i < len(wp); i++ {
+		var h, w int
+		if i < len(hp) {
+			if _, err := fmt.Sscanf(hp[i], "%d", &h); err != nil {
+				return false
+			}
+		}
+		fmt.Sscanf(wp[i], "%d", &w)
+		if h != w {
+			return h > w
+		}
+	}
+	return true
 }
 
 // VirtualURL: pool-member backend URL for an engine on this link.

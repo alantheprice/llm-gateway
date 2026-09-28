@@ -27,14 +27,14 @@ type fakeAgent struct {
 
 func (f *fakeAgent) dial(t *testing.T) {
 	t.Helper()
-	u := "ws" + strings.TrimPrefix(f.server, "http") + "/link/agent?key=" + f.token
-	ws, _, err := websocket.DefaultDialer.Dial(u, nil)
+	u := "ws" + strings.TrimPrefix(f.server, "http") + "/link/agent"
+	ws, _, err := websocket.DefaultDialer.Dial(u, http.Header{"Authorization": {"Bearer " + f.token}})
 	if err != nil {
 		t.Fatalf("agent dial: %v", err)
 	}
 	f.ws = ws
 	hello := map[string]any{
-		"type": "hello", "agent": f.agent, "agent_version": "test",
+		"type": "hello", "agent": f.agent, "agent_version": MinAgentVersion,
 		"links": []map[string]any{{
 			"model_id": "test-model", "port": f.port, "max_concurrency": 2, "label": "test",
 		}},
@@ -250,7 +250,7 @@ func TestRelayRoundTrip_PostBody(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer ws.Close()
-	hello := map[string]any{"type": "hello", "agent": "postbot",
+	hello := map[string]any{"type": "hello", "agent": "postbot", "agent_version": MinAgentVersion,
 		"links": []map[string]any{{"model_id": "m", "port": pn, "max_concurrency": 1}}}
 	if err := ws.WriteJSON(hello); err != nil {
 		t.Fatalf("hello: %v", err)

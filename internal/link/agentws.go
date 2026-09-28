@@ -60,6 +60,12 @@ func ServeAgent(reg *Registry, w http.ResponseWriter, r *http.Request, owner str
 		_ = ws.WriteJSON(map[string]string{"type": "error", "error": "first message must be hello with links"})
 		return
 	}
+	if !VersionAtLeast(hello.AgentVersion, MinAgentVersion) {
+		log.Printf("link: agent from %s refused: version %q < %s", r.RemoteAddr, hello.AgentVersion, MinAgentVersion)
+		_ = ws.WriteJSON(map[string]string{"type": "error",
+			"error": "agent version " + hello.AgentVersion + " is too old; upgrade llm-link-agent to " + MinAgentVersion + " or newer"})
+		return
+	}
 	agent := strings.ToLower(strings.TrimSpace(hello.Agent))
 	if agent == "" {
 		agent = strings.ToLower(owner)
@@ -70,6 +76,9 @@ func ServeAgent(reg *Registry, w http.ResponseWriter, r *http.Request, owner str
 	}
 	c := newConn(agent, hello.Links)
 	c.Owner = owner
+	c.Version = hello.AgentVersion
+	c.RemoteAddr = r.RemoteAddr
+	c.Since = time.Now()
 	c.ws = ws
 	ids, err := reg.RegisterAs(c, owner)
 	if err != nil {
