@@ -419,10 +419,22 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 		URL    string
 		Models []string
 	}
+	// Live link engines first (the registry has its own lock), then LAN
+	// backends. Admin view: every connected link, pooled or not.
+	linkInfo := map[string]*BackendInfo{}
+	for _, u := range s.linkReg.LiveURLs() {
+		if info := s.linkBackendInfo(u); info != nil {
+			linkInfo[u] = info
+		}
+	}
 	s.mu.Lock()
-	urls := make([]string, 0, len(s.backends))
+	urls := make([]string, 0, len(s.backends)+len(linkInfo))
 	infoByURL := map[string]*BackendInfo{}
 	for u, info := range s.backends {
+		urls = append(urls, u)
+		infoByURL[u] = info
+	}
+	for u, info := range linkInfo {
 		urls = append(urls, u)
 		infoByURL[u] = info
 	}
@@ -435,6 +447,9 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 	for _, u := range urls {
 		info := infoByURL[u]
 		e := map[string]any{"url": u, "models": info.Models}
+		if isLinkURL(u) {
+			e["via"] = "link"
+		}
 		l := s.tracker.Get(u)
 		if l == nil {
 			e["engine"] = "unknown"

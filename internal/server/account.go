@@ -260,6 +260,7 @@ func (s *Server) energyByDay() map[string]map[string]float64 {
 		urls = append(urls, u)
 	}
 	s.mu.Unlock()
+	urls = append(urls, s.poolLinkURLs()...)
 	for _, u := range urls {
 		payload, ok := s.backendJSON(u, "/usage", 3*time.Second)
 		if !ok {

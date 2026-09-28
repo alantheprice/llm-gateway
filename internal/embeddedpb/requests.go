@@ -26,6 +26,9 @@ type RequestRecord struct {
 	Totalms   float64
 	TokPerSec float64
 	ReusePath string
+	// Speculative decoding (engine timings); 0 when not reported.
+	DraftN        int64
+	DraftAccepted int64
 }
 
 func (a *App) InitRequestsSchema() error {
@@ -57,7 +60,28 @@ func (a *App) InitRequestsSchema() error {
 		CREATE INDEX IF NOT EXISTS idx_requests_day_user ON requests (day, user);
 		CREATE INDEX IF NOT EXISTS idx_requests_day_backend ON requests (day, backend);
 	`).Execute()
-	return err
+	if err != nil {
+		return err
+	}
+	// Columns added after the first release: add each if missing.
+	for _, col := range []string{"draft_n", "draft_accepted"} {
+		var r struct {
+			N int64 `db:"n"`
+		}
+		if err := a.pb.DB().NewQuery(
+			`SELECT COUNT(*) AS n FROM pragma_table_info('requests') WHERE name = {:col}`,
+		).Bind(map[string]any{"col": col}).One(&r); err != nil {
+			return err
+		}
+		if r.N == 0 {
+			if _, err := a.pb.DB().NewQuery(
+				"ALTER TABLE requests ADD COLUMN " + col + " INTEGER NOT NULL DEFAULT 0",
+			).Execute(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // InsertRequests: batch insert.
@@ -69,10 +93,12 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 		_, err := a.pb.DB().NewQuery(`
 			INSERT INTO requests (ts, ts_hour, day, user, key_id, model, backend,
 				kind, status, prompt, cached, output,
-				ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path)
+				ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path,
+				draft_n, draft_accepted)
 			VALUES ({:ts}, {:ts_hour}, {:day}, {:user}, {:key_id}, {:model},
 				{:backend}, {:kind}, {:status}, {:prompt}, {:cached}, {:output},
-				{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse})
+				{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse},
+				{:draft_n}, {:draft_acc})
 		`).Bind(map[string]any{
 			"ts":      r.TS.UTC().Format(time.RFC3339Nano),
 			"ts_hour": r.TS.UTC().Format("2006-01-02T15"),
@@ -82,6 +108,7 @@ func (a *App) InsertRequests(recs []RequestRecord) error {
 			"prompt": r.Prompt, "cached": r.Cached, "output": r.Output,
 			"ttft": r.TTFTms, "prefill": r.Prefillms, "decode": r.Decodems,
 			"total": r.Totalms, "tps": r.TokPerSec, "reuse": r.ReusePath,
+			"draft_n": r.DraftN, "draft_acc": r.DraftAccepted,
 		}).Execute()
 		if err != nil {
 			return err
@@ -159,6 +186,10 @@ type GPURow struct {
 	CacheHitPct float64 `db:"cache_hit_pct" json:"cache_hit_pct"`
 	TokPerSec   float64 `db:"tok_per_s" json:"tok_per_s"`
 	TTFTP95     float64 `db:"ttft_p95" json:"ttft_p95"`
+	// Speculative decoding acceptance across requests that reported it.
+	DraftN         int64   `db:"draft_n" json:"draft_n"`
+	DraftAccepted  int64   `db:"draft_accepted" json:"draft_accepted"`
+	DraftAcceptPct float64 `db:"draft_accept_pct" json:"draft_accept_pct"`
 }
 
 // QueryAnalyticsPerGPU: per-backend request/token/latency aggregates.
@@ -174,7 +205,10 @@ func (a *App) QueryAnalyticsPerGPU(days int, dest *[]GPURow) error {
 			SUM(cached) AS cached,
 			ROUND(100.0 * SUM(cached) / MAX(SUM(prompt), 1), 1) AS cache_hit_pct,
 			ROUND(AVG(tok_per_s), 0) AS tok_per_s,
-			ROUND(MAX(ttft_ms), 0) AS ttft_p95
+			ROUND(MAX(ttft_ms), 0) AS ttft_p95,
+			SUM(draft_n) AS draft_n,
+			SUM(draft_accepted) AS draft_accepted,
+			ROUND(100.0 * SUM(draft_accepted) / MAX(SUM(draft_n), 1), 1) AS draft_accept_pct
 		FROM requests
 		WHERE day >= {:start}
 		GROUP BY backend ORDER BY SUM(output) DESC

@@ -147,6 +147,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				TTFTms: extras.TTFTms, Prefillms: extras.Prefillms,
 				Decodems: extras.Decodems, Totalms: extras.Totalms,
 				TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
+				DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
 			})
 		}
 		s.observePeak(model, backendURL, captured.bytes(), false)
@@ -163,6 +164,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			TTFTms: extras.TTFTms, Prefillms: extras.Prefillms,
 			Decodems: extras.Decodems, Totalms: extras.Totalms,
 			TokPerSec: extras.TokPerSec, ReusePath: extras.ReusePath,
+			DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
 		})
 	}
 	s.observePeak(model, backendURL, buffered, true)
@@ -258,17 +260,21 @@ func usageFromJSON(body []byte, est int) (int, int, int, SSEExtras) {
 			PredictedMS float64 `json:"predicted_ms"`
 			TTFTS       float64 `json:"ttft_s"`
 			ReusePath   string  `json:"reuse_path"`
+			DraftN      int64   `json:"draft_n"`
+			DraftAcc    int64   `json:"draft_n_accepted"`
 		} `json:"timings"`
 	}
 	if json.Unmarshal(body, &resp) != nil || resp.Usage.PromptTokens <= 0 {
 		return est, 0, 0, SSEExtras{}
 	}
 	extras := SSEExtras{
-		Prefillms: resp.Timings.PromptMS,
-		Decodems:  resp.Timings.PredictedMS,
-		Totalms:   resp.Timings.PromptMS + resp.Timings.PredictedMS,
-		TTFTms:    resp.Timings.TTFTS * 1000,
-		ReusePath: resp.Timings.ReusePath,
+		Prefillms:     resp.Timings.PromptMS,
+		Decodems:      resp.Timings.PredictedMS,
+		Totalms:       resp.Timings.PromptMS + resp.Timings.PredictedMS,
+		TTFTms:        resp.Timings.TTFTS * 1000,
+		ReusePath:     resp.Timings.ReusePath,
+		DraftN:        resp.Timings.DraftN,
+		DraftAccepted: resp.Timings.DraftAcc,
 	}
 	if resp.Timings.PredictedMS > 0 {
 		extras.TokPerSec = float64(resp.Usage.CompletionTokens) /
@@ -435,6 +441,10 @@ type SSEExtras struct {
 	Totalms   float64
 	TokPerSec float64
 	ReusePath string
+	// Speculative decoding: tokens drafted / accepted (engine timings
+	// draft_n / draft_n_accepted; 0 when the engine runs no draft model).
+	DraftN        int64
+	DraftAccepted int64
 }
 
 // usageFromSSE extracts usage from the captured tail. Sources in priority
@@ -473,6 +483,8 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 				PredictedMS float64 `json:"predicted_ms"`
 				TTFTS       float64 `json:"ttft_s"`
 				ReusePath   string  `json:"reuse_path"`
+				DraftN      int64   `json:"draft_n"`
+				DraftAcc    int64   `json:"draft_n_accepted"`
 			} `json:"timings"`
 			Choices []struct {
 				Delta struct {
@@ -500,6 +512,9 @@ func usageFromSSE(captured []byte, est int) (int, int, int, SSEExtras) {
 		}
 		if chunk.Timings != nil && chunk.Timings.TTFTS > 0 {
 			extras.TTFTms = chunk.Timings.TTFTS * 1000
+		}
+		if chunk.Timings != nil && chunk.Timings.DraftN > 0 {
+			extras.DraftN, extras.DraftAccepted = chunk.Timings.DraftN, chunk.Timings.DraftAcc
 		}
 		if chunk.Timings != nil && chunk.Timings.ReusePath != "" {
 			extras.ReusePath = chunk.Timings.ReusePath
@@ -611,6 +626,7 @@ func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 		urls = append(urls, u)
 	}
 	s.mu.Unlock()
+	urls = append(urls, s.poolLinkURLs()...)
 	for _, u := range urls {
 		if m, ok := s.backendJSON(u, "/slots", 3*time.Second); ok {
 			out[u] = m

@@ -148,8 +148,7 @@ func (s *Server) backendJSON(backend, path string, timeout time.Duration) (map[s
 // GPUs behind links: is the agent connected, is each engine polled and
 // up, which pools reference it.
 func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.adminIdentity(w, r); !ok {
-		errBody(w, http.StatusForbidden, "admin only")
+	if !s.adminGate(w, r) { // same gate as /backends and /usage
 		return
 	}
 	s.mu.Lock()
@@ -214,4 +213,42 @@ func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
 		"pool_members_not_linked": missing,
 		"min_agent_version":       link.MinAgentVersion,
 	})
+}
+
+// poolLinkURLs: live link engines that some pool references — shared
+// serving infrastructure, listed alongside LAN backends in views any user
+// can see. Links no pool uses (e.g. a user's private GPU) stay out.
+func (s *Server) poolLinkURLs() []string {
+	s.mu.Lock()
+	inPool := map[string]bool{}
+	for _, pool := range s.cfg.ModelPools {
+		for _, m := range pool.Members {
+			if isLinkURL(m.Backend) {
+				inPool[m.Backend] = true
+			}
+		}
+	}
+	s.mu.Unlock()
+	var out []string
+	for _, u := range s.linkReg.LiveURLs() {
+		if inPool[u] {
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// linkBackendInfo: the /backends-style info for a live link engine.
+func (s *Server) linkBackendInfo(u string) *BackendInfo {
+	conn := s.linkReg.Lookup(u)
+	if conn == nil {
+		return nil
+	}
+	for _, e := range conn.Engines() {
+		if link.VirtualURL(conn.Agent, e.Port) == u {
+			return &BackendInfo{Models: []string{e.ModelID}, Chat: true}
+		}
+	}
+	return nil
 }

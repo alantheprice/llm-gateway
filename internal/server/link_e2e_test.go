@@ -348,8 +348,9 @@ func TestLinkQueryTokenRefused(t *testing.T) {
 
 // /admin/links shows the agent, its owner and each engine's poll state.
 func TestLinkE2EAdminView(t *testing.T) {
-	rig, key := newLinkRig(t, "admin", "admin")
+	rig, _ := newLinkRig(t, "admin", "admin")
 	rig.waitRegistered(t)
+	key := uiAdminKey(t, rig.s)
 	rig.s.PollOnce()
 	req, _ := http.NewRequest("GET", rig.gw.URL+"/admin/links", nil)
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -380,4 +381,67 @@ func TestLinkE2EAdminView(t *testing.T) {
 	if !e.Polled || len(e.Pools) != 1 || e.Pools[0] != "qwen" {
 		t.Fatalf("engine view = %+v", e)
 	}
+}
+
+// Pooled link engines appear in /backends (admin, marked via=link) and in
+// /slots, like LAN backends.
+func TestLinkE2EInBackendsAndSlots(t *testing.T) {
+	rig, _ := newLinkRig(t, "admin", "admin")
+	rig.waitRegistered(t)
+	key := uiAdminKey(t, rig.s)
+	rig.s.PollOnce()
+	u := "http://link/e2e:" + rig.engPort
+	get := func(path string) []byte {
+		req, _ := http.NewRequest("GET", rig.gw.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var sb strings.Builder
+		buf := make([]byte, 4096)
+		for {
+			n, e := resp.Body.Read(buf)
+			sb.Write(buf[:n])
+			if e != nil {
+				break
+			}
+		}
+		return []byte(sb.String())
+	}
+	var backends struct {
+		Backends []map[string]any `json:"backends"`
+	}
+	raw := get("/backends")
+	if err := json.Unmarshal(raw, &backends); err != nil {
+		t.Fatalf("/backends: %v %s", err, raw)
+	}
+	found := false
+	for _, b := range backends.Backends {
+		if b["url"] == u {
+			found = true
+			if b["via"] != "link" || b["lanes"] != float64(8) {
+				t.Fatalf("link entry = %v", b)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("link engine missing from /backends: %s", raw)
+	}
+	var slots map[string]any
+	json.Unmarshal(get("/slots"), &slots)
+	if _, ok := slots[u]; !ok {
+		t.Fatalf("pooled link engine missing from /slots: %v", slots)
+	}
+}
+
+// uiAdminKey: the admin plane (/backends, /admin/links) takes admin UI keys.
+func uiAdminKey(t *testing.T, s *Server) string {
+	t.Helper()
+	k, _, err := s.store.CreateKey("admin", "ui-admin-test", "admin", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
 }

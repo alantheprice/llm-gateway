@@ -119,3 +119,19 @@ func TestClientAskedIncludeUsage(t *testing.T) {
 		t.Fatal("client did not ask — should be false")
 	}
 }
+
+// Speculative-decoding counters come through from the engine timings on
+// both the streaming and the buffered path.
+func TestDraftAcceptanceExtracted(t *testing.T) {
+	sse := "data: {\"choices\":[],\"timings\":{\"cache_n\":49,\"predicted_n\":20,\"prompt_n\":5,\"draft_n\":56,\"draft_n_accepted\":18}," +
+		"\"usage\":{\"completion_tokens\":20,\"prompt_tokens\":54,\"prompt_tokens_details\":{\"cached_tokens\":49}}}\n\ndata: [DONE]\n\n"
+	_, _, _, ex := usageFromSSE([]byte(sse), 1)
+	if ex.DraftN != 56 || ex.DraftAccepted != 18 {
+		t.Fatalf("SSE draft = %d/%d, want 18/56", ex.DraftAccepted, ex.DraftN)
+	}
+	js := `{"usage":{"prompt_tokens":54,"completion_tokens":19},"timings":{"predicted_ms":66,"draft_n":28,"draft_n_accepted":14}}`
+	_, _, _, ex = usageFromJSON([]byte(js), 1)
+	if ex.DraftN != 28 || ex.DraftAccepted != 14 {
+		t.Fatalf("JSON draft = %d/%d, want 14/28", ex.DraftAccepted, ex.DraftN)
+	}
+}
