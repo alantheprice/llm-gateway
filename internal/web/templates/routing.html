@@ -247,7 +247,7 @@ function renderScoring() {
     field('Lane weight', num('sc-lane', s.ninfer_lane_weight, 0.05, 0, 1), 'Share of the score from busy lanes (requests being generated).') +
     field('Queue weight', num('sc-queue', s.ninfer_queue_weight, 0.05, 0, 1), 'Share from requests waiting for a lane.') +
     field('Pressure weight', num('sc-press', s.ninfer_pressure_weight, 0.05, 0, 1), 'Share from KV-cache memory pressure.') +
-    field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A GPU whose last load report is older than this counts as fully busy.') +
+    field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A GPU whose last load report is older than this is scored as idle.') +
     '</div><div class="ed-actions"><button class="btn" id="sc-save">Save scoring</button></div>';
   box.querySelector('#sc-save').onclick = async () => {
     const v = id => +box.querySelector(id).value;

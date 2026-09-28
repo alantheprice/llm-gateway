@@ -207,6 +207,12 @@ func (t *Tracker) Score(url string) float64 {
 			lanes = 1
 		}
 		laneP := min(float64(l.Running)/float64(lanes), 1.0)
+		// A queue means the engine can't start more work right now, whatever
+		// its nominal lanes say (device state slots or KV can be the real
+		// limit: e.g. 5 lanes but 2 device slots queues at 2 running).
+		if l.Waiting > 0 {
+			laneP = 1.0
+		}
 		queueP := min(float64(l.Waiting)/max(float64(lanes)/2, 1), 1.0)
 
 		kvP := 0.0

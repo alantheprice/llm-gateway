@@ -32,9 +32,9 @@ func TestScoreNinferFormula(t *testing.T) {
 	tr.Set("a", mkLoad("ninfer", 3, 2, 6, 100, 5, 0))
 	// baseline seeded on first Score call => no pressure yet
 	got := tr.Score("a")
-	want := 0.75*(3.0/6.0) + 0.15*(min(2.0, 3.0)/3.0) // queueP = 2/(6/2)=0.6667 clamped 1? no: 2/3=0.667
-	// queueP = min(waiting/(lanes/2),1) = 2/3
-	want = 0.75*0.5 + 0.15*(2.0/3.0)
+	// Requests waiting => lanes count as full (laneP = 1);
+	// queueP = min(waiting/(lanes/2), 1) = 2/3.
+	want := 0.75*1.0 + 0.15*(2.0/3.0)
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("ninfer score = %v, want %v", got, want)
 	}
@@ -147,11 +147,11 @@ func TestFitContext(t *testing.T) {
 
 func TestAllSaturatedFallsBackToLeastBad(t *testing.T) {
 	tr := NewTracker(DefaultWeights())
-	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 6, 0, 6, 0, 0, 0))     // 0.75
-	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 7, 2, 8, 0, 0, 0)) // 0.75*0.875+0.15*0.5=0.731
+	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 6, 0, 6, 0, 0, 0))     // full, no queue: 0.75
+	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 7, 2, 8, 0, 0, 0)) // queueing: 0.75+0.15*0.5=0.825
 	got := PickPool("qwen", 0.20, 0.05, 0, members(), tr, "", "", false)
-	if got.URL != "http://192.168.1.100:8006" {
-		t.Errorf("least-bad = %s, want remote (0.731 < 0.75)", got.URL)
+	if got.URL != "http://127.0.0.1:8000" {
+		t.Errorf("least-bad = %s, want the GPU that isn't queueing (0.75 < 0.825)", got.URL)
 	}
 }
 
@@ -247,5 +247,16 @@ func TestQueueWaitAverage(t *testing.T) {
 	tr.ObserveQueueWait("x", 0)
 	if q := tr.QueueWait("x"); q < 600 || q > 800 {
 		t.Fatalf("EWMA = %v, want ~700", q)
+	}
+}
+
+// An engine with requests queued is saturated even when it reports free
+// lanes (device slots or KV are the real limit).
+func TestScoreQueuedMeansSaturated(t *testing.T) {
+	tr := NewTracker(DefaultWeights())
+	tr.Set("a", &Load{Engine: "ninfer", Running: 2, Waiting: 0, Lanes: 5, LastUpdated: time.Now()})
+	tr.Set("b", &Load{Engine: "ninfer", Running: 2, Waiting: 2, Lanes: 5, LastUpdated: time.Now()})
+	if a, b := tr.Score("a"), tr.Score("b"); a > 0.4 || b < 0.75 {
+		t.Fatalf("scores: free lanes %.2f, queued %.2f; want queued >= 0.75", a, b)
 	}
 }
