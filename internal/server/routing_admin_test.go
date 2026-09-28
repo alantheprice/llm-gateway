@@ -228,3 +228,26 @@ func TestInFlightCountedFromSend(t *testing.T) {
 		t.Fatalf("in flight after completion = %d, want 0", n)
 	}
 }
+
+// The docs-only operations still publish their response schemas.
+func TestOpenAPIDocsOnlySchemas(t *testing.T) {
+	s := routingServer(t)
+	w := adminDo(t, s, "admin", "GET", "/openapi.json", "")
+	if w.Code != 200 {
+		t.Fatalf("openapi: %d", w.Code)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Content map[string]any `json:"content"`
+			} `json:"responses"`
+		} `json:"paths"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &spec)
+	for _, p := range []string{"/v1/models", "/chat/config", "/keys", "/admin/users"} {
+		get, ok := spec.Paths[p]["get"]
+		if !ok || len(get.Responses["200"].Content) == 0 {
+			t.Errorf("%s: missing GET or 200 schema", p)
+		}
+	}
+}

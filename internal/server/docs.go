@@ -11,21 +11,6 @@ import (
 	"llmgateway/internal/auth"
 )
 
-// humaAuth is a per-operation middleware: runs the standard gateway auth
-// (session cookie OR Bearer key OR LAN trust) and 401s via huma errors.
-func (s *Server) humaAuth(ctx huma.Context) error {
-	r, w := humago.Unwrap(ctx)
-	if _, _, ok := s.checkAuth(w, r); !ok {
-		return huma.Error401Unauthorized("Invalid or missing API key")
-	}
-	return nil
-}
-
-func (s *Server) humaSession(ctx huma.Context) (auth.Claims, bool) {
-	r, _ := humago.Unwrap(ctx)
-	return s.sessionFrom(r)
-}
-
 var secBearer = map[string][]string{"bearer": {}}
 var secSession = map[string][]string{"session": {}}
 
@@ -110,34 +95,20 @@ type ModelEntry struct {
 }
 
 func (s *Server) registerInferenceDocs() {
-	huma.Get(s.huma, "/v1/models", func(_ctx context.Context, _ *struct{}) (*ModelsOutput, error) {
-		out := &ModelsOutput{}
-		out.Body.Object = "list"
-		out.Body.Data = s.catalog()
-		return out, nil
-	}, func(o *huma.Operation) {
-		o.Tags = []string{"inference"}
-		o.Summary = "Model catalog"
-		o.Description = "Lists advertised models. Pool members collapse to the pool name; the caller's private GPUs are included. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust."
-		if s.cfg.Gateway.ModelsRequireAuth {
-			o.Security = secs(secBearer, secSession)
-			o.Middlewares = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
-				if err := s.humaAuth(ctx); err != nil {
-					return
-				}
-				next(ctx)
-			}}
-			o.Responses = map[string]*huma.Response{
-				"200": {Description: "Catalog"},
-				"401": {Description: "Missing/invalid key"},
-			}
-		} else {
-			o.Security = nil
-			o.Responses = map[string]*huma.Response{
-				"200": {Description: "Catalog (public)"},
-			}
+	modelsOp := huma.Operation{
+		OperationID: "get-v1-models", Method: http.MethodGet, Path: "/v1/models",
+		Tags: []string{"inference"}, Summary: "Model catalog",
+		Description: "Lists advertised models. Pool members collapse to the pool name; the caller's private GPUs are included. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust.",
+		Responses:   map[string]*huma.Response{"200": {Description: "Catalog (public)"}},
+	}
+	if s.cfg.Gateway.ModelsRequireAuth {
+		modelsOp.Security = secs(secBearer, secSession)
+		modelsOp.Responses = map[string]*huma.Response{
+			"200": {Description: "Catalog"},
+			"401": {Description: "Missing/invalid key"},
 		}
-	})
+	}
+	docOnly[ModelsOutput](s, modelsOp)
 
 	for _, op := range []huma.Operation{
 		{
@@ -307,71 +278,27 @@ func (s *Server) registerIdentityDocs() {
 	})
 
 	// /chat/config: typed, session-only.
-	huma.Get(s.huma, "/chat/config", func(_ctx context.Context, _ *struct{}) (*ChatConfigOutput, error) {
-		ctx := _ctx.(huma.Context)
-		_, r, ok := s.humaClaims(ctx)
-		if !ok {
-			return nil, huma.Error401Unauthorized("login required")
-		}
-		sess, _ := s.sessionFrom(r)
-		if sess.MCP {
-			return nil, huma.Error403Forbidden("password change required")
-		}
-		apiKey := s.uiKeyFor(sess.U, sess.Role)
-		s.store.SetKeyRoleIfDiffers(sess.U, apiKey, sess.Role)
-		out := &ChatConfigOutput{}
-		out.Body.Username = sess.U
-		out.Body.Role = sess.Role
-		out.Body.APIKey = apiKey
-		groups := s.chatModelGroups(sess.U, sess.Role == "admin")
-		out.Body.Models = flatModels(groups)
-		out.Body.ModelGroups = groups
-		return out, nil
-	}, func(o *huma.Operation) {
-		o.Tags = []string{"identity"}
-		o.Summary = "Session info + UI API key"
-		o.Description = "Mints the caller's single UI key on first use (plaintext in memory only for the session; hash persisted in the key store)."
-		o.Security = secs(secSession)
-		o.Middlewares = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
-			if err := s.humaSessionMW(ctx); err != nil {
-				return
-			}
-			next(ctx)
-		}}
-		o.Responses = map[string]*huma.Response{
+	docOnly[ChatConfigOutput](s, huma.Operation{
+		OperationID: "get-chat-config", Method: http.MethodGet, Path: "/chat/config",
+		Tags: []string{"identity"}, Summary: "Session info + UI API key",
+		Description: "Mints the caller's single UI key on first use (plaintext in memory only for the session; hash persisted in the key store). models / model_groups: the chat-capable models the caller can pick.",
+		Security:    secs(secSession),
+		Responses: map[string]*huma.Response{
 			"200": {Description: "Session + key"},
 			"401": {Description: "No session"},
 			"403": {Description: "Password change required (mcp fence)"},
-		}
+		},
 	})
 
 	// /keys GET: typed; POST stays bare (dynamic body → JSON response).
-	huma.Get(s.huma, "/keys", func(_ctx context.Context, _ *struct{}) (*KeysOutput, error) {
-		ctx := _ctx.(huma.Context)
-		_, r, ok := s.humaAuthPair(ctx)
-		if !ok {
-			return nil, huma.Error401Unauthorized("login required")
-		}
-		sess, hasSession := s.sessionFrom(r)
-		if !hasSession {
-			user, _, isKey := s.authorized(r)
-			if !isKey || s.store.RoleOf(user) != "admin" {
-				return nil, huma.Error401Unauthorized("login required")
-			}
-			sess = auth.Claims{U: user, Role: "admin"}
-		}
-		out := &KeysOutput{}
-		out.Body.Username = sess.U
-		out.Body.Keys = s.keysWithUsage(sess.U)
-		return out, nil
-	}, func(o *huma.Operation) {
-		o.Tags = []string{"identity"}
-		o.Summary = "List my API keys (redacted, with per-key usage)"
-		o.Security = secs(secSession, secBearer)
-		o.Responses = map[string]*huma.Response{
+	docOnly[KeysOutput](s, huma.Operation{
+		OperationID: "get-keys", Method: http.MethodGet, Path: "/keys",
+		Tags: []string{"identity"}, Summary: "List my API keys (redacted, with per-key usage)",
+		Security: secs(secSession, secBearer),
+		Responses: map[string]*huma.Response{
 			"200": {Description: "Key list"},
 			"401": {Description: "No session / invalid key"},
-		}
+		},
 	})
 
 	s.registerBare(huma.Operation{
@@ -398,42 +325,15 @@ type AdminListOutput struct {
 }
 
 func (s *Server) registerAdminDocs() {
-	huma.Get(s.huma, "/admin/users", func(_ctx context.Context, _ *struct{}) (*AdminListOutput, error) {
-		ctx := _ctx.(huma.Context)
-		w, r, ok := s.humaAuthPair(ctx)
-		if !ok {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-		sess, role, ok := s.adminIdentity(w, r)
-		if !ok {
-			return nil, huma.Error403Forbidden("admin only")
-		}
-		_ = sess
-		_ = role
-		users, err := s.pb.ListUsers()
-		if err != nil {
-			return nil, huma.Error503ServiceUnavailable("account service unavailable, try again shortly")
-		}
-		out := &AdminListOutput{}
-		out.Body.PocketbaseReachable = true
-		out.Body.Users = map[string]map[string]any{}
-		for _, u := range users {
-			out.Body.Users[u.Username] = map[string]any{
-				"username": u.Username, "email": u.Email, "role": u.Role,
-				"verified": u.Verified, "created": u.Created,
-				"keys": s.keysWithUsage(u.Username),
-			}
-		}
-		return out, nil
-	}, func(o *huma.Operation) {
-		o.Tags = []string{"admin"}
-		o.Summary = "List all accounts + keys"
-		o.Security = secs(secSession, secBearer)
-		o.Responses = map[string]*huma.Response{
+	docOnly[AdminListOutput](s, huma.Operation{
+		OperationID: "get-admin-users", Method: http.MethodGet, Path: "/admin/users",
+		Tags: []string{"admin"}, Summary: "List all accounts + keys",
+		Security: secs(secSession, secBearer),
+		Responses: map[string]*huma.Response{
 			"200": {Description: "Users + keys"},
 			"403": {Description: "Admin only"},
 			"503": {Description: "account service unavailable"},
-		}
+		},
 	})
 
 	s.registerBare(huma.Operation{
@@ -453,38 +353,6 @@ func (s *Server) registerAdminDocs() {
 
 // ---- huma helpers ----
 
-// humaAuthPair unwraps the raw writer/request after humaAuth ran.
-func (s *Server) humaAuthPair(ctx huma.Context) (http.ResponseWriter, *http.Request, bool) {
-	r, w := humago.Unwrap(ctx)
-	user, keyID, ok := s.checkAuth(w, r)
-	if !ok {
-		return w, r, false
-	}
-	_ = user
-	_ = keyID
-	return w, r, true
-}
-
-// humaClaims unwraps and returns claims for session-authenticated calls.
-func (s *Server) humaClaims(ctx huma.Context) (http.ResponseWriter, *http.Request, bool) {
-	r, w := humago.Unwrap(ctx)
-	sess, ok := s.sessionFrom(r)
-	if !ok {
-		return w, r, false
-	}
-	_ = sess
-	return w, r, true
-}
-
-// humaSessionMW is a middleware form of the session check.
-func (s *Server) humaSessionMW(ctx huma.Context) error {
-	r, _ := humago.Unwrap(ctx)
-	if _, ok := s.sessionFrom(r); !ok {
-		return huma.Error401Unauthorized("login required")
-	}
-	return nil
-}
-
 // adminIdentity resolves the caller as admin (session or persisted-role key).
 func (s *Server) adminIdentity(w http.ResponseWriter, r *http.Request) (auth.Claims, string, bool) {
 	if sess, ok := s.sessionFrom(r); ok && sess.Role == "admin" {
@@ -494,6 +362,15 @@ func (s *Server) adminIdentity(w http.ResponseWriter, r *http.Request) (auth.Cla
 		return auth.Claims{U: user, Role: "admin"}, user, true
 	}
 	return auth.Claims{}, "", false
+}
+
+// docOnly declares a typed docs-only operation: O's shape documents the
+// response, but the real handler lives on the raw mux (the docs router only
+// serves /openapi.*, /docs and /schemas/), so the stub never runs.
+func docOnly[O any](s *Server, op huma.Operation) {
+	huma.Register(s.huma, op, func(_ context.Context, _ *struct{}) (*O, error) {
+		return nil, huma.Error501NotImplemented("handled by raw mux")
+	})
 }
 
 // registerBare declares a docs-only operation whose real handler lives on the
