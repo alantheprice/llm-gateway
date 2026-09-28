@@ -10,6 +10,25 @@ import (
 	"llmgateway/internal/auth"
 )
 
+// The response names the model the client called, not the engine's id.
+func TestPrivateLinkResponseModelName(t *testing.T) {
+	rig, _ := newLinkRig(t, "carol", auth.RoleLink)
+	rig.waitRegistered(t)
+	carol, _, _ := rig.s.store.CreateKey("carol", "k", "user", false)
+	req, _ := http.NewRequest("POST", rig.gw.URL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"e2e/m","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer "+carol)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if n := strings.Count(string(body), `"model":"e2e/m"`); n == 0 || strings.Contains(string(body), `"model":"m"`) {
+		t.Fatalf("stream model names (%d rewritten):\n%.400s", n, body)
+	}
+}
+
 // chatAs posts a one-message chat for model with key (Bearer; "" = none)
 // through the rig's gateway.
 func chatAs(t *testing.T, rig *linkRig, key, model string) int {

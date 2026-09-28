@@ -101,7 +101,7 @@ func newLinkRig(t *testing.T, keyOwner, keyRole string, agentArgs ...string) (*l
 				return
 			default:
 			}
-			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"tok%d \"}}]}\n\n", i)
+			fmt.Fprintf(w, "data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"tok%d \"}}]}\n\n", i)
 			f.Flush()
 			time.Sleep(3 * time.Millisecond)
 		}

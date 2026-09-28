@@ -113,6 +113,7 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 		var captured ringBuf // capture LAST 1MB (usage+timings live at stream end)
 		strip := wantsUsageStrip(r)
 		filter := newSSEFilter(strip)
+		filter.model = clientModelOf(r)
 		switch statsModeOf(r) {
 		case statsInjected:
 			filter.stripStats = true
@@ -173,7 +174,11 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
-	w.Write(s.finalizeJSONStats(r, stripIfInjected(r, buffered), backendURL, model))
+	out := s.finalizeJSONStats(r, stripIfInjected(r, buffered), backendURL, model)
+	if cm := clientModelOf(r); cm != "" && status < 400 {
+		out = setModelField(out, cm)
+	}
+	w.Write(out)
 	pt, ot, cached, extras := usageFromJSON(buffered, est)
 	if extras.TTFTms == 0 {
 		// Non-streamed: nothing reaches the client before the end. Prefer
@@ -408,12 +413,15 @@ type sseFilter struct {
 	strip      bool           // drop the usage chunk the gateway injected
 	stripStats bool           // drop the stats chunk the gateway injected
 	gateway    map[string]any // client asked for stats: add this block to the stats chunk
+	model      string         // client-requested model name to put in each chunk
 	carry      []byte         // partial line carried between reads
 }
 
 func newSSEFilter(strip bool) *sseFilter { return &sseFilter{strip: strip} }
 
-func (f *sseFilter) active() bool { return f.strip || f.stripStats || f.gateway != nil }
+func (f *sseFilter) active() bool {
+	return f.strip || f.stripStats || f.gateway != nil || f.model != ""
+}
 
 func (f *sseFilter) write(p []byte) []byte {
 	if !f.active() {
@@ -450,6 +458,9 @@ func (f *sseFilter) flush() []byte {
 func (f *sseFilter) transform(line string) string {
 	if f.strip && f.isInjectedUsage(line) {
 		return ""
+	}
+	if f.model != "" && strings.HasPrefix(strings.TrimSpace(line), "data:") {
+		line = string(setModelField([]byte(line), f.model))
 	}
 	if !f.stripStats && f.gateway == nil {
 		return line

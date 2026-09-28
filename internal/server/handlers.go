@@ -344,6 +344,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w) // malformed JSON with missing key still 401s in py; but parse error => 400
 		return
 	}
+	r = withClientModel(r, req.Model) // responses carry the name the client called
 
 	// Pool path
 	s.mu.Lock()
@@ -406,6 +407,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	var req chatReq
 	json.Unmarshal(body, &req)
+	r = withClientModel(r, req.Model)
 	url, mid := s.resolve(req.Model)
 	if url == "" {
 		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
