@@ -104,6 +104,7 @@ type OpsStore interface {
 	QueryUsageDay(day string, dest any) error
 	QueryAnalyticsHourly(days int, dest *[]embeddedpb.HourlyRow) error
 	QueryAnalyticsPerGPU(days int, dest *[]embeddedpb.GPURow) error
+	QueryTTFTPercentile(days int, backends []string, q float64) (float64, error)
 	QueryAnalyticsPerUser(days int, dest *[]embeddedpb.UserRow) error
 	QueryAnalyticsReuse(days int, dest *[]embeddedpb.ReuseRow) error
 	PruneOlderThan(days int) (int64, error)

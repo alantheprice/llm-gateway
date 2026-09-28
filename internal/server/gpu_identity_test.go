@@ -69,3 +69,24 @@ func TestMergePerGPU(t *testing.T) {
 		t.Fatalf("merged = %v", r)
 	}
 }
+
+// Merged GPUs report request share and request-weighted TTFT / queue averages.
+func TestMergePerGPULatencyAndShare(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0},"hosts":[{"label":"gpu-b (6000 Pro)","ips":["192.168.1.200"],"links":["gpu-b"]}]}`, nil)
+	out := s.mergePerGPU([]embeddedpb.GPURow{
+		{Backend: "http://192.168.1.200:8006", Requests: 10, TTFTAvg: 1000, TTFTN: 10, QueueAvg: 400, QueueN: 10},
+		{Backend: "http://link/gpu-b:8006", Requests: 30, TTFTAvg: 200, TTFTN: 30, QueueAvg: 0, QueueN: 0},
+		{Backend: "http://127.0.0.1:8000", Requests: 60, TTFTAvg: 500, TTFTN: 60, QueueAvg: 2000, QueueN: 60},
+	})
+	byLabel := map[string]map[string]any{}
+	for _, r := range out {
+		byLabel[r["gpu_label"].(string)] = r
+	}
+	pro := byLabel["gpu-b (6000 Pro) :8006"]
+	if pro["ttft_avg"] != 400.0 || pro["queue_avg"] != 400.0 || pro["share_pct"] != 40.0 {
+		t.Fatalf("6000 Pro merged = %v", pro)
+	}
+	if other := byLabel["127.0.0.1:8000"]; other["share_pct"] != 60.0 || other["queue_avg"] != 2000.0 {
+		t.Fatalf("5090 = %v", other)
+	}
+}

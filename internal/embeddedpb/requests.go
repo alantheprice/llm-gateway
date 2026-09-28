@@ -187,7 +187,12 @@ type GPURow struct {
 	Cached      int64   `db:"cached" json:"cached"`
 	CacheHitPct float64 `db:"cache_hit_pct" json:"cache_hit_pct"`
 	TokPerSec   float64 `db:"tok_per_s" json:"tok_per_s"`
-	TTFTP95     float64 `db:"ttft_p95" json:"ttft_p95"`
+	TTFTMax     float64 `db:"ttft_max" json:"ttft_max"`
+	// Averages over requests that reported the value (zeros = unknown).
+	TTFTAvg  float64 `db:"ttft_avg" json:"ttft_avg"`
+	TTFTN    int64   `db:"ttft_n" json:"ttft_n"`
+	QueueAvg float64 `db:"queue_avg" json:"queue_avg"`
+	QueueN   int64   `db:"queue_n" json:"queue_n"`
 	// Speculative decoding acceptance across requests that reported it.
 	DraftN         int64   `db:"draft_n" json:"draft_n"`
 	DraftAccepted  int64   `db:"draft_accepted" json:"draft_accepted"`
@@ -207,7 +212,11 @@ func (a *App) QueryAnalyticsPerGPU(days int, dest *[]GPURow) error {
 			SUM(cached) AS cached,
 			ROUND(100.0 * SUM(cached) / MAX(SUM(prompt), 1), 1) AS cache_hit_pct,
 			ROUND(AVG(tok_per_s), 0) AS tok_per_s,
-			ROUND(MAX(ttft_ms), 0) AS ttft_p95,
+			ROUND(MAX(ttft_ms), 0) AS ttft_max,
+			COALESCE(ROUND(AVG(NULLIF(ttft_ms, 0)), 0), 0) AS ttft_avg,
+			COUNT(NULLIF(ttft_ms, 0)) AS ttft_n,
+			COALESCE(ROUND(AVG(NULLIF(queue_ms, 0)), 0), 0) AS queue_avg,
+			COUNT(NULLIF(queue_ms, 0)) AS queue_n,
 			SUM(draft_n) AS draft_n,
 			SUM(draft_accepted) AS draft_accepted,
 			ROUND(100.0 * SUM(draft_accepted) / MAX(SUM(draft_n), 1), 1) AS draft_accept_pct
@@ -275,4 +284,39 @@ func colType(col string) string {
 		return "REAL"
 	}
 	return "INTEGER"
+}
+
+// QueryTTFTPercentile: the q-quantile (0..1) of reported time-to-first-token
+// over the window for a set of backends (one GPU may appear under several
+// URLs). 0 when there is no data. SQLite has no percentile function, so this
+// counts, then seeks to the rank.
+func (a *App) QueryTTFTPercentile(days int, backends []string, q float64) (float64, error) {
+	if a.pb.DB() == nil || len(backends) == 0 {
+		return 0, fmt.Errorf("analytics: DB not open")
+	}
+	start := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	params := map[string]any{"start": start}
+	in := make([]string, len(backends))
+	for i, b := range backends {
+		k := fmt.Sprintf("b%d", i)
+		params[k] = b
+		in[i] = "{:" + k + "}"
+	}
+	where := "day >= {:start} AND ttft_ms > 0 AND backend IN (" + strings.Join(in, ",") + ")"
+	var c struct {
+		N int64 `db:"n"`
+	}
+	if err := a.pb.DB().NewQuery("SELECT COUNT(*) AS n FROM requests WHERE " + where).Bind(params).One(&c); err != nil {
+		return 0, err
+	}
+	if c.N == 0 {
+		return 0, nil
+	}
+	params["off"] = int64(q * float64(c.N-1))
+	var v struct {
+		T float64 `db:"t"`
+	}
+	err := a.pb.DB().NewQuery("SELECT ttft_ms AS t FROM requests WHERE " + where +
+		" ORDER BY ttft_ms LIMIT 1 OFFSET {:off}").Bind(params).One(&v)
+	return v.T, err
 }

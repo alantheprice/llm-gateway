@@ -2,7 +2,12 @@
 {{define "scripts"}}
 <script>
 function pct(v) { return v == null ? '—' : Number(v).toFixed(1) + '%'; }
-function ms(v) { return v == null ? '—' : Number(v).toFixed(0) + ' ms'; }
+// 0 means "not reported" (older rows, engines without stats) — show a dash.
+function ms(v) {
+  if (v == null || Number(v) === 0) return '—';
+  const n = Number(v);
+  return n >= 1000 ? (n / 1000).toFixed(2) + ' s' : n.toFixed(0) + ' ms';
+}
 
 let RANGE = 1;
 
@@ -41,13 +46,29 @@ async function load() {
   gr.innerHTML = (d.per_gpu || []).map(g =>
     '<tr>' +
     '<td data-label="GPU"><strong>' + gpuName(g) + '</strong></td>' +
+    '<td data-label="Share">' + pct(g.share_pct) + '</td>' +
     '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
     '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
     '<td data-label="Tokens out">' + fmtNum(g.output) + '</td>' +
     '<td data-label="Cache hit">' + pct(g.cache_hit_pct) + '</td>' +
     '<td data-label="tok/s">' + fmtNum(g.tok_per_s) + '</td>' +
-    '<td data-label="Worst TTFT">' + ms(g.ttft_p95) + '</td></tr>'
-  ).join('') || '<tr><td colspan="7" class="muted">No data.</td></tr>';
+    '<td data-label="TTFT avg / p95" title="max ' + ms(g.ttft_max) + '">' + ms(g.ttft_avg) + ' / ' + ms(g.ttft_p95) + '</td>' +
+    '<td data-label="Queue avg">' + ms(g.queue_avg) + '</td>' +
+    '<td data-label="Draft accept">' + (g.draft_n ? pct(g.draft_accept_pct) : '—') + '</td></tr>'
+  ).join('') || '<tr><td colspan="10" class="muted">No data.</td></tr>';
+
+  // Routing imbalance: one GPU queueing while another has headroom.
+  const gpus = (d.per_gpu || []).filter(g => g.requests > 0);
+  const hot = gpus.filter(g => (g.queue_avg || 0) >= 1000);
+  const cool = gpus.filter(g => (g.queue_avg || 0) < 300);
+  const note = document.getElementById('gpunote');
+  if (note) {
+    note.textContent = hot.length && cool.length
+      ? '⚠ ' + hot.map(g => g.gpu_label || g.backend).join(', ') + ' averages ' +
+        hot.map(g => ms(g.queue_avg)).join(', ') + ' of queue wait while ' +
+        cool.map(g => g.gpu_label || g.backend).join(', ') + ' has headroom — routing may be unbalanced.'
+      : '';
+  }
 
   // --- Reuse paths
   const rr = document.getElementById('reuserows');
@@ -101,9 +122,10 @@ load(); setInterval(load, 60000);
   <div class="card">
     <h2>Per GPU</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>GPU</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th>Worst TTFT</th></tr></thead>
-      <tbody id="gpurows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+      <thead><tr><th>GPU</th><th>Share</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th title="Time to first token: average / 95th percentile (hover a cell for the max)">TTFT avg / p95</th><th title="Engine-reported wait before the request was scheduled on the GPU">Queue avg</th><th>Draft accept</th></tr></thead>
+      <tbody id="gpurows"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
     </table></div>
+    <p class="muted" id="gpunote" style="margin:8px 0 0"></p>
   </div>
 
   <div class="card">

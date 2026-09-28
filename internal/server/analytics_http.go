@@ -63,7 +63,7 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"days":      days,
 		"hourly":    hourly,
-		"per_gpu":   s.mergePerGPU(perGPU),
+		"per_gpu":   s.withTTFTPercentiles(ops, days, s.mergePerGPU(perGPU)),
 		"per_user":  perUser,
 		"reuse":     reuse,
 		"generated": time.Now().UTC().Format(time.RFC3339),
@@ -85,6 +85,8 @@ func (s *Server) mergePerGPU(rows []embeddedpb.GPURow) []map[string]any {
 		backends                                []string
 		requests, input, output, cached, dn, da int64
 		tpsWeighted, ttftMax                    float64
+		ttftSum, queueSum                       float64
+		ttftN, queueN                           int64
 		latestLink                              bool
 	}
 	byKey := map[string]*acc{}
@@ -108,13 +110,27 @@ func (s *Server) mergePerGPU(rows []embeddedpb.GPURow) []map[string]any {
 		a.dn += r.DraftN
 		a.da += r.DraftAccepted
 		a.tpsWeighted += r.TokPerSec * float64(r.Requests)
-		a.ttftMax = max(a.ttftMax, r.TTFTP95)
+		a.ttftMax = max(a.ttftMax, r.TTFTMax)
+		a.ttftSum += r.TTFTAvg * float64(r.TTFTN)
+		a.ttftN += r.TTFTN
+		a.queueSum += r.QueueAvg * float64(r.QueueN)
+		a.queueN += r.QueueN
 	}
 	pct := func(n, d int64) float64 {
 		if d <= 0 {
 			return 0
 		}
 		return float64(int64(1000*float64(n)/float64(d)+0.5)) / 10
+	}
+	var total int64
+	for _, k := range order {
+		total += byKey[k].requests
+	}
+	avg := func(sum float64, n int64) float64 {
+		if n == 0 {
+			return 0
+		}
+		return float64(int64(sum/float64(n) + 0.5))
 	}
 	out := make([]map[string]any, 0, len(order))
 	for _, k := range order {
@@ -131,9 +147,23 @@ func (s *Server) mergePerGPU(rows []embeddedpb.GPURow) []map[string]any {
 			"gpu_key": a.id.Key, "gpu_label": a.id.Label, "host": a.id.Host, "via": via,
 			"backend": a.backends[0], "backends": a.backends,
 			"requests": a.requests, "input": a.input, "output": a.output, "cached": a.cached,
-			"cache_hit_pct": pct(a.cached, a.input), "tok_per_s": tps, "ttft_p95": a.ttftMax,
-			"draft_n": a.dn, "draft_accepted": a.da, "draft_accept_pct": pct(a.da, a.dn),
+			"cache_hit_pct": pct(a.cached, a.input), "tok_per_s": tps, "ttft_max": a.ttftMax,
+			"ttft_avg": avg(a.ttftSum, a.ttftN), "queue_avg": avg(a.queueSum, a.queueN),
+			"share_pct": pct(a.requests, total),
+			"draft_n":   a.dn, "draft_accepted": a.da, "draft_accept_pct": pct(a.da, a.dn),
 		})
 	}
 	return out
+}
+
+// withTTFTPercentiles adds a real p95 time-to-first-token per merged GPU
+// (over all of its backend URLs).
+func (s *Server) withTTFTPercentiles(ops OpsStore, days int, rows []map[string]any) []map[string]any {
+	for _, r := range rows {
+		backends, _ := r["backends"].([]string)
+		if p, err := ops.QueryTTFTPercentile(days, backends, 0.95); err == nil && p > 0 {
+			r["ttft_p95"] = float64(int64(p + 0.5))
+		}
+	}
+	return rows
 }
