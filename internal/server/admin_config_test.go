@@ -152,3 +152,25 @@ func TestValidateConfigLinkOnlyHost(t *testing.T) {
 		t.Fatal("two hosts claiming the same link should be rejected")
 	}
 }
+
+// Removing a pool or overflow pair in the form removes it: posted sections
+// replace the maps instead of merging into them.
+func TestAdminConfigPostRemovesPoolsAndPairs(t *testing.T) {
+	s, _ := adminConfServer(t, `{"gateway":{"port":8033},
+	 "model_pools":{"a":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]},
+	                "b":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9002"}]}},
+	 "overflow_pairs":{"x":{"fallback_model_id":"m","fallback_backend":"http://127.0.0.1:9003","overflow_threshold":0.5}}}`)
+	w := adminSessionRequest(s, "POST", "/admin/config",
+		`{"model_pools":{"a":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]}},"overflow_pairs":{}}`)
+	if w.Code != 200 {
+		t.Fatalf("POST = %d: %s", w.Code, w.Body)
+	}
+	if _, ok := s.cfg.ModelPools["b"]; ok || len(s.cfg.ModelPools) != 1 || len(s.cfg.OverflowPairs) != 0 {
+		t.Fatalf("pools=%v pairs=%v; want only pool a, no pairs", s.cfg.ModelPools, s.cfg.OverflowPairs)
+	}
+	// A post without those sections leaves them alone.
+	adminSessionRequest(s, "POST", "/admin/config", `{"cache":{"ttl":90}}`)
+	if len(s.cfg.ModelPools) != 1 {
+		t.Fatalf("unposted pools changed: %v", s.cfg.ModelPools)
+	}
+}

@@ -1,0 +1,386 @@
+{{define "title"}}Routing — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+// Live state from /api/routing; the raw config from /admin/config is the
+// draft the editor changes (only model_pools, overflow_pairs and scoring are
+// posted back, and those sections replace what's saved).
+let MAP = null, CFG = null, EDIT = null; // EDIT: {kind, name, isNew}
+
+const pct = v => Math.round((v || 0) * 100) + '%';
+function badge(cls, text) { return '<span class="badge ' + cls + '">' + esc(text) + '</span>'; }
+function loadBar(e) {
+  if (!e.known) return badge('off', e.via === 'link' ? 'link offline' : 'not found');
+  if (!e.up) return badge('off', 'down');
+  if (!e.polled) return badge('grace', 'waiting for first poll');
+  const w = Math.min(100, Math.round((e.score || 0) * 100));
+  const cls = w >= 90 ? 'hot' : w >= 60 ? 'warm' : '';
+  return '<span class="load ' + cls + '" title="Load score ' + w + '% (lanes, queue and KV pressure combined)"><span style="width:' + w + '%"></span></span>' +
+    ' <span class="muted tn">' + e.running + '/' + (e.lanes || '?') + ' lanes' + (e.waiting ? ' · ' + e.waiting + ' waiting' : '') +
+    (e.queue_ms ? ' · queue ' + (e.queue_ms >= 1000 ? (e.queue_ms / 1000).toFixed(1) + ' s' : Math.round(e.queue_ms) + ' ms') : '') + '</span>';
+}
+function consentBadge(c) {
+  return ({ 'admin-owned': '', 'consented': badge('ok', 'owner agreed'), 'not-consented': badge('grace', 'owner hasn’t agreed'),
+    'paused': badge('grace', 'paused by owner') })[c] || '';
+}
+function kindLabel(e) {
+  return ({ pool: 'Shared model', overflow: 'Overflow', direct: 'Single engine', 'gpu-direct': 'One GPU, called directly' })[e.kind] || e.kind;
+}
+
+/* ---------- route map ---------- */
+function memberRow(m, entry) {
+  return '<tr><td data-label="GPU"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span><br>' +
+    '<span class="muted mono">' + esc(m.model_id) + '</span> ' + consentBadge(m.consent) + '</td>' +
+    '<td data-label="Load">' + loadBar(m) + '</td>' +
+    '<td data-label="Today" class="tn">' + (m.requests_today || 0).toLocaleString() + (m.share_pct ? ' <span class="muted">(' + m.share_pct + '%)</span>' : '') + '</td>' +
+    '<td data-label="Context" class="tn">' + (m.max_context ? Math.round(m.max_context / 1000) + 'K' : '—') +
+      (m.max_context_override ? ' <span class="muted">(capped)</span>' : '') + '</td>' +
+    '<td data-label="Weight" class="tn">' + (m.capacity_weight || '<span class="muted">lanes</span>') + '</td></tr>';
+}
+function entryCard(e) {
+  let h = '<article class="route" id="r-' + escAttr(e.name) + '"><header class="route-head">' +
+    '<div><span class="eyebrow">' + esc(kindLabel(e)) + (e.model_kind !== 'chat' ? ' · ' + esc(e.model_kind) : '') + '</span>' +
+    '<h2 class="mono">' + esc(e.name) + '</h2><div class="muted">' + esc(e.summary || '') + ' · ' + (e.requests_today || 0).toLocaleString() + ' requests today</div></div>' +
+    '<div class="route-actions">' +
+      '<button class="btn sm" data-test="' + escAttr(e.name) + '">Test a route</button>' +
+      (e.kind === 'pool' || e.kind === 'overflow' ? '<button class="btn sm" data-edit="' + escAttr(e.kind) + '" data-name="' + escAttr(e.name) + '">Edit</button>' : '') +
+    '</div></header>';
+  if (e.kind === 'pool') {
+    const p = e.pool || {};
+    h += '<div class="facts">' +
+      '<span>Cache affinity <strong>' + (p.cache_affinity ? 'on' : 'off') + '</strong></span>' +
+      '<span>Fairness cap <strong>' + (p.max_pool_share ? pct(p.max_pool_share) + ' per GPU' : 'off') + '</strong></span>' +
+      '<span>Busy at <strong>' + pct(p.overflow_threshold) + '</strong></span></div>';
+    h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load</th><th>Requests today</th><th>Context</th><th>Weight</th></tr></thead><tbody>' +
+      (e.members || []).map(m => memberRow(m, e)).join('') + '</tbody></table></div>';
+  } else if (e.kind === 'overflow') {
+    const pr = e.primary, fb = e.fallback;
+    h += '<div class="flow">' +
+      '<div class="node"><span class="eyebrow">Primary</span><strong>' + esc(pr ? pr.gpu_label : 'missing') + '</strong>' + (pr ? '<div>' + loadBar(pr) + '</div>' : '') + '</div>' +
+      '<div class="arrow">at ' + pct(e.threshold) + ' busy →</div>' +
+      '<div class="node"><span class="eyebrow">Spills to</span><strong>' + esc(fb.gpu_label) + '</strong> ' + consentBadge(fb.consent) +
+        '<div class="muted mono">' + esc(fb.model_id) + '</div><div>' + loadBar(fb) + '</div></div></div>';
+  } else if (e.engine) {
+    h += '<div class="flow"><div class="node"><strong>' + esc(e.engine.gpu_label) + '</strong> <span class="muted">via ' + esc(e.engine.via) + '</span><div>' + loadBar(e.engine) + '</div></div></div>';
+  }
+  if (EDIT && EDIT.name === e.name && !EDIT.isNew) h += '<div class="editor" id="editor"></div>';
+  return h + '</article>';
+}
+
+function problemsBlock(ps) {
+  if (!ps.length) return '<div class="allgood">' + badge('ok', 'no problems') + ' Every listed GPU is reachable and serving.</div>';
+  return '<ul class="problems">' + ps.map(p => '<li class="sev-' + p.severity + '"><span class="sev">' + esc(p.severity) + '</span>' +
+    (p.name ? '<a class="mono" href="#r-' + escAttr(p.name) + '">' + esc(p.name) + '</a> ' : '') + esc(p.text) + '</li>').join('') + '</ul>';
+}
+
+function privateBlock(list) {
+  if (!list.length) return '<p class="muted">No private GPUs are linked right now.</p>';
+  return '<div class="tablewrap"><table><thead><tr><th>Name</th><th>Owner</th><th>Shared with</th><th>Load</th></tr></thead><tbody>' +
+    list.map(p => '<tr><td data-label="Name" class="mono">' + esc(p.name) + (p.paused ? ' ' + badge('grace', 'paused') : '') + '</td>' +
+      '<td data-label="Owner">' + esc(p.owner) + '</td><td data-label="Shared with">' + esc(p.sharing) + '</td>' +
+      '<td data-label="Load">' + loadBar(p.engine) + '</td></tr>').join('') + '</tbody></table></div>';
+}
+
+function render() {
+  const m = MAP;
+  document.getElementById('problems').innerHTML = problemsBlock(m.problems || []);
+  const entries = m.entries || [];
+  document.getElementById('routes').innerHTML = entries.map(entryCard).join('') +
+    (EDIT && EDIT.isNew ? '<article class="route"><div class="editor" id="editor"></div></article>' : '');
+  document.getElementById('private').innerHTML = privateBlock(m.private || []);
+  document.getElementById('testmodel').innerHTML = entries.map(e => '<option value="' + escAttr(e.name) + '">' + esc(e.name) + '</option>').join('');
+  document.querySelectorAll('[data-test]').forEach(b => b.onclick = () => {
+    document.getElementById('testmodel').value = b.dataset.test;
+    document.getElementById('tester').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    runTest();
+  });
+  document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => startEdit(b.dataset.edit, b.dataset.name, false));
+  if (EDIT) renderEditor();
+  renderScoring();
+  document.getElementById('updated').textContent = 'Live · updated ' + new Date(m.generated).toLocaleTimeString();
+}
+
+async function load() {
+  if (EDIT) return; // don't redraw under an open editor
+  const [a, b] = await Promise.all([api('/api/routing'), api('/admin/config')]);
+  if (!a.ok || !b.ok) { if (a.status === 403 || b.status === 403) location = '/chat'; return; }
+  MAP = a.data; CFG = b.data.config;
+  render();
+}
+
+/* ---------- dry run ---------- */
+async function runTest() {
+  const out = document.getElementById('testout');
+  const body = { model: document.getElementById('testmodel').value,
+    prompt_tokens: +document.getElementById('testprompt').value || 0,
+    output_tokens: +document.getElementById('testoutput').value || 0 };
+  out.innerHTML = '<span class="muted">Checking…</span>';
+  const r = await api('/api/routing/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { out.innerHTML = '<span class="muted">' + esc(r.data.error || 'failed') + '</span>'; return; }
+  const d = r.data;
+  let h = '<div class="verdict">' + (d.result === 'routed'
+    ? 'Goes to <strong>' + esc(d.pick) + '</strong>' + (d.pick_model_id && d.pick_model_id !== d.model ? ' <span class="muted mono">as ' + esc(d.pick_model_id) + '</span>' : '')
+    : '<strong>' + esc(d.result) + '</strong>') + '</div>';
+  h += '<ol class="steps">' + (d.steps || []).map(s => '<li>' + esc(s) + '</li>').join('') + '</ol>';
+  if (d.candidates) h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load score</th><th>Status</th></tr></thead><tbody>' +
+    d.candidates.map(c => '<tr' + (c.backend === d.pick_backend ? ' class="picked"' : '') + '><td>' + esc(c.gpu_label) + (c.backend === d.pick_backend ? ' ' + badge('ok', 'picked') : '') + '</td>' +
+      '<td class="tn">' + pct(c.score) + '</td><td>' + esc(c.status) + '</td></tr>').join('') + '</tbody></table></div>';
+  out.innerHTML = h + '<p class="hint">A dry run: nothing is sent to any GPU, and routing state isn’t changed.</p>';
+}
+
+/* ---------- editor ---------- */
+function engineOptions(selected) {
+  const es = MAP.engines || [];
+  let found = false;
+  const opts = es.map(e => {
+    const sel = e.url === selected; if (sel) found = true;
+    return '<option value="' + escAttr(e.url) + '"' + (sel ? ' selected' : '') + '>' + esc(e.gpu_label + ' — ' + (e.models || []).join(', ') + (e.up ? '' : ' (down)')) + '</option>';
+  });
+  if (selected && !found) opts.unshift('<option value="' + escAttr(selected) + '" selected>' + esc(selected) + ' (not found now)</option>');
+  return '<option value="">Choose a GPU…</option>' + opts.join('');
+}
+function modelsFor(url) { const e = (MAP.engines || []).find(x => x.url === url); return (e && e.models) || []; }
+
+function startEdit(kind, name, isNew) {
+  const draft = JSON.parse(JSON.stringify(kind === 'pool' ? (CFG.model_pools || {})[name] || {} : (CFG.overflow_pairs || {})[name] || {}));
+  if (kind === 'pool') {
+    draft.members = draft.members || [];
+    if (isNew) Object.assign(draft, { cache_affinity: true, overflow_threshold: 0.9, sticky_bias: 0.05, capacity_bias: 0.5, max_pool_share: 0 });
+  } else if (isNew) Object.assign(draft, { overflow_threshold: 0.2 });
+  EDIT = { kind, name, isNew, draft, newName: isNew ? '' : name };
+  render();
+  document.getElementById('editor').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function num(id, v, step, min, max) {
+  return '<input type="number" id="' + id + '" value="' + escAttr(v ?? '') + '" step="' + step + '"' + (min != null ? ' min="' + min + '"' : '') + (max != null ? ' max="' + max + '"' : '') + '>';
+}
+function field(label, input, help) {
+  return '<div class="field"><label>' + label + '</label>' + input + (help ? '<span class="hint">' + help + '</span>' : '') + '</div>';
+}
+
+function renderEditor() {
+  const box = document.getElementById('editor');
+  if (!box) return;
+  const d = EDIT.draft;
+  let h = '<h3>' + (EDIT.isNew ? (EDIT.kind === 'pool' ? 'New shared model' : 'New overflow') : 'Edit ' + esc(EDIT.name)) + '</h3>';
+  if (EDIT.isNew) h += field('Name clients call', '<input id="ed-name" class="mono" value="' + escAttr(EDIT.newName) + '" placeholder="' + (EDIT.kind === 'pool' ? 'qwen3.8-27b' : 'the engine’s own model id') + '">',
+    EDIT.kind === 'pool' ? 'The model name clients put in their requests.' : 'Overflow applies to requests for this exact model id, served by one engine.');
+  if (EDIT.kind === 'pool') {
+    h += '<div class="sub">GPUs</div><div class="members">' + d.members.map((m, i) =>
+      '<div class="mrow" data-i="' + i + '">' +
+        field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
+        field('Model id it serves', '<input data-f="model_id" class="mono" list="ml-' + i + '" value="' + escAttr(m.model_id || '') + '"><datalist id="ml-' + i + '">' + modelsFor(m.backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>') +
+        field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', '0 = use its lane count. Higher gets more new conversations.') +
+        field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = what the engine reports.') +
+        '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
+      '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
+    h += '<div class="sub">Behaviour</div><div class="grid2">' +
+      field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
+      field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
+      field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets requests when every GPU is.') +
+      field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping.') +
+      field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size).') +
+      '</div>';
+  } else {
+    h += field('Spills to', '<select id="ed-fb">' + engineOptions(d.fallback_backend) + '</select>', 'Where requests go when the primary is busy.');
+    h += field('Model id there', '<input id="ed-fbm" class="mono" list="ml-fb" value="' + escAttr(d.fallback_model_id || '') + '"><datalist id="ml-fb">' + modelsFor(d.fallback_backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>');
+    h += field('Spill when the primary is at least (% busy)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100),
+      'Load is lanes, queue and cache pressure combined. 20% on a 6-lane GPU is roughly 2 busy lanes.');
+  }
+  h += '<div class="ed-actions"><button class="btn primary" id="ed-save">Save</button><button class="btn" id="ed-cancel">Cancel</button>' +
+    (EDIT.isNew ? '' : '<span style="flex:1"></span><button class="btn danger" id="ed-del">Delete ' + esc(EDIT.name) + '</button>') + '</div>' +
+    '<p class="hint">Saving updates the gateway config file and takes effect for the next request. GPUs keep their live load state.</p>';
+  box.innerHTML = h;
+  bindEditor(box);
+}
+
+function readEditor(box) {
+  const d = EDIT.draft;
+  if (EDIT.isNew) EDIT.newName = (box.querySelector('#ed-name').value || '').trim();
+  if (EDIT.kind === 'pool') {
+    box.querySelectorAll('.mrow').forEach(row => {
+      const m = d.members[+row.dataset.i];
+      m.backend = row.querySelector('[data-f="backend"]').value;
+      m.model_id = row.querySelector('[data-f="model_id"]').value.trim();
+      m.capacity_weight = +row.querySelector('[data-f="capacity_weight"]').value || 0;
+      const mc = +row.querySelector('[data-f="max_context"]').value || 0;
+      if (mc) m.max_context = mc; else delete m.max_context;
+    });
+    d.cache_affinity = box.querySelector('#ed-aff').checked;
+    d.max_pool_share = (+box.querySelector('#ed-share').value || 0) / 100;
+    d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
+    d.sticky_bias = +box.querySelector('#ed-sticky').value || 0;
+    d.capacity_bias = +box.querySelector('#ed-cap').value || 0;
+  } else {
+    d.fallback_backend = box.querySelector('#ed-fb').value;
+    d.fallback_model_id = box.querySelector('#ed-fbm').value.trim();
+    d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
+  }
+}
+
+function bindEditor(box) {
+  const rerender = () => { readEditor(box); renderEditor(); };
+  box.querySelectorAll('[data-f="backend"]').forEach(sel => sel.onchange = () => {
+    const row = sel.closest('.mrow'), ms = modelsFor(sel.value), inp = row.querySelector('[data-f="model_id"]');
+    if (ms.length && !inp.value) inp.value = ms[0];
+    rerender();
+  });
+  const fb = box.querySelector('#ed-fb');
+  if (fb) fb.onchange = () => { const inp = box.querySelector('#ed-fbm'), ms = modelsFor(fb.value); if (ms.length && !inp.value) inp.value = ms[0]; rerender(); };
+  box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { readEditor(box); EDIT.draft.members.splice(+b.dataset.rm, 1); renderEditor(); });
+  const add = box.querySelector('#ed-add');
+  if (add) add.onclick = () => { readEditor(box); EDIT.draft.members.push({ backend: '', model_id: '', capacity_weight: 0 }); renderEditor(); };
+  box.querySelector('#ed-cancel').onclick = () => { EDIT = null; load(); };
+  box.querySelector('#ed-save').onclick = () => { readEditor(box); save(false); };
+  const del = box.querySelector('#ed-del');
+  if (del) del.onclick = () => {
+    if (confirm('Delete ' + EDIT.name + '? Clients calling it will get "model not found" (or reach its engine directly, if one serves that name).')) save(true);
+  };
+}
+
+async function save(remove) {
+  const pools = JSON.parse(JSON.stringify(CFG.model_pools || {}));
+  const pairs = JSON.parse(JSON.stringify(CFG.overflow_pairs || {}));
+  const target = EDIT.kind === 'pool' ? pools : pairs;
+  const name = EDIT.isNew ? EDIT.newName : EDIT.name;
+  if (!name) { flash('Give it a name clients will call.', true); return; }
+  if (EDIT.isNew && (pools[name] || pairs[name])) { flash(name + ' already exists.', true); return; }
+  if (!remove && EDIT.kind === 'pool') {
+    if (!EDIT.draft.members.length) { flash('Add at least one GPU.', true); return; }
+    if (EDIT.draft.members.some(m => !m.backend || !m.model_id)) { flash('Every GPU needs an engine and the model id it serves.', true); return; }
+  }
+  if (!remove && EDIT.kind === 'overflow' && (!EDIT.draft.fallback_backend || !EDIT.draft.fallback_model_id)) {
+    flash('Choose where it spills to and the model id there.', true); return;
+  }
+  if (remove) delete target[name]; else target[name] = EDIT.draft;
+  const r = await api('/admin/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model_pools: pools, overflow_pairs: pairs }) });
+  if (!r.ok) { flash(r.data.error || 'Save failed', true); return; }
+  flash(remove ? 'Deleted ' + name + '.' : 'Saved ' + name + '. It applies to the next request.');
+  EDIT = null;
+  load();
+}
+
+/* ---------- advanced ---------- */
+function renderScoring() {
+  const s = MAP.scoring || {};
+  const box = document.getElementById('scoring');
+  if (box.dataset.bound) return; // keep what the admin is typing
+  box.dataset.bound = '1';
+  box.innerHTML = '<p class="muted" style="margin-top:0">How a GPU’s load score is computed from what its engine reports. The three weights should add up to about 1.</p><div class="grid2">' +
+    field('Lane weight', num('sc-lane', s.ninfer_lane_weight, 0.05, 0, 1), 'Share of the score from busy lanes (requests being generated).') +
+    field('Queue weight', num('sc-queue', s.ninfer_queue_weight, 0.05, 0, 1), 'Share from requests waiting for a lane.') +
+    field('Pressure weight', num('sc-press', s.ninfer_pressure_weight, 0.05, 0, 1), 'Share from KV-cache memory pressure.') +
+    field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A GPU whose last load report is older than this counts as fully busy.') +
+    field('Poll every (seconds)', num('sc-poll', s.poll_interval, 1, 1), 'How often the gateway reads each engine’s load.') +
+    '</div><div class="ed-actions"><button class="btn" id="sc-save">Save scoring</button></div>';
+  box.querySelector('#sc-save').onclick = async () => {
+    const v = id => +box.querySelector(id).value;
+    const sum = v('#sc-lane') + v('#sc-queue') + v('#sc-press');
+    if (sum < 0.5 || sum > 1.5) { flash('The three weights add up to ' + sum.toFixed(2) + '; keep them near 1.', true); return; }
+    const r = await api('/admin/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metrics: { ninfer_lane_weight: v('#sc-lane'), ninfer_queue_weight: v('#sc-queue'),
+        ninfer_pressure_weight: v('#sc-press'), stale_threshold: v('#sc-stale'), poll_interval: v('#sc-poll') } }) });
+    if (!r.ok) { flash(r.data.error || 'Save failed', true); return; }
+    flash('Scoring saved.');
+    delete box.dataset.bound; load();
+  };
+}
+
+document.getElementById('runtest').onclick = runTest;
+document.getElementById('newpool').onclick = () => startEdit('pool', '', true);
+document.getElementById('newpair').onclick = () => startEdit('overflow', '', true);
+load();
+setInterval(load, 10000);
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tn { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.problems { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.problems li { padding: 8px 12px; border-radius: 6px; background: var(--card2); border-left: 3px solid var(--muted); font-size: 13.5px; }
+.problems li.sev-error { border-left-color: var(--danger); }
+.problems li.sev-warning { border-left-color: var(--warn); }
+.problems .sev { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-right: 8px; }
+.allgood { font-size: 13.5px; }
+.routes { display: flex; flex-direction: column; gap: 14px; }
+article.route { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--card); }
+.route-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 10px; }
+.route-head h2 { margin: 2px 0; font-size: 17px; overflow-wrap: anywhere; }
+.route-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.facts { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.facts strong { color: var(--text); font-weight: 600; }
+.flow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.flow .node { border: 1px solid var(--border2); border-radius: 8px; padding: 8px 12px; background: var(--card2); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.flow .arrow { color: var(--muted); font-size: 13px; }
+.load { display: inline-block; width: 70px; height: 7px; border-radius: 4px; background: var(--border2); vertical-align: middle; overflow: hidden; }
+.load span { display: block; height: 100%; background: var(--primary-h); }
+.load.warm span { background: var(--warn); }
+.load.hot span { background: var(--danger); }
+tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.verdict { font-size: 15px; margin-bottom: 6px; }
+.steps { margin: 4px 0 8px; padding-left: 20px; font-size: 13.5px; }
+.tester-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.tester-row .field { margin: 0; }
+.editor { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.editor h3 { margin: 0 0 8px; font-size: 15px; }
+.sub { font-weight: 600; font-size: 13px; margin: 14px 0 6px; }
+.members { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.mrow { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, .8fr) minmax(0, .9fr) auto; gap: 10px; align-items: end;
+  padding: 10px; border: 1px solid var(--border2); border-radius: 8px; background: var(--card2); }
+@media (max-width: 860px) { .mrow { grid-template-columns: 1fr; } }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; min-width: 0; }
+.field > label { font-size: 12.5px; font-weight: 600; }
+.field input, .field select { width: 100%; min-width: 0; }
+.mrow .field { margin: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.hint { font-size: 12px; color: var(--muted); }
+.ed-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.headrow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+</style>
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Routing</h1><span class="muted" id="updated" style="margin-left:auto"></span></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <h2>Needs attention</h2>
+    <div id="problems"><span class="muted">Loading…</span></div>
+  </div>
+
+  <div class="card">
+    <div class="headrow"><h2 style="margin:0">Route map</h2>
+      <div class="route-actions"><button class="btn sm" id="newpool">New shared model</button><button class="btn sm" id="newpair">New overflow</button></div></div>
+    <p class="muted">Every name clients can call, in the order the gateway checks them: a <strong>shared model</strong> spreads requests across its GPUs, an <strong>overflow</strong> spills from one engine to another when it's busy, and anything else goes straight to the <strong>single engine</strong> serving that name.</p>
+    <div class="routes" id="routes"></div>
+  </div>
+
+  <div class="card" id="tester">
+    <h2>Test a route</h2>
+    <p class="muted" style="margin-top:0">Where would a new conversation go right now, and why? This uses the live routing code and current GPU load, without sending anything.</p>
+    <div class="tester-row">
+      <div class="field"><label for="testmodel">Model</label><select id="testmodel"></select></div>
+      <div class="field"><label for="testprompt">Prompt tokens</label><input id="testprompt" type="number" min="0" step="1000" value="4000"></div>
+      <div class="field"><label for="testoutput">Max output tokens</label><input id="testoutput" type="number" min="0" step="256" value="1024"></div>
+      <button class="btn primary" id="runtest">Test</button>
+    </div>
+    <div id="testout" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Private GPUs</h2>
+    <p class="muted" style="margin-top:0">GPUs users have linked. They're called by their own names (<span class="mono">gpu/model</span>) and only serve a shared model when an admin lists them and the owner agrees.</p>
+    <div id="private"></div>
+  </div>
+
+  <div class="card">
+    <h2>Advanced: load scoring</h2>
+    <div id="scoring"></div>
+  </div>
+</div>
+{{end}}

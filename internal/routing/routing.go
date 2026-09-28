@@ -74,6 +74,15 @@ func NewTracker(w Weights) *Tracker {
 	}
 }
 
+// SetWeights swaps the scoring weights in place, keeping every load
+// snapshot, down mark, in-flight count and queue average (a config save
+// must not make busy GPUs look idle until the next poll).
+func (t *Tracker) SetWeights(w Weights) {
+	t.mu.Lock()
+	t.weights = w
+	t.mu.Unlock()
+}
+
 // queueAlpha: weight of the newest sample in the queue-wait average
 // (≈ the last 5–10 requests dominate).
 const queueAlpha = 0.3

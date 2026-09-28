@@ -30,12 +30,18 @@ func (s *Server) SetConfig(nc *config.Config) {
 	// local_networks live in a package-level parsed set; re-derive so
 	// network edits apply without a restart.
 	s.ParseNetworks()
-	s.tracker = routing.NewTracker(routing.Weights{
+	w := routing.Weights{
 		NinferLane:     nc.Metrics.NinferLaneWeight,
 		NinferQueue:    nc.Metrics.NinferQueueWeight,
 		NinferPressure: nc.Metrics.NinferPressureWt,
 		StaleSeconds:   float64(nc.Metrics.StaleThreshold),
-	})
+	}
+	// Keep live load state across config saves: only the weights change.
+	if s.tracker != nil {
+		s.tracker.SetWeights(w)
+	} else {
+		s.tracker = routing.NewTracker(w)
+	}
 }
 
 // FlushUsage persists usage counters (called periodically + on shutdown).
@@ -110,6 +116,9 @@ func (s *Server) Handler() http.Handler {
 		http.MethodPost: s.handleAdminConfigPost,
 	}))
 	mux.HandleFunc("/admin/config/page", s.handleAdminConfigPage)
+	mux.HandleFunc("/admin/routing", s.handleRoutingPage)
+	mux.HandleFunc("/api/routing", s.handleRoutingAPI)
+	mux.HandleFunc("/api/routing/test", s.handleRoutingTest)
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/metrics", s.handleMetricsRich)
 	mux.HandleFunc("/slots", s.handleSlots)

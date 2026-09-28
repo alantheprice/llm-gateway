@@ -302,8 +302,9 @@ func (a *App) QueryBackendUsers(days int, backends []string, dest *[]BackendUser
 
 // BackendTokens: routed prompt+output tokens one backend served.
 type BackendTokens struct {
-	Backend string `db:"backend" json:"backend"`
-	Tokens  int64  `db:"tokens" json:"tokens"`
+	Backend  string `db:"backend" json:"backend"`
+	Tokens   int64  `db:"tokens" json:"tokens"`
+	Requests int64  `db:"requests" json:"requests"`
 }
 
 // QueryBackendTokensDay: tokens each backend served on a UTC day
@@ -314,7 +315,7 @@ func (a *App) QueryBackendTokensDay(day string, dest *[]BackendTokens) error {
 		return fmt.Errorf("analytics: DB not open")
 	}
 	return a.pb.DB().NewQuery(`
-		SELECT backend, SUM(prompt + output) AS tokens
+		SELECT backend, SUM(prompt + output) AS tokens, COUNT(*) AS requests
 		FROM requests
 		WHERE day = {:day} AND status < 400 AND backend != ''
 		GROUP BY backend
