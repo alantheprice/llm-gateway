@@ -324,6 +324,22 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 	}
 
+	// Tokens: prefer the gateway's own request log (every routed request,
+	// per backend, this UTC day). It survives engine restarts, so the
+	// restart guard above only matters when analytics is unavailable.
+	if ops := s.Ops(); ops != nil {
+		var rows []embeddedpb.BackendTokens
+		if err := ops.QueryBackendTokensDay(time.Now().UTC().Format("2006-01-02"), &rows); err == nil && len(rows) > 0 {
+			gw := make([]float64, len(hosts))
+			for _, r := range rows {
+				if idx, ok := backendHost[backendHostIP(r.Backend)]; ok {
+					gw[idx] += float64(r.Tokens)
+				}
+			}
+			tokensToday = gw
+		}
+	}
+
 	hostCosts := ComputeCosts(CostsParams{
 		Hosts: hosts, RateUSDPerKwh: rate, Now: time.Now(),
 		GPUKwhToday: gpuKwhToday, GPUCostToday: gpuCostToday,

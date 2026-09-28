@@ -300,6 +300,27 @@ func (a *App) QueryBackendUsers(days int, backends []string, dest *[]BackendUser
 	`).Bind(params).All(dest)
 }
 
+// BackendTokens: routed prompt+output tokens one backend served.
+type BackendTokens struct {
+	Backend string `db:"backend" json:"backend"`
+	Tokens  int64  `db:"tokens" json:"tokens"`
+}
+
+// QueryBackendTokensDay: tokens each backend served on a UTC day
+// (successful requests) — the gateway's own count, unaffected by engine
+// restarts resetting their counters.
+func (a *App) QueryBackendTokensDay(day string, dest *[]BackendTokens) error {
+	if a.pb.DB() == nil {
+		return fmt.Errorf("analytics: DB not open")
+	}
+	return a.pb.DB().NewQuery(`
+		SELECT backend, SUM(prompt + output) AS tokens
+		FROM requests
+		WHERE day = {:day} AND status < 400 AND backend != ''
+		GROUP BY backend
+	`).Bind(map[string]any{"day": day}).All(dest)
+}
+
 // ReuseRow: prefix-reuse path distribution.
 type ReuseRow struct {
 	Path     string `db:"path" json:"path"`
