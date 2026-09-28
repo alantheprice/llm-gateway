@@ -16,8 +16,7 @@ import (
 const routingConf = `{"gateway":{"port":0},
  "model_pools":{"shared":{"overflow_threshold":0.9,"members":[
    {"model_id":"a-model","backend":"http://10.9.0.1:8000"},
-   {"model_id":"wrong-id","backend":"http://10.9.0.2:8000"}]}},
- "overflow_pairs":{"a-model":{"fallback_model_id":"b-model","fallback_backend":"http://10.9.0.2:8000","overflow_threshold":0.5}}}`
+   {"model_id":"wrong-id","backend":"http://10.9.0.2:8000"}]}}}`
 
 func routingServer(t *testing.T) *Server {
 	t.Helper()
@@ -50,8 +49,9 @@ func adminDo(t *testing.T, s *Server, role, method, path, body string) *httptest
 	return w
 }
 
-// The route map lists names in resolution order with the right kind, and
-// flags a GPU listed with a model id its engine doesn't serve.
+// The route map lists names with the right kind (a pool member's own id is
+// "one GPU, called directly"), and flags a GPU listed with a model id its
+// engine doesn't serve.
 func TestRouteMap(t *testing.T) {
 	s := routingServer(t)
 	w := adminDo(t, s, "admin", "GET", "/api/routing", "")
@@ -68,7 +68,7 @@ func TestRouteMap(t *testing.T) {
 	for _, e := range m.Entries {
 		kinds[e.Name] = e.Kind
 	}
-	if kinds["shared"] != "pool" || kinds["a-model"] != "overflow" || kinds["b-model"] != "direct" {
+	if kinds["shared"] != "pool" || kinds["a-model"] != "gpu-direct" || kinds["b-model"] != "direct" {
 		t.Fatalf("kinds = %v", kinds)
 	}
 	found := false
@@ -88,8 +88,8 @@ func TestRouteMap(t *testing.T) {
 	}
 }
 
-// The dry run follows handleChat's order: pool pick by load, overflow
-// spill when the primary is busy, 404 for unknown names.
+// The dry run follows handleChat's order: pool pick by load, a single
+// engine by its own id, 404 for unknown names.
 func TestRouteDryRun(t *testing.T) {
 	s := routingServer(t)
 	run := func(body string) map[string]any {
@@ -104,8 +104,8 @@ func TestRouteDryRun(t *testing.T) {
 	if out := run(`{"model":"shared","prompt_tokens":1000}`); out["result"] != "routed" || out["pick_backend"] != "http://10.9.0.2:8000" {
 		t.Fatalf("pool pick = %v (want the idle GPU)", out)
 	}
-	if out := run(`{"model":"a-model"}`); out["pick_backend"] != "http://10.9.0.2:8000" {
-		t.Fatalf("overflow = %v (primary is 5/6 busy, should spill)", out)
+	if out := run(`{"model":"a-model"}`); out["pick_backend"] != "http://10.9.0.1:8000" {
+		t.Fatalf("direct = %v", out)
 	}
 	if out := run(`{"model":"nope"}`); out["result"] != "404" {
 		t.Fatalf("unknown = %v", out)

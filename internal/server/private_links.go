@@ -135,8 +135,8 @@ func (s *Server) privateModelNames(user string) []string {
 	return out
 }
 
-// platformModelsFor: the platform model names (pools and overflow pairs)
-// whose config lists backend — what a link's owner can consent to serve.
+// platformModelsFor: the shared models (pools) whose config lists backend —
+// what a link's owner can consent to serve.
 func (s *Server) platformModelsFor(backend string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,11 +147,6 @@ func (s *Server) platformModelsFor(backend string) []string {
 				out = append(out, name)
 				break
 			}
-		}
-	}
-	for name, pair := range s.cfg.OverflowPairs {
-		if pair.FallbackBackend == backend && !slices.Contains(out, name) {
-			out = append(out, name)
 		}
 	}
 	sort.Strings(out)

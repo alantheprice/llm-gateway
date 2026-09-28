@@ -83,22 +83,15 @@ func (s *Server) handleAdminConfigPost(w http.ResponseWriter, r *http.Request) {
 		errBody(w, 400, err.Error())
 		return
 	}
-	// Overlay merges JSON objects into the existing maps, so a pool or
-	// overflow pair the form removed would survive. A posted section is the
-	// complete set: replace those maps outright.
+	// Overlay merges JSON objects into the existing map, so a pool the
+	// editor removed would survive. A posted model_pools is the complete
+	// set: replace the map outright.
 	var top map[string]json.RawMessage
 	if json.Unmarshal(posted, &top) == nil {
 		if raw, ok := top["model_pools"]; ok {
 			nc.ModelPools = nil
 			if err := json.Unmarshal(raw, &nc.ModelPools); err != nil {
 				errBody(w, 400, "model_pools: "+err.Error())
-				return
-			}
-		}
-		if raw, ok := top["overflow_pairs"]; ok {
-			nc.OverflowPairs = nil
-			if err := json.Unmarshal(raw, &nc.OverflowPairs); err != nil {
-				errBody(w, 400, "overflow_pairs: "+err.Error())
 				return
 			}
 		}
@@ -219,13 +212,6 @@ func validateConfig(c *config.Config) error {
 			}
 			claimed[a] = name
 		}
-	}
-	for model, pair := range c.OverflowPairs {
-		if strings.TrimSpace(pair.FallbackBackend) == "" {
-			return fmt.Errorf("overflow_pairs.%s: fallback_backend required", model)
-		}
-		pair.Threshold = clamp01(pair.Threshold)
-		c.OverflowPairs[model] = pair
 	}
 	seenIP := map[string]bool{}
 	for i, h := range c.Hosts {

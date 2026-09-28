@@ -79,12 +79,6 @@ type PoolCfg struct {
 	Aliases []string `json:"aliases,omitempty"`
 }
 
-type OverflowPair struct {
-	FallbackModelID string  `json:"fallback_model_id"`
-	FallbackBackend string  `json:"fallback_backend"`
-	Threshold       float64 `json:"overflow_threshold"`
-}
-
 type CacheCfg struct {
 	TTL int `json:"ttl"`
 }
@@ -117,7 +111,6 @@ type Config struct {
 	LocalNetworks []string                `json:"local_networks"`
 	Metrics       MetricsCfg              `json:"metrics"`
 	ModelPools    map[string]PoolCfg      `json:"model_pools"`
-	OverflowPairs map[string]OverflowPair `json:"overflow_pairs"`
 	PublicModels  []string                `json:"public_models"`
 	Cache         CacheCfg                `json:"cache"`
 	// Full-cost accounting (admin /usage/costs):

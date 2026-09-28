@@ -61,11 +61,6 @@ func (s *Server) metricBackends() []string {
 			}
 		}
 	}
-	for _, pair := range s.cfg.OverflowPairs {
-		if pair.FallbackBackend != "" {
-			set[pair.FallbackBackend] = true
-		}
-	}
 	for u, l := range s.tracker.Snapshot() {
 		if l != nil && l.Engine == "ninfer" {
 			set[u] = true
@@ -445,7 +440,6 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(urls)
 	stale := s.cfg.Metrics.StaleThreshold
 	poll := s.cfg.Metrics.PollInterval
-	overflow := s.cfg.OverflowPairs
 	now := time.Now()
 	out := []map[string]any{}
 	for _, u := range urls {
@@ -512,16 +506,11 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, e)
 	}
-	overflowOut := map[string]any{}
-	for k, v := range overflow {
-		overflowOut[k] = v
-	}
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"backends":                out,
 		"poll_interval_seconds":   poll,
 		"stale_threshold_seconds": stale,
-		"overflow_pairs":          overflowOut,
 	})
 }

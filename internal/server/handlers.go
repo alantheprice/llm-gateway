@@ -367,16 +367,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Overflow-pair path
-	s.mu.Lock()
-	pair, hasPair := s.cfg.OverflowPairs[req.Model]
-	s.mu.Unlock()
-	if hasPair {
-		if s.tryOverflow(w, r, req.Model, &pair, body, user, keyID) {
-			return
-		}
-	}
-
 	// Direct resolution
 	url, mid := s.resolve(req.Model)
 	if url == "" {

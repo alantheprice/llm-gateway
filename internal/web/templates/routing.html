@@ -2,7 +2,7 @@
 {{define "scripts"}}
 <script>
 // Live state from /api/routing; the raw config from /admin/config is the
-// draft the editor changes (only model_pools, overflow_pairs and scoring are
+// draft the editor changes (only model_pools and scoring are
 // posted back, and those sections replace what's saved).
 let MAP = null, CFG = null, EDIT = null; // EDIT: {kind, name, isNew}
 
@@ -23,7 +23,7 @@ function consentBadge(c) {
     'paused': badge('grace', 'paused by owner') })[c] || '';
 }
 function kindLabel(e) {
-  return ({ pool: 'Shared model', overflow: 'Overflow', direct: 'Single engine', 'gpu-direct': 'One GPU, called directly' })[e.kind] || e.kind;
+  return ({ pool: 'Shared model', direct: 'Single engine', 'gpu-direct': 'One GPU, called directly' })[e.kind] || e.kind;
 }
 
 /* ---------- route map ---------- */
@@ -42,7 +42,7 @@ function entryCard(e) {
     '<h2 class="mono">' + esc(e.name) + '</h2><div class="muted">' + esc(e.summary || '') + ' · ' + (e.requests_today || 0).toLocaleString() + ' requests today</div></div>' +
     '<div class="route-actions">' +
       '<button class="btn sm" data-test="' + escAttr(e.name) + '">Test a route</button>' +
-      (e.kind === 'pool' || e.kind === 'overflow' ? '<button class="btn sm" data-edit="' + escAttr(e.kind) + '" data-name="' + escAttr(e.name) + '">Edit</button>' : '') +
+      (e.kind === 'pool' ? '<button class="btn sm" data-edit="pool" data-name="' + escAttr(e.name) + '">Edit</button>' : '') +
     '</div></header>';
   if (e.kind === 'pool') {
     const p = e.pool || {};
@@ -53,13 +53,6 @@ function entryCard(e) {
       ((p.aliases || []).length ? '<span>Also answers to <strong class="mono">' + p.aliases.map(esc).join(', ') + '</strong></span>' : '') + '</div>';
     h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load</th><th>Requests today</th><th>Context</th><th>Weight</th></tr></thead><tbody>' +
       (e.members || []).map(m => memberRow(m, e)).join('') + '</tbody></table></div>';
-  } else if (e.kind === 'overflow') {
-    const pr = e.primary, fb = e.fallback;
-    h += '<div class="flow">' +
-      '<div class="node"><span class="eyebrow">Primary</span><strong>' + esc(pr ? pr.gpu_label : 'missing') + '</strong>' + (pr ? '<div>' + loadBar(pr) + '</div>' : '') + '</div>' +
-      '<div class="arrow">at ' + pct(e.threshold) + ' busy →</div>' +
-      '<div class="node"><span class="eyebrow">Spills to</span><strong>' + esc(fb.gpu_label) + '</strong> ' + consentBadge(fb.consent) +
-        '<div class="muted mono">' + esc(fb.model_id) + '</div><div>' + loadBar(fb) + '</div></div></div>';
   } else if (e.engine) {
     h += '<div class="flow"><div class="node"><strong>' + esc(e.engine.gpu_label) + '</strong> <span class="muted">via ' + esc(e.engine.via) + '</span><div>' + loadBar(e.engine) + '</div></div></div>';
   }
@@ -142,11 +135,9 @@ function engineOptions(selected) {
 function modelsFor(url) { const e = (MAP.engines || []).find(x => x.url === url); return (e && e.models) || []; }
 
 function startEdit(kind, name, isNew) {
-  const draft = JSON.parse(JSON.stringify(kind === 'pool' ? (CFG.model_pools || {})[name] || {} : (CFG.overflow_pairs || {})[name] || {}));
-  if (kind === 'pool') {
-    draft.members = draft.members || [];
-    if (isNew) Object.assign(draft, { cache_affinity: true, overflow_threshold: 0.9, sticky_bias: 0.05, capacity_bias: 0.5, max_pool_share: 0 });
-  } else if (isNew) Object.assign(draft, { overflow_threshold: 0.2 });
+  const draft = JSON.parse(JSON.stringify((CFG.model_pools || {})[name] || {}));
+  draft.members = draft.members || [];
+  if (isNew) Object.assign(draft, { cache_affinity: true, overflow_threshold: 0.9, sticky_bias: 0.05, capacity_bias: 0.5, max_pool_share: 0 });
   EDIT = { kind, name, isNew, draft, newName: isNew ? '' : name };
   render();
   document.getElementById('editor').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -163,33 +154,26 @@ function renderEditor() {
   const box = document.getElementById('editor');
   if (!box) return;
   const d = EDIT.draft;
-  let h = '<h3>' + (EDIT.isNew ? (EDIT.kind === 'pool' ? 'New shared model' : 'New overflow') : 'Edit ' + esc(EDIT.name)) + '</h3>';
-  if (EDIT.isNew) h += field('Name clients call', '<input id="ed-name" class="mono" value="' + escAttr(EDIT.newName) + '" placeholder="' + (EDIT.kind === 'pool' ? 'qwen3.8-27b' : 'the engine’s own model id') + '">',
-    EDIT.kind === 'pool' ? 'The model name clients put in their requests.' : 'Overflow applies to requests for this exact model id, served by one engine.');
-  if (EDIT.kind === 'pool') {
-    h += field('Also answers to', '<input id="ed-aliases" class="mono" value="' + escAttr((d.aliases || []).join(', ')) + '" placeholder="other-name, another-name">',
-      'Other model names that route exactly like this one (same balancing and conversation affinity). Separate with commas.');
-    h += '<div class="sub">GPUs</div><div class="members">' + d.members.map((m, i) =>
-      '<div class="mrow" data-i="' + i + '">' +
-        field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
-        field('Model id it serves', '<input data-f="model_id" class="mono" list="ml-' + i + '" value="' + escAttr(m.model_id || '') + '"><datalist id="ml-' + i + '">' + modelsFor(m.backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>') +
-        field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', '0 = use its lane count. Higher gets more new conversations.') +
-        field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = what the engine reports.') +
-        '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
-      '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
-    h += '<div class="sub">Behaviour</div><div class="grid2">' +
-      field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
-      field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
-      field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets requests when every GPU is.') +
-      field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping.') +
-      field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size).') +
-      '</div>';
-  } else {
-    h += field('Spills to', '<select id="ed-fb">' + engineOptions(d.fallback_backend) + '</select>', 'Where requests go when the primary is busy.');
-    h += field('Model id there', '<input id="ed-fbm" class="mono" list="ml-fb" value="' + escAttr(d.fallback_model_id || '') + '"><datalist id="ml-fb">' + modelsFor(d.fallback_backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>');
-    h += field('Spill when the primary is at least (% busy)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100),
-      'Load is lanes, queue and cache pressure combined. 20% on a 6-lane GPU is roughly 2 busy lanes.');
-  }
+  let h = '<h3>' + (EDIT.isNew ? 'New shared model' : 'Edit ' + esc(EDIT.name)) + '</h3>';
+  if (EDIT.isNew) h += field('Name clients call', '<input id="ed-name" class="mono" value="' + escAttr(EDIT.newName) + '" placeholder="qwen3.8-27b">',
+    'The model name clients put in their requests.');
+  h += field('Also answers to', '<input id="ed-aliases" class="mono" value="' + escAttr((d.aliases || []).join(', ')) + '" placeholder="other-name, another-name">',
+    'Other model names that route exactly like this one (same balancing and conversation affinity). Separate with commas.');
+  h += '<div class="sub">GPUs</div><div class="members">' + d.members.map((m, i) =>
+    '<div class="mrow" data-i="' + i + '">' +
+      field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
+      field('Model id it serves', '<input data-f="model_id" class="mono" list="ml-' + i + '" value="' + escAttr(m.model_id || '') + '"><datalist id="ml-' + i + '">' + modelsFor(m.backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>') +
+      field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', '0 = use its lane count. Higher gets more new conversations.') +
+      field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = what the engine reports.') +
+      '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
+    '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
+  h += '<div class="sub">Behaviour</div><div class="grid2">' +
+    field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
+    field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
+    field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets requests when every GPU is.') +
+    field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping.') +
+    field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size).') +
+    '</div>';
   h += '<div class="ed-actions"><button class="btn primary" id="ed-save">Save</button><button class="btn" id="ed-cancel">Cancel</button>' +
     (EDIT.isNew ? '' : '<span style="flex:1"></span><button class="btn danger" id="ed-del">Delete ' + esc(EDIT.name) + '</button>') + '</div>' +
     '<p class="hint">Saving updates the gateway config file and takes effect for the next request. GPUs keep their live load state.</p>';
@@ -200,27 +184,21 @@ function renderEditor() {
 function readEditor(box) {
   const d = EDIT.draft;
   if (EDIT.isNew) EDIT.newName = (box.querySelector('#ed-name').value || '').trim();
-  if (EDIT.kind === 'pool') {
-    box.querySelectorAll('.mrow').forEach(row => {
-      const m = d.members[+row.dataset.i];
-      m.backend = row.querySelector('[data-f="backend"]').value;
-      m.model_id = row.querySelector('[data-f="model_id"]').value.trim();
-      m.capacity_weight = +row.querySelector('[data-f="capacity_weight"]').value || 0;
-      const mc = +row.querySelector('[data-f="max_context"]').value || 0;
-      if (mc) m.max_context = mc; else delete m.max_context;
-    });
-    d.cache_affinity = box.querySelector('#ed-aff').checked;
-    const al = box.querySelector('#ed-aliases').value.split(',').map(x => x.trim()).filter(Boolean);
-    if (al.length) d.aliases = al; else delete d.aliases;
-    d.max_pool_share = (+box.querySelector('#ed-share').value || 0) / 100;
-    d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
-    d.sticky_bias = +box.querySelector('#ed-sticky').value || 0;
-    d.capacity_bias = +box.querySelector('#ed-cap').value || 0;
-  } else {
-    d.fallback_backend = box.querySelector('#ed-fb').value;
-    d.fallback_model_id = box.querySelector('#ed-fbm').value.trim();
-    d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
-  }
+  box.querySelectorAll('.mrow').forEach(row => {
+    const m = d.members[+row.dataset.i];
+    m.backend = row.querySelector('[data-f="backend"]').value;
+    m.model_id = row.querySelector('[data-f="model_id"]').value.trim();
+    m.capacity_weight = +row.querySelector('[data-f="capacity_weight"]').value || 0;
+    const mc = +row.querySelector('[data-f="max_context"]').value || 0;
+    if (mc) m.max_context = mc; else delete m.max_context;
+  });
+  d.cache_affinity = box.querySelector('#ed-aff').checked;
+  const al = box.querySelector('#ed-aliases').value.split(',').map(x => x.trim()).filter(Boolean);
+  if (al.length) d.aliases = al; else delete d.aliases;
+  d.max_pool_share = (+box.querySelector('#ed-share').value || 0) / 100;
+  d.overflow_threshold = (+box.querySelector('#ed-thr').value || 0) / 100;
+  d.sticky_bias = +box.querySelector('#ed-sticky').value || 0;
+  d.capacity_bias = +box.querySelector('#ed-cap').value || 0;
 }
 
 function bindEditor(box) {
@@ -230,8 +208,6 @@ function bindEditor(box) {
     if (ms.length && !inp.value) inp.value = ms[0];
     rerender();
   });
-  const fb = box.querySelector('#ed-fb');
-  if (fb) fb.onchange = () => { const inp = box.querySelector('#ed-fbm'), ms = modelsFor(fb.value); if (ms.length && !inp.value) inp.value = ms[0]; rerender(); };
   box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { readEditor(box); EDIT.draft.members.splice(+b.dataset.rm, 1); renderEditor(); });
   const add = box.querySelector('#ed-add');
   if (add) add.onclick = () => { readEditor(box); EDIT.draft.members.push({ backend: '', model_id: '', capacity_weight: 0 }); renderEditor(); };
@@ -239,27 +215,22 @@ function bindEditor(box) {
   box.querySelector('#ed-save').onclick = () => { readEditor(box); save(false); };
   const del = box.querySelector('#ed-del');
   if (del) del.onclick = () => {
-    if (confirm('Delete ' + EDIT.name + '? Clients calling it will get "model not found" (or reach its engine directly, if one serves that name).')) save(true);
+    if (confirm('Delete ' + EDIT.name + '? Clients calling it (or its aliases) will get "model not found", or reach an engine directly if one serves that name.')) save(true);
   };
 }
 
 async function save(remove) {
   const pools = JSON.parse(JSON.stringify(CFG.model_pools || {}));
-  const pairs = JSON.parse(JSON.stringify(CFG.overflow_pairs || {}));
-  const target = EDIT.kind === 'pool' ? pools : pairs;
   const name = EDIT.isNew ? EDIT.newName : EDIT.name;
   if (!name) { flash('Give it a name clients will call.', true); return; }
-  if (EDIT.isNew && (pools[name] || pairs[name])) { flash(name + ' already exists.', true); return; }
-  if (!remove && EDIT.kind === 'pool') {
+  if (EDIT.isNew && pools[name]) { flash(name + ' already exists.', true); return; }
+  if (!remove) {
     if (!EDIT.draft.members.length) { flash('Add at least one GPU.', true); return; }
     if (EDIT.draft.members.some(m => !m.backend || !m.model_id)) { flash('Every GPU needs an engine and the model id it serves.', true); return; }
   }
-  if (!remove && EDIT.kind === 'overflow' && (!EDIT.draft.fallback_backend || !EDIT.draft.fallback_model_id)) {
-    flash('Choose where it spills to and the model id there.', true); return;
-  }
-  if (remove) delete target[name]; else target[name] = EDIT.draft;
+  if (remove) delete pools[name]; else pools[name] = EDIT.draft;
   const r = await api('/admin/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model_pools: pools, overflow_pairs: pairs }) });
+    body: JSON.stringify({ model_pools: pools }) });
   if (!r.ok) { flash(r.data.error || 'Save failed', true); return; }
   flash(remove ? 'Deleted ' + name + '.' : 'Saved ' + name + '. It applies to the next request.');
   EDIT = null;
@@ -277,7 +248,6 @@ function renderScoring() {
     field('Queue weight', num('sc-queue', s.ninfer_queue_weight, 0.05, 0, 1), 'Share from requests waiting for a lane.') +
     field('Pressure weight', num('sc-press', s.ninfer_pressure_weight, 0.05, 0, 1), 'Share from KV-cache memory pressure.') +
     field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A GPU whose last load report is older than this counts as fully busy.') +
-    field('Poll every (seconds)', num('sc-poll', s.poll_interval, 1, 1), 'How often the gateway reads each engine’s load.') +
     '</div><div class="ed-actions"><button class="btn" id="sc-save">Save scoring</button></div>';
   box.querySelector('#sc-save').onclick = async () => {
     const v = id => +box.querySelector(id).value;
@@ -285,7 +255,7 @@ function renderScoring() {
     if (sum < 0.5 || sum > 1.5) { flash('The three weights add up to ' + sum.toFixed(2) + '; keep them near 1.', true); return; }
     const r = await api('/admin/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ metrics: { ninfer_lane_weight: v('#sc-lane'), ninfer_queue_weight: v('#sc-queue'),
-        ninfer_pressure_weight: v('#sc-press'), stale_threshold: v('#sc-stale'), poll_interval: v('#sc-poll') } }) });
+        ninfer_pressure_weight: v('#sc-press'), stale_threshold: v('#sc-stale') } }) });
     if (!r.ok) { flash(r.data.error || 'Save failed', true); return; }
     flash('Scoring saved.');
     delete box.dataset.bound; load();
@@ -294,7 +264,6 @@ function renderScoring() {
 
 document.getElementById('runtest').onclick = runTest;
 document.getElementById('newpool').onclick = () => startEdit('pool', '', true);
-document.getElementById('newpair').onclick = () => startEdit('overflow', '', true);
 load();
 setInterval(load, 10000);
 </script>
@@ -360,8 +329,8 @@ tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); 
 
   <div class="card">
     <div class="headrow"><h2 style="margin:0">Route map</h2>
-      <div class="route-actions"><button class="btn sm" id="newpool">New shared model</button><button class="btn sm" id="newpair">New overflow</button></div></div>
-    <p class="muted">Every name clients can call, in the order the gateway checks them: a <strong>shared model</strong> spreads requests across its GPUs, an <strong>overflow</strong> spills from one engine to another when it's busy, and anything else goes straight to the <strong>single engine</strong> serving that name.</p>
+      <div class="route-actions"><button class="btn sm" id="newpool">New shared model</button></div></div>
+    <p class="muted">Every name clients can call, in the order the gateway checks them: a <strong>shared model</strong> (or one of its aliases) spreads requests across its GPUs and keeps each conversation on one GPU; anything else goes straight to the <strong>single engine</strong> serving that name.</p>
     <div class="routes" id="routes"></div>
   </div>
 

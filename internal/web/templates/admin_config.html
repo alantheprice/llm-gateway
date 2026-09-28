@@ -41,70 +41,6 @@ function wireHostDels() {
   document.querySelectorAll('.host-del').forEach(b => b.onclick = () => b.closest('.hostrow').remove());
 }
 
-/* ---------- pools ---------- */
-function memberRow(m) {
-  m = m || {};
-  return '<div class="memberrow">' +
-    '<label class="mf"><span>model id</span>' +
-    '<input name="member_model" type="text" value="' + escAttr(m.model_id||'') + '" placeholder="qwen3.8-27b-5090" title="Engine model id as the backend reports it (hidden from /v1/models)"></label>' +
-    '<label class="mf"><span>backend url</span>' +
-    '<input name="member_backend" type="text" value="' + escAttr(m.backend||'') + '" placeholder="http://127.0.0.1:8000" title="Base URL of the engine: http://host:port on the LAN, or http://link/<agent>:<port> for a linked GPU"></label>' +
-    '<label class="mf mf-num" title="Context window override in tokens (0 = use what the engine reports). Requests larger than this skip the member."><span>max ctx</span>' +
-    '<input name="member_maxctx" type="number" step="1024" min="0" value="' + (m.max_context ?? 0) + '"></label>' +
-    '<label class="mf mf-num" title="Relative capacity vs other members (default 1)"><span>weight</span>' +
-    '<input name="member_weight" type="number" step="1" value="' + (m.capacity_weight ?? 1) + '"></label>' +
-    delBtn('member') + '</div>';
-}
-function memberLegend() {
-  return '<div class="rowlegend"><span>model id</span><span>backend url</span><span>max ctx</span><span>weight</span><span></span></div>';
-}
-function poolRow(name, p) {
-  p = p || {};
-  return '<div class="poolrow cfgbox">' +
-    '<div class="cfggrid">' +
-    field('pool name', txt('pool_name', name, 'qwen3.8-27b'), 'The model id clients call; member ids are hidden.') +
-    field('overflow_threshold', num('pool_threshold', p.overflow_threshold ?? 0.20, 0.05), 'Load score (0-1) above which a member is skipped for new requests.') +
-    field('sticky_bias', num('pool_sticky', p.sticky_bias ?? 0, 0.05), 'Score bonus for a member already holding the session (KV cache reuse).') +
-    field('capacity_bias', num('pool_bias', p.capacity_bias ?? 0, 0.05), 'Static preference for higher-capacity members.') +
-    '<label class="cfgfield cfgtoggle" title="Route conversations to the GPU already holding their KV prefix (content-hash table)"><input name="pool_cacheaff" type="checkbox"' + (p.cache_affinity ? ' checked' : '') + '><span>cache affinity</span></label>' +
-    field('max_pool_share', num('pool_maxshare', p.max_pool_share ?? 0, 0.8), 'Fairness cap (0-1, 0=off): new conversations prefer a sibling GPU when one member exceeds this share of today\'s new conversations.') +
-    '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('pool') + '</div>' +
-    '</div>' +
-    '<div class="members">' + memberLegend() + (p.members||[]).map(memberRow).join('') + '</div>' +
-    '<button type="button" class="btn small member-add">+ member</button>' +
-    '</div>';
-}
-function wirePoolBtns() {
-  document.querySelectorAll('.member-del').forEach(b => b.onclick = () => b.closest('.memberrow').remove());
-  document.querySelectorAll('.pool-del').forEach(b => b.onclick = () => b.closest('.poolrow').remove());
-  document.querySelectorAll('.member-add').forEach(b => b.onclick = () => {
-    const wrap = b.closest('.poolrow').querySelector('.members');
-    wrap.insertAdjacentHTML('beforeend', memberRow({}));
-    wirePoolBtns();
-  });
-}
-
-/* ---------- overflow pairs ---------- */
-function pairRow(name, o) {
-  o = o || {};
-  return '<div class="pairrow">' +
-    '<label class="mf"><span>source model</span>' +
-    '<input name="pair_name" type="text" value="' + escAttr(name||'') + '" placeholder="qwen3.8-27b-5090" title="The model whose overflow routes here"></label>' +
-    '<label class="mf"><span>fallback model</span>' +
-    '<input name="pair_model" type="text" value="' + escAttr(o.fallback_model_id||'') + '" placeholder="qwen3.8-27b" title="Model id to use on the fallback backend"></label>' +
-    '<label class="mf"><span>fallback backend</span>' +
-    '<input name="pair_backend" type="text" value="' + escAttr(o.fallback_backend||'') + '" placeholder="http://192.168.1.20:8006" title="Where requests go when the source model is saturated"></label>' +
-    '<label class="mf mf-num" title="Load score at which overflow fires (0-1)"><span>threshold</span>' +
-    '<input name="pair_threshold" type="number" step="0.05" value="' + (o.overflow_threshold ?? 0.20) + '"></label>' +
-    delBtn('pair') + '</div>';
-}
-function pairLegend() {
-  return '<div class="rowlegend"><span>source model</span><span>fallback model</span><span>fallback backend</span><span>threshold</span><span></span></div>';
-}
-function wirePairDels() {
-  document.querySelectorAll('.pair-del').forEach(b => b.onclick = () => b.closest('.pairrow').remove());
-}
-
 function render(c) {
   CFG = c;
   const g = c.gateway || {};
@@ -127,12 +63,7 @@ function render(c) {
 
   document.getElementById('metricsgrid').innerHTML =
     field('poll_interval (s)', num('m_poll', m.poll_interval, 1)) +
-    field('stale_threshold (s)', num('m_stale', m.stale_threshold, 1),
-      'Backends with older metrics score 0 (dump everything there is safe).') +
     field('default_max_seqs', num('m_seqs', m.default_max_seqs, 1), 'Fallback concurrency for non-NInfer backends (vLLM scoring).') +
-    field('ninfer_lane_weight', num('m_lane', m.ninfer_lane_weight, 0.05), 'NInfer score = lane*W + queue*W + kv_pressure*W.') +
-    field('ninfer_queue_weight', num('m_queue', m.ninfer_queue_weight, 0.05)) +
-    field('ninfer_pressure_weight', num('m_press', m.ninfer_pressure_weight, 0.05)) +
     field('backend_max_seqs (one "url = concurrency" per line)',
       '<textarea name="m_bms" rows="3">' + esc(Object.entries(m.backend_max_seqs||{}).map(([k,v]) => k + ' = ' + v).join('\n')) + '</textarea>',
       'Used by vLLM-style scoring and capacity math.');
@@ -157,20 +88,6 @@ function render(c) {
     '<p class="muted">No hosts configured — the Costs page shows GPU energy only.</p>';
   wireHostDels();
 
-  // Pools.
-  document.getElementById('poolsbox').innerHTML =
-    Object.entries(c.model_pools||{}).map(([n, p]) => poolRow(n, p)).join('') ||
-    '<p class="muted">No pools. A pool lets one model id load-balance across GPUs.</p>';
-  wirePoolBtns();
-
-  // Overflow pairs.
-  document.getElementById('pairsbox').innerHTML = pairLegend() +
-    (Object.entries(c.overflow_pairs||{}).map(([n, o]) => pairRow(n, o)).join('') ||
-    '<p class="muted">No overflow pairs. A pair routes saturated models to a fallback engine.</p>');
-  wirePairDels();
-
-  // Public models: plain lines, no JSON.
-  document.getElementById('publicmodels').value = (c.public_models||[]).join('\n');
 }
 
 function collect() {
@@ -194,41 +111,6 @@ function collect() {
     };
   }).filter(h => h.ips.length || h.links.length);
 
-  const model_pools = {};
-  document.querySelectorAll('.poolrow').forEach(row => {
-    const name = row.querySelector('[name="pool_name"]').value.trim();
-    if (!name) return;
-    const members = [...row.querySelectorAll('.memberrow')].map(mr => {
-      const gv = n => mr.querySelector('[name="'+n+'"]');
-      return {
-        model_id: gv('member_model').value.trim(),
-        backend: gv('member_backend').value.trim(),
-        max_context: parseInt(gv('member_maxctx').value, 10) || 0,
-        capacity_weight: parseInt(gv('member_weight').value, 10) || 1,
-      };
-    }).filter(m => m.model_id && m.backend);
-    model_pools[name] = {
-      members,
-      overflow_threshold: parseFloat(row.querySelector('[name="pool_threshold"]').value) || 0,
-      sticky_bias: parseFloat(row.querySelector('[name="pool_sticky"]').value) || 0,
-      capacity_bias: parseFloat(row.querySelector('[name="pool_bias"]').value) || 0,
-      cache_affinity: row.querySelector('[name="pool_cacheaff"]').checked,
-      max_pool_share: parseFloat(row.querySelector('[name="pool_maxshare"]').value) || 0,
-    };
-  });
-
-  const overflow_pairs = {};
-  document.querySelectorAll('.pairrow').forEach(row => {
-    const gv = n => row.querySelector('[name="'+n+'"]').value.trim();
-    const name = gv('pair_name');
-    if (!name || !gv('pair_backend')) return;
-    overflow_pairs[name] = {
-      fallback_model_id: gv('pair_model'),
-      fallback_backend: gv('pair_backend'),
-      overflow_threshold: parseFloat(row.querySelector('[name="pair_threshold"]').value) || 0,
-    };
-  });
-
   const bms = {};
   lines(val('m_bms')).forEach(l => {
     const i = l.indexOf('=');
@@ -251,11 +133,7 @@ function collect() {
     },
     metrics: {
       poll_interval: parseInt(val('m_poll'), 10) || 10,
-      stale_threshold: parseInt(val('m_stale'), 10) || 30,
       default_max_seqs: parseInt(val('m_seqs'), 10) || 3,
-      ninfer_lane_weight: parseFloat(val('m_lane')) || 0,
-      ninfer_queue_weight: parseFloat(val('m_queue')) || 0,
-      ninfer_pressure_weight: parseFloat(val('m_press')) || 0,
       backend_max_seqs: bms,
     },
     electricity_rate_usd_per_kwh: parseFloat(val('e_rate')) || 0.125,
@@ -265,9 +143,6 @@ function collect() {
       output_usd_per_m: parseFloat(val('e_pb_tg')) || 0,
     },
     hosts,
-    model_pools,
-    overflow_pairs,
-    public_models: lines(document.getElementById('publicmodels').value),
   };
 }
 
@@ -275,15 +150,6 @@ document.getElementById('addhost').addEventListener('click', () => {
   document.getElementById('hostsbox').insertAdjacentHTML('beforeend', hostRow({}));
   wireHostDels();
 });
-document.getElementById('addpool').addEventListener('click', () => {
-  document.getElementById('poolsbox').insertAdjacentHTML('beforeend', poolRow('', {}));
-  wirePoolBtns();
-});
-document.getElementById('addpair').addEventListener('click', () => {
-  document.getElementById('pairsbox').insertAdjacentHTML('beforeend', pairRow('', {}));
-  wirePairDels();
-});
-
 document.getElementById('save').addEventListener('click', async () => {
   const r = await api('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(collect())});
   if (r.status === 401) { location = '/'; return; }
@@ -330,9 +196,9 @@ load();
   </div>
 
   <div class="card">
-    <h2>Metrics &amp; scoring</h2>
+    <h2>Metrics polling</h2>
     <div class="cfggrid" id="metricsgrid"></div>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">Lane/queue/pressure weights only apply to NInfer engines reporting /slots + /usage — that's the specialized fork. Other engines fall back to a vLLM-metrics heuristic (see README "Engine metrics").</p>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">How the load score is weighted lives on the <a href="/admin/routing">Routing</a> page.</p>
   </div>
 
   <div class="card">
@@ -344,23 +210,8 @@ load();
   </div>
 
   <div class="card">
-    <h2>Model pools</h2>
-    <p class="muted" style="font-size:12px;margin:0 0 8px">One pool = one virtual model id that load-balances across several GPUs. Members are picked per request by load score; big prompts prefer large-ctx members.</p>
-    <div id="poolsbox"></div>
-    <button type="button" class="btn small" id="addpool">+ pool</button>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">Pool MEMBER model ids are hidden from /v1/models; the pool name is what clients call.</p>
-  </div>
-
-  <div class="card">
-    <h2>Overflow pairs</h2>
-    <p class="muted" style="font-size:12px;margin:0 0 8px">Route requests away from a saturated model to a fallback engine (failover happens before any bytes reach the client).</p>
-    <div id="pairsbox"></div>
-    <button type="button" class="btn small" id="addpair">+ pair</button>
-  </div>
-
-  <div class="card">
-    <h2>Public models (one per line)</h2>
-    <textarea id="publicmodels" rows="4" style="font-family:monospace;font-size:12.5px;width:100%"></textarea>
+    <h2>Shared models &amp; routing</h2>
+    <p class="muted" style="margin:0">Shared models, their GPUs, aliases and load scoring are edited on the <a href="/admin/routing">Routing</a> page, which also shows live load and lets you test where a request would go.</p>
   </div>
 
   <div style="display:flex;gap:8px;margin-top:4px">

@@ -17,9 +17,9 @@ import (
 
 // Routing admin: one page that shows every name a client can call and what
 // the gateway does with it, in the order handleChat resolves it — shared
-// pool, overflow pair, a single engine — plus users' private links, the
+// pool (by name or alias), then a single engine — plus users' private links, the
 // engines an admin can route to, and problems worth fixing. The page edits
-// pools and overflow through POST /admin/config (same validation and save
+// pools through POST /admin/config (same validation and save
 // path as the config page); the dry run uses the live pickers without
 // side effects.
 
@@ -55,14 +55,11 @@ type routeMember struct {
 
 type routeEntry struct {
 	Name      string         `json:"name"`
-	Kind      string         `json:"kind"` // pool | overflow | direct | gpu-direct
+	Kind      string         `json:"kind"` // pool | direct | gpu-direct
 	ModelKind string         `json:"model_kind"`
 	Summary   string         `json:"summary"`
 	Pool      map[string]any `json:"pool,omitempty"`
 	Members   []routeMember  `json:"members,omitempty"`
-	Primary   *engineView    `json:"primary,omitempty"`
-	Fallback  *routeMember   `json:"fallback,omitempty"`
-	Threshold float64        `json:"threshold,omitempty"`
 	Engine    *engineView    `json:"engine,omitempty"`
 	Requests  int64          `json:"requests_today"`
 }
@@ -201,7 +198,6 @@ func (s *Server) routeMap() map[string]any {
 	for k, v := range s.cfg.ModelPools {
 		pools[k] = v
 	}
-	pairs := s.cfg.OverflowPairs
 	metrics := s.cfg.Metrics
 	publicModels := append([]string(nil), s.cfg.PublicModels...)
 	discovered := map[string][]string{} // model id -> backend URLs
@@ -286,44 +282,7 @@ func (s *Server) routeMap() map[string]any {
 		entries = append(entries, e)
 	}
 
-	// 2. Overflow pairs (checked after pools, before direct engines).
-	pairNames := make([]string, 0, len(pairs))
-	for n := range pairs {
-		pairNames = append(pairNames, n)
-	}
-	sort.Strings(pairNames)
-	for _, name := range pairNames {
-		pr := pairs[name]
-		if covered[name] {
-			problems = append(problems, routeProblem{"warning", name, "Overflow for " + name + " never applies: a shared model with that name or alias takes these requests first."})
-			continue
-		}
-		covered[name] = true
-		e := routeEntry{Name: name, Kind: "overflow", ModelKind: kindFor(name), Threshold: pr.Threshold, Requests: byName[name]}
-		if urls := discovered[name]; len(urls) > 0 {
-			pv := s.engineInfoView(urls[0], reqs)
-			e.Primary = &pv
-		} else {
-			problems = append(problems, routeProblem{"error", name, "No engine serves " + name + " directly, so overflow has nothing to spill from; requests get a 404."})
-		}
-		fv := s.engineInfoView(pr.FallbackBackend, reqs)
-		fb := routeMember{engineView: fv, ModelID: pr.FallbackModelID, Consent: s.linkConsent(pr.FallbackBackend, name)}
-		fb.Serving = fv.Known && fv.Up && s.linkServesPool(pr.FallbackBackend, name)
-		e.Fallback = &fb
-		if !fb.Serving {
-			problems = append(problems, routeProblem{"warning", name, "Overflow target " + fv.GPULabel + " can't take traffic right now."})
-		}
-		e.Summary = fmt.Sprintf("spills to %s when %s is at least %.0f%% busy", fv.GPULabel,
-			func() string {
-				if e.Primary != nil {
-					return e.Primary.GPULabel
-				}
-				return "the primary"
-			}(), pr.Threshold*100)
-		entries = append(entries, e)
-	}
-
-	// 3. Single engines callable by their own model id.
+	// 2. Single engines callable by their own model id.
 	ids := make([]string, 0, len(discovered))
 	for id := range discovered {
 		ids = append(ids, id)
@@ -409,7 +368,6 @@ func (s *Server) dryRun(model string, promptTokens, outputTokens int) map[string
 
 	poolName, pool, isPool := s.poolFor(model)
 	s.mu.Lock()
-	pair, hasPair := s.cfg.OverflowPairs[model]
 	leader := s.leader[poolName]
 	s.mu.Unlock()
 
@@ -472,24 +430,6 @@ func (s *Server) dryRun(model string, promptTokens, outputTokens int) map[string
 		out["steps"] = steps
 		return out
 	}
-	if hasPair {
-		url, _ := s.resolve(model)
-		score := s.tracker.Score(url)
-		if url != "" && score < pair.Threshold {
-			steps = append(steps, fmt.Sprintf("%s has headroom (load %.0f%%, spills at %.0f%%), so it serves directly.",
-				s.gpuIdentity(url).Label, score*100, pair.Threshold*100))
-			out["pick"], out["pick_backend"], out["result"] = s.gpuIdentity(url).Label, url, "routed"
-		} else if !s.linkServesPool(pair.FallbackBackend, model) {
-			steps = append(steps, "The primary is busy, but the overflow GPU's owner hasn't agreed to serve this model; it stays on the primary.")
-			out["pick"], out["pick_backend"], out["result"] = s.gpuIdentity(url).Label, url, "routed"
-		} else {
-			steps = append(steps, fmt.Sprintf("The primary is busy (load %.0f%%, spills at %.0f%%), so it spills to %s.",
-				score*100, pair.Threshold*100, s.gpuIdentity(pair.FallbackBackend).Label))
-			out["pick"], out["pick_backend"], out["result"] = s.gpuIdentity(pair.FallbackBackend).Label, pair.FallbackBackend, "routed"
-		}
-		out["steps"] = steps
-		return out
-	}
 	if url, _ := s.resolve(model); url != "" {
 		steps = append(steps, model+" is served by one engine.")
 		out["pick"], out["pick_backend"], out["result"] = s.gpuIdentity(url).Label, url, "routed"
@@ -499,7 +439,7 @@ func (s *Server) dryRun(model string, promptTokens, outputTokens int) map[string
 	if strings.Contains(model, "/") {
 		steps = append(steps, "Not a platform model. If it's someone's private GPU, only its owner and the people it's shared with can call it.")
 	} else {
-		steps = append(steps, "No pool, overflow pair or engine serves this name.")
+		steps = append(steps, "No shared model, alias or engine serves this name.")
 	}
 	out["result"] = "404"
 	out["steps"] = steps

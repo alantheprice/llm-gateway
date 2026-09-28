@@ -119,7 +119,7 @@ agent: relay GET /slots
 <p>A platform model is a shared name such as <code>qwen3.8-27b</code>, which the gateway routes across several GPUs by load, cache affinity and context window. Everyone with an API key can call it.</p>
 <p>A GPU helps serve a platform model <strong>only when both sides agree</strong>:</p>
 <ol>
-<li>An <strong>admin</strong> lists the GPU in that model's configuration (a pool member or overflow target with backend <code>http://link/&lt;gpu-name&gt;:&lt;port&gt;</code>).</li>
+<li>An <strong>admin</strong> adds the GPU to that shared model on the <strong>Routing</strong> page (it appears in the GPU list as soon as its agent connects).</li>
 <li><strong>You</strong> tick that model on the link in <strong>My GPUs</strong>.</li>
 </ol>
 <p>Until you tick it, no platform traffic reaches your GPU, even if an admin has listed it. Ticking it means anyone's prompts for that model may be routed to your machine. Untick it, or pause the link, to stop at once.</p>

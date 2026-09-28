@@ -189,18 +189,24 @@ Loop guard: each member tried at most once.
   (tokens from backend usage or final SSE chunk).
 - Legacy-key requests attribute to user "legacy" (or configured name).
 
-## 9. Overflow (non-pool legacy path)
-`overflow_pairs`: when primary model's serving backend score ≥ threshold,
-retry on fallback backend with `fallback_model_id`. (Pool path supersedes
-this when model_pools configured; kept for compat.)
+## 9. Aliases
+A pool's `aliases` are other model names that route exactly like the pool
+(same member pick, same conversation affinity, keyed by the pool's name).
+Resolution order: pool name or alias → engine serving that model id →
+private link. Responses echo the name the client called. (`overflow_pairs`
+were removed: a pool with capacity weights and a busy threshold covers the
+same case and keeps conversations on one GPU. Old configs still load; the
+key is ignored.)
 
 ## 10. Config file (same format as llm_gateway.conf)
 Single JSON file (strict JSON — no comments), keys: gateway{port,
 trust_local_networks, models_require_auth, api_keys_file,
 internal_api_key_file, users_file, usage_file},
 discovery{local_ports,remote_host,remote_ports},
-local_networks[], metrics{...}, backend_max_seqs{}, model_pools{},
-overflow_pairs{}, public_models[], cache{ttl}.
+local_networks[], metrics{...}, backend_max_seqs{}, model_pools{} (each
+with members[], aliases[], cache_affinity, max_pool_share,
+overflow_threshold, sticky_bias, capacity_bias), hosts[], price_book{},
+cache{ttl}.
 - Auto-reload on mtime change (like the Python conf watcher).
 - Admin UI (`/admin/config/page` → GET/POST `/admin/config`) reads and
   writes this file: POST overlays onto the current config, validates,

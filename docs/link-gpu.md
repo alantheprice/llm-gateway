@@ -130,7 +130,7 @@ The link's **Usage** table shows who used it over the last 7 days: requests, tok
 A platform model is a shared name such as `qwen3.8-27b`, which the gateway routes across several GPUs by load, cache affinity and context window. Everyone with an API key can call it.
 
 A GPU helps serve a platform model **only when both sides agree**:
-1. An **admin** lists the GPU in that model's configuration (a pool member or overflow target with backend `http://link/<gpu-name>:<port>`).
+1. An **admin** adds the GPU to that shared model on the **Routing** page (it appears in the GPU list as soon as its agent connects).
 2. **You** tick that model on the link in **My GPUs**.
 
 Until you tick it, no platform traffic reaches your GPU, even if an admin has listed it. Ticking it means anyone's prompts for that model may be routed to your machine. Untick it, or pause the link, to stop at once.

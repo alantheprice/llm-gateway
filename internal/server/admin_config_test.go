@@ -153,22 +153,21 @@ func TestValidateConfigLinkOnlyHost(t *testing.T) {
 	}
 }
 
-// Removing a pool or overflow pair in the form removes it: posted sections
-// replace the maps instead of merging into them.
-func TestAdminConfigPostRemovesPoolsAndPairs(t *testing.T) {
+// Removing a pool in the editor removes it: a posted model_pools replaces
+// the map instead of merging into it.
+func TestAdminConfigPostRemovesPools(t *testing.T) {
 	s, _ := adminConfServer(t, `{"gateway":{"port":8033},
 	 "model_pools":{"a":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]},
-	                "b":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9002"}]}},
-	 "overflow_pairs":{"x":{"fallback_model_id":"m","fallback_backend":"http://127.0.0.1:9003","overflow_threshold":0.5}}}`)
+	                "b":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9002"}]}}}`)
 	w := adminSessionRequest(s, "POST", "/admin/config",
-		`{"model_pools":{"a":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]}},"overflow_pairs":{}}`)
+		`{"model_pools":{"a":{"members":[{"model_id":"m","backend":"http://127.0.0.1:9001"}]}}}`)
 	if w.Code != 200 {
 		t.Fatalf("POST = %d: %s", w.Code, w.Body)
 	}
-	if _, ok := s.cfg.ModelPools["b"]; ok || len(s.cfg.ModelPools) != 1 || len(s.cfg.OverflowPairs) != 0 {
-		t.Fatalf("pools=%v pairs=%v; want only pool a, no pairs", s.cfg.ModelPools, s.cfg.OverflowPairs)
+	if _, ok := s.cfg.ModelPools["b"]; ok || len(s.cfg.ModelPools) != 1 {
+		t.Fatalf("pools=%v; want only pool a", s.cfg.ModelPools)
 	}
-	// A post without those sections leaves them alone.
+	// A post without that section leaves it alone.
 	adminSessionRequest(s, "POST", "/admin/config", `{"cache":{"ttl":90}}`)
 	if len(s.cfg.ModelPools) != 1 {
 		t.Fatalf("unposted pools changed: %v", s.cfg.ModelPools)

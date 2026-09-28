@@ -341,9 +341,7 @@ func (s *Server) updateLink(w http.ResponseWriter, user, keyID string, shared, p
 		clean := []string{}
 		s.mu.Lock()
 		for _, p := range *pools {
-			_, isPool := s.cfg.ModelPools[p]
-			_, isPair := s.cfg.OverflowPairs[p]
-			if (isPool || isPair) && !slices.Contains(clean, p) {
+			if _, isPool := s.cfg.ModelPools[p]; isPool && !slices.Contains(clean, p) {
 				clean = append(clean, p)
 			}
 		}

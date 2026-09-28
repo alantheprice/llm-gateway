@@ -709,35 +709,6 @@ func stripIfInjected(r *http.Request, buffered []byte) []byte {
 	return buffered
 }
 
-// tryOverflow implements SPEC §9: if primary backend score >= threshold,
-// use the fallback backend/model. Returns true if it handled the response.
-func (s *Server) tryOverflow(w http.ResponseWriter, r *http.Request, model string,
-	pair *config.OverflowPair, body []byte, user, keyID string) bool {
-
-	if !s.linkServesPool(pair.FallbackBackend, model) {
-		return false // a user's link overflows only with its owner's consent
-	}
-	url, _ := s.resolve(model)
-	if score := s.tracker.Score(url); score < pair.Threshold {
-		return false // primary has headroom; caller proxies directly
-	} // Rewrite model id to fallback and dispatch there.
-	var req map[string]any
-	if json.Unmarshal(body, &req) == nil {
-		req["model"] = pair.FallbackModelID
-		if nb, err := json.Marshal(req); err == nil {
-			body = nb
-		}
-	}
-	r, body = s.prepareStats(r, body, pair.FallbackBackend) // per-response engine stats
-	status, hdr, buffered, stream, err, release := s.dispatchCounted(r, pair.FallbackBackend, body)
-	defer release()
-	if err != nil || status >= 500 {
-		return false // fall through to direct attempt
-	}
-	s.relay(w, r, hdr, buffered, stream, status, user, keyID, pair.FallbackModelID, estimateFrom(body), pair.FallbackBackend)
-	return true
-}
-
 // --- observability (SPEC §12) ---
 
 func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
