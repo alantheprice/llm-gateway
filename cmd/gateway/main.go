@@ -14,8 +14,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"llmgateway/internal/auth"
@@ -96,9 +99,22 @@ func main() {
 		log.Fatalf("users store: %v", err)
 	}
 
+	// Shutdown ordering: PocketBase catches SIGTERM itself and would close
+	// its databases while requests are still finishing (their analytics
+	// rows then failed with "DB not open"). Its terminate hook waits here
+	// until the gateway has drained and flushed (bounded, inside systemd's
+	// 90 s stop timeout).
+	drained := make(chan struct{})
 	pbApp, pbErr := embeddedpb.Start(embeddedpb.Config{
 		DataDir: pbDataDir,
 		Port:    pbPort,
+		BeforeTerminate: func() {
+			select {
+			case <-drained:
+			case <-time.After(shutdownDrain + 10*time.Second):
+				log.Printf("shutdown: gateway drain took too long; closing databases anyway")
+			}
+		},
 	})
 	if pbErr != nil {
 		log.Fatalf("embedded pocketbase: %v", pbErr)
@@ -234,17 +250,41 @@ func main() {
 	}()
 
 	addr := ":" + strconv.Itoa(cfg.Gateway.Port)
+	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpSrv.ListenAndServe() }()
 	log.Printf("llm-gateway (go) listening on %s (conf: %s)", addr, confPath)
-	if err := srv.ListenAndServe(addr); err != nil {
+	select {
+	case err := <-serveErr:
 		log.Fatal(err)
+	case <-sigCtx.Done():
 	}
-	// Graceful path (systemd stop → ListenAndServe returns): flush usage
-	// so restarts lose nothing. The periodic re-import below re-merges any
-	// window that ever slips through.
+
+	// Graceful stop: refuse new connections, let in-flight requests (streams
+	// included) finish, then flush everything that writes to the databases —
+	// before PocketBase closes them (see BeforeTerminate above).
+	log.Printf("shutdown: draining in-flight requests (up to %s)", shutdownDrain)
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), shutdownDrain)
+	if err := httpSrv.Shutdown(drainCtx); err != nil {
+		log.Printf("shutdown: %v (closing remaining connections)", err)
+	}
+	cancelDrain()
+	cancel() // stop pollers and periodic jobs
 	srv.FlushUsage()
 	srv.SaveAffinity()
 	if ops := srv.Ops(); ops != nil && pbApp.OpsReady() {
-		srv.SyncUsageToOps()
+		if err := srv.SyncUsageToOps(); err != nil {
+			log.Printf("shutdown: usage sync: %v", err)
+		}
 	}
 	srv.CloseAnalytics()
+	log.Printf("shutdown: flushed; releasing databases")
+	close(drained)
+	time.Sleep(2 * time.Second) // let PocketBase finish closing
 }
+
+// shutdownDrain: how long a stop waits for in-flight requests. systemd's
+// stop timeout is 90 s; this plus the flush must fit inside it.
+const shutdownDrain = 60 * time.Second

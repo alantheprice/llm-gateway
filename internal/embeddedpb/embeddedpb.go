@@ -21,6 +21,7 @@ import (
 	"github.com/pocketbase/pocketbase/cmd"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/pocketbase/pocketbase/tools/hook"
 )
 
 // Config for the embedded PocketBase instance.
@@ -33,6 +34,11 @@ type Config struct {
 	// Automigrate: apply pb_migrations dir changes (dev convenience; the
 	// dir ships with the existing instance).
 	Automigrate bool
+	// BeforeTerminate, if set, runs when PocketBase starts shutting down
+	// (it catches SIGTERM itself) and before it closes its databases. The
+	// gateway blocks here until it has drained requests and flushed what
+	// it writes into those databases.
+	BeforeTerminate func()
 }
 
 // App wraps the pocketbase app instance.
@@ -65,6 +71,19 @@ func Start(cfg Config) (*App, error) {
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
 		Automigrate: cfg.Automigrate,
 	})
+
+	if cfg.BeforeTerminate != nil {
+		// Runs ahead of PB's own terminate handlers (lower priority first),
+		// which shut its server down and close the DBs.
+		app.OnTerminate().Bind(&hook.Handler[*core.TerminateEvent]{
+			Id:       "gatewayDrainFirst",
+			Priority: -10000,
+			Func: func(e *core.TerminateEvent) error {
+				cfg.BeforeTerminate()
+				return e.Next()
+			},
+		})
+	}
 
 	// Serve command must be registered BEFORE Execute in the goroutine
 	// (Execute does not register system commands).
