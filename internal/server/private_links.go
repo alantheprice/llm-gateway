@@ -135,22 +135,30 @@ func (s *Server) privateModelNames(user string) []string {
 	return out
 }
 
-// platformModelsFor: the shared models (pools) whose config lists backend —
-// what a link's owner can consent to serve.
-func (s *Server) platformModelsFor(backend string) []string {
+// linkPoolMembership: link backend URL -> the shared models (pools) whose
+// config lists it, sorted. The one place that answers "which pools use
+// this linked GPU".
+func (s *Server) linkPoolMembership() map[string][]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []string
+	out := map[string][]string{}
 	for name, pool := range s.cfg.ModelPools {
 		for _, m := range pool.Members {
-			if m.Backend == backend {
-				out = append(out, name)
-				break
+			if isLinkURL(m.Backend) && !slices.Contains(out[m.Backend], name) {
+				out[m.Backend] = append(out[m.Backend], name)
 			}
 		}
 	}
-	sort.Strings(out)
+	for u := range out {
+		sort.Strings(out[u])
+	}
 	return out
+}
+
+// platformModelsFor: the shared models whose config lists backend — what a
+// link's owner can consent to serve.
+func (s *Server) platformModelsFor(backend string) []string {
+	return s.linkPoolMembership()[backend]
 }
 
 // chatModelGroup: one <optgroup> in the chat model picker.

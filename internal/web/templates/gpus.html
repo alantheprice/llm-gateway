@@ -185,17 +185,7 @@ async function load(force) {
   document.getElementById('sharedcard').hidden = !sw.length;
   document.getElementById('sharedrows').innerHTML = sw.map(x =>
     '<tr><td data-label="Model"><code>' + esc(x.model) + '</code></td><td data-label="Owner">' + esc(x.owner) + '</td></tr>').join('');
-  if (d.is_admin) {
-    document.getElementById('allcard').hidden = false;
-    const agents = d.all_agents || [];
-    document.getElementById('allrows').innerHTML = agents.length ? agents.map(a =>
-      '<tr><td data-label="Owner">' + esc(a.owner) + '</td><td data-label="Agent">' + esc(a.name) + ' <span class="muted">v' + esc(a.agent_version || '?') + '</span></td>' +
-      '<td data-label="Engines">' + (a.engines || []).map(e => '<div><code>' + esc(e.model) + '</code> <span class="muted">' +
-        (!e.polled ? 'waiting' : e.up ? e.running + '/' + e.lanes + ' lanes' : 'down') + '</span>' +
-        ((e.pools || []).length ? '<br><span class="hint">listed in ' + e.pools.map(esc).join(', ') + '; serving ' + ((e.serving || []).map(esc).join(', ') || 'none — owner hasn’t consented') + '</span>' : '') +
-        '</div>').join('') + '</td></tr>').join('')
-      : '<tr><td colspan="3" class="muted">No agents connected.</td></tr>';
-  }
+
   if (created) updateVerify();
 }
 async function revoke(id) {
@@ -373,6 +363,7 @@ table.mini { font-size: 12px; }
       <strong>A linked GPU is private to you</strong> until you share it with named people. You control who can use it, whether it helps serve platform models, and you can see who used it.
       Link tokens are separate from your <a href="/keys">API keys</a>. <a href="/guide/link-gpu">Read the full guide →</a></p>
     <div id="links"><div class="muted">Loading…</div></div>
+    <p class="hint admin-only" hidden>Every user's linked GPUs are listed on the <a href="/admin/routing#private">Routing</a> page.</p>
     <details style="margin-top:10px"><summary class="muted" style="cursor:pointer">What do the statuses and controls mean?</summary>
       <ul class="help-list">
         <li><span class="badge ok">connected</span> the agent is online and relaying for its engines.</li>
@@ -495,12 +486,5 @@ table.mini { font-size: 12px; }
     </div>
   </div>
 
-  <div class="card" id="allcard" hidden>
-    <h2>All connected GPUs (admin)</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Owner</th><th>Agent</th><th>Engines</th></tr></thead>
-      <tbody id="allrows"></tbody>
-    </table></div>
-  </div>
 </div>
 {{end}}

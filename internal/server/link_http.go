@@ -150,16 +150,7 @@ func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
 	if !s.adminGate(w, r) { // same gate as /backends and /usage
 		return
 	}
-	s.mu.Lock()
-	inPools := map[string][]string{}
-	for name, pool := range s.cfg.ModelPools {
-		for _, m := range pool.Members {
-			if isLinkURL(m.Backend) {
-				inPools[m.Backend] = append(inPools[m.Backend], name)
-			}
-		}
-	}
-	s.mu.Unlock()
+	inPools := s.linkPoolMembership()
 
 	type engineView struct {
 		URL            string         `json:"url"`
@@ -220,19 +211,10 @@ func (s *Server) handleAdminLinks(w http.ResponseWriter, r *http.Request) {
 // serving infrastructure, listed alongside LAN backends in views any user
 // can see. Links no pool uses (e.g. a user's private GPU) stay out.
 func (s *Server) poolLinkURLs() []string {
-	s.mu.Lock()
-	inPool := map[string]bool{}
-	for _, pool := range s.cfg.ModelPools {
-		for _, m := range pool.Members {
-			if isLinkURL(m.Backend) {
-				inPool[m.Backend] = true
-			}
-		}
-	}
-	s.mu.Unlock()
+	inPool := s.linkPoolMembership()
 	var out []string
 	for _, u := range s.linkReg.LiveURLs() {
-		if inPool[u] {
+		if len(inPool[u]) > 0 {
 			out = append(out, u)
 		}
 	}

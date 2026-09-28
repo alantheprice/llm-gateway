@@ -138,9 +138,6 @@ func (s *Server) handleAPIGPUs(w http.ResponseWriter, r *http.Request) {
 			"is_admin":       isAdmin,
 			"shared_with_me": s.sharedWithMe(user),
 		}
-		if isAdmin {
-			out["all_agents"] = s.agentViews(func(*link.Conn) bool { return true })
-		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
