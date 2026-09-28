@@ -14,6 +14,10 @@ import (
 
 type ctxKeyAccess struct{}
 
+// statusClientClosed: logged when the client disconnected before the
+// gateway sent a status line (nginx's 499 convention). Never sent.
+const statusClientClosed = 499
+
 // accessInfo is filled in by relay once a backend is chosen.
 type accessInfo struct {
 	user, model, backend string
@@ -70,7 +74,11 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		next.ServeHTTP(sr, r.WithContext(context.WithValue(r.Context(), ctxKeyAccess{}, ai)))
 		status := sr.status
 		if status == 0 {
-			status = http.StatusOK // handler wrote nothing
+			if r.Context().Err() != nil {
+				status = statusClientClosed // client left before any response
+			} else {
+				status = http.StatusOK // handler wrote nothing
+			}
 		}
 		log.Printf("access %s %s status=%d dur=%s bytes=%d user=%s model=%s backend=%s stream=%t client_gone=%t stream_err=%q",
 			r.Method, r.URL.Path, status, time.Since(start).Round(time.Millisecond), sr.bytes,

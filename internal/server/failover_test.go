@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -205,5 +206,21 @@ func TestAccessLogRecordsMidStreamFailure(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if !strings.Contains(buf.String(), "stream=true") || strings.Contains(buf.String(), `stream_err=""`) {
 		t.Fatalf("mid-stream failure not logged:\n%s", buf.String())
+	}
+}
+
+// A client that leaves before any response is logged as 499, not 200.
+func TestAccessLogClientClosed(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	h := s.withAccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest("POST", "/v1/chat/completions", nil).WithContext(ctx)
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if !strings.Contains(buf.String(), "status=499") {
+		t.Fatalf("want status=499:\n%s", buf.String())
 	}
 }
