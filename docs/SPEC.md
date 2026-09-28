@@ -61,7 +61,7 @@ Rules:
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
 | GET | `/health` | none | `200 "OK"` text/plain |
-| GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized (`public_models` accepted but not applied) |
+| GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized, the caller's private GPUs added |
 | POST | `/v1/chat/completions` | key or LAN-trust | route (pool or direct); stream-aware proxy |
 | POST | `/v1/completions` | key or LAN-trust | direct to resolved backend |
 | POST | `/v1/embeddings` | key or LAN-trust | direct to embedding backend |
@@ -134,8 +134,8 @@ current leader (per pool, in-memory).
    override) is smaller than `estTokens + requested max_tokens` are
    skipped. Unknown windows count as fitting; if no member fits, all are
    kept and the engine rejects with its own error. Cache affinity applies
-   at every prompt size. (Replaces the retired size routing:
-   `large_context` / `large_prompt_tokens` are still parsed but ignored.)
+   at every prompt size. (Replaces the retired size routing; old
+   `large_context` / `large_prompt_tokens` keys are ignored.)
 6. **Threshold filter**: eligible = score < pool.overflow_threshold; if none
    eligible → least-loaded single member.
 7. **Choice**: min by `(score - (member==leader ? sticky_bias:0),
@@ -170,9 +170,8 @@ Loop guard: each member tried at most once.
 - Catalog: pool MEMBER model ids are hidden (clients must use the pool
   virtual name so cache-affinity routing can't be bypassed); all other
   discovered models (embeddings, FIM, standalone) are advertised; pool
-  virtual names are synthesized if no backend reports them. The legacy
-  `public_models` knob is accepted in config but NOT applied (retired in
-  the Python gateway). Output shape mirrors OpenAI:
+  virtual names are synthesized if no backend reports them. (An old
+  `public_models` key is ignored.) Output shape mirrors OpenAI:
   `{"object":"list","data":[{"id":...,"object":"model",...}]}`.
 - `/chat/config` returns every discovered model id (sorted), member ids
   included — the chat UI can target a specific engine if it wants.

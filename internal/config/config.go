@@ -49,22 +49,15 @@ type PoolMemberCfg struct {
 	Backend string `json:"backend"`
 	// MaxContext overrides the context window the engine reports in
 	// /v1/models (max_model_len). 0 = use the engine's value.
-	MaxContext int `json:"max_context,omitempty"`
-	// Deprecated: size-based routing was replaced by a context-fit filter
-	// (members that cannot hold the request are skipped). Still parsed so
-	// older configs load; ignored.
-	LargeContext   bool `json:"large_context,omitempty"`
-	CapacityWeight int  `json:"capacity_weight"`
+	MaxContext     int `json:"max_context,omitempty"`
+	CapacityWeight int `json:"capacity_weight"`
 }
 
 type PoolCfg struct {
 	Members           []PoolMemberCfg `json:"members"`
 	OverflowThreshold float64         `json:"overflow_threshold"`
 	StickyBias        float64         `json:"sticky_bias"`
-	// Deprecated: ignored (see PoolMemberCfg.LargeContext). Cache affinity
-	// now applies at every prompt size.
-	LargePromptTokens int     `json:"large_prompt_tokens,omitempty"`
-	CapacityBias      float64 `json:"capacity_bias"`
+	CapacityBias      float64         `json:"capacity_bias"`
 	// CacheAffinity: route conversations to the GPU holding their KV
 	// prefix (content-hash table), falling back to score-based pick.
 	CacheAffinity bool `json:"cache_affinity"`
@@ -106,13 +99,12 @@ type HostCfg struct {
 }
 
 type Config struct {
-	Gateway       GatewayCfg              `json:"gateway"`
-	Discovery     DiscoveryCfg            `json:"discovery"`
-	LocalNetworks []string                `json:"local_networks"`
-	Metrics       MetricsCfg              `json:"metrics"`
-	ModelPools    map[string]PoolCfg      `json:"model_pools"`
-	PublicModels  []string                `json:"public_models"`
-	Cache         CacheCfg                `json:"cache"`
+	Gateway       GatewayCfg         `json:"gateway"`
+	Discovery     DiscoveryCfg       `json:"discovery"`
+	LocalNetworks []string           `json:"local_networks"`
+	Metrics       MetricsCfg         `json:"metrics"`
+	ModelPools    map[string]PoolCfg `json:"model_pools"`
+	Cache         CacheCfg           `json:"cache"`
 	// Full-cost accounting (admin /usage/costs):
 	ElectricityRate float64   `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
 	Hosts           []HostCfg `json:"hosts"`

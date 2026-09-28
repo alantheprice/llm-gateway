@@ -182,9 +182,6 @@ func validateConfig(c *config.Config) error {
 		if pool.StickyBias < 0 {
 			pool.StickyBias = 0
 		}
-		if pool.LargePromptTokens < 0 {
-			pool.LargePromptTokens = 0
-		}
 		if pool.CapacityBias < 0 {
 			pool.CapacityBias = 0
 		}

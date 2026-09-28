@@ -199,7 +199,6 @@ func (s *Server) routeMap() map[string]any {
 		pools[k] = v
 	}
 	metrics := s.cfg.Metrics
-	publicModels := append([]string(nil), s.cfg.PublicModels...)
 	discovered := map[string][]string{} // model id -> backend URLs
 	for u, info := range s.backends {
 		for _, m := range info.Models {
@@ -276,9 +275,6 @@ func (s *Server) routeMap() map[string]any {
 		if serving == 0 {
 			problems = append(problems, routeProblem{"error", name, "No GPU can serve " + name + " right now; requests get a 503."})
 		}
-		if p.LargePromptTokens > 0 {
-			problems = append(problems, routeProblem{"info", name, "large_prompt_tokens is set but no longer does anything."})
-		}
 		entries = append(entries, e)
 	}
 
@@ -300,10 +296,6 @@ func (s *Server) routeMap() map[string]any {
 			e.Summary = "one GPU of " + pool + ", called directly: skips the pool's load balancing"
 		}
 		entries = append(entries, e)
-	}
-
-	if len(publicModels) > 0 {
-		problems = append(problems, routeProblem{"info", "", "public_models is set but ignored; what clients see comes from pools and engines."})
 	}
 
 	// 4. Private links (owners' GPUs).

@@ -285,8 +285,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 // models_handler: pool MEMBER model ids are hidden (they'd let clients pin an
 // engine and bypass cache-affinity routing); every other discovered model
 // (embeddings, FIM, standalone) is advertised; pool virtual names are
-// synthesized when no backend carries them. The legacy `public_models`
-// config knob is parsed for compat but NOT applied (Python retired it).
+// synthesized when no backend carries them.
 func (s *Server) catalog() []ModelEntry {
 	memberIDs := map[string]bool{}
 	s.mu.Lock()
@@ -324,9 +323,6 @@ func (s *Server) catalog() []ModelEntry {
 			known[name] = true
 		}
 	}
-	// Note: `public_models` is parsed for config compat but intentionally NOT
-	// applied — live Python retired that filter in favor of pool-driven
-	// member-hiding (llm_gateway.py models_handler).
 	return ids
 }
 
@@ -461,8 +457,6 @@ func (s *Server) handleV1Other(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.checkAuth(w, r); !ok {
 		return
 	}
-	url, _ := s.resolve("")
-	_ = url
 	http.Error(w, `{"error":{"message":"not found"}}`, http.StatusNotFound)
 }
 

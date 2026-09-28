@@ -118,7 +118,7 @@ func (s *Server) registerInferenceDocs() {
 	}, func(o *huma.Operation) {
 		o.Tags = []string{"inference"}
 		o.Summary = "Model catalog"
-		o.Description = "Lists advertised models. Pool members collapse to the virtual pool name; public_models filters when configured. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust."
+		o.Description = "Lists advertised models. Pool members collapse to the pool name; the caller's private GPUs are included. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust."
 		if s.cfg.Gateway.ModelsRequireAuth {
 			o.Security = secs(secBearer, secSession)
 			o.Middlewares = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {

@@ -886,11 +886,6 @@ func (s *Server) preferredModel() string {
 	for name := range s.cfg.ModelPools {
 		return name
 	}
-	if len(s.cfg.PublicModels) > 0 {
-		if s.cfg.PublicModels[0] != "*" {
-			return s.cfg.PublicModels[0]
-		}
-	}
 	for _, info := range s.backends {
 		if len(info.Models) > 0 {
 			return info.Models[0]

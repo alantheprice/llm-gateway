@@ -47,8 +47,8 @@ func TestLoadFull(t *testing.T) {
 		t.Fatalf("pool members = %d, want 2", len(c.ModelPools["qwen"].Members))
 	}
 	m := c.ModelPools["qwen"].Members[1]
-	if !m.LargeContext || m.CapacityWeight != 8 {
-		t.Errorf("member[1] large_context/weight = %v/%d", m.LargeContext, m.CapacityWeight)
+	if m.CapacityWeight != 8 {
+		t.Errorf("member[1] weight = %d", m.CapacityWeight)
 	}
 	if c.MaxSeqsFor("http://127.0.0.1:8000") != 6 {
 		t.Errorf("MaxSeqsFor local = %d, want 6", c.MaxSeqsFor("http://127.0.0.1:8000"))
