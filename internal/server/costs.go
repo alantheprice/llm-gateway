@@ -21,12 +21,15 @@ import (
 	"time"
 
 	"llmgateway/internal/config"
+	"llmgateway/internal/embeddedpb"
 )
 
 // HostCost is the computed cost picture for one configured host.
 type HostCost struct {
-	Label  string `json:"label"`
-	IPs    []string
+	Label  string   `json:"label"`
+	IPs    []string `json:"host_keys"` // match keys: IPs + "link:<agent>"
+	IPList []string `json:"ips"`       // configured IPs (display)
+	Links  []string `json:"links"`     // configured link agent names (display)
 	Config HostConfig
 
 	// GPU energy — summed from engine /usage payloads on this host.
@@ -77,7 +80,9 @@ type ScheduleRow struct {
 // tests; the server converts before calling).
 type HostConfig struct {
 	Label         string
-	IPs           []string
+	IPs           []string // match keys (config.HostCfg.HostKeys)
+	RawIPs        []string // configured IPs, for display
+	Links         []string // configured link agents, for display
 	OverheadWatts float64
 	HardwareUSD   float64
 	Purchased     string
@@ -137,7 +142,7 @@ func ComputeCosts(p CostsParams) []HostCost {
 	}
 	out := make([]HostCost, 0, len(p.Hosts))
 	for i, hc := range p.Hosts {
-		h := HostCost{Label: hc.Label, IPs: hc.IPs, Config: hc}
+		h := HostCost{Label: hc.Label, IPs: hc.IPs, IPList: hc.RawIPs, Links: hc.Links, Config: hc}
 		if i < len(p.GPUKwhToday) {
 			h.GPUKwhToday = p.GPUKwhToday[i]
 		}
@@ -243,7 +248,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	hosts := make([]HostConfig, len(s.cfg.Hosts))
 	for i, h := range s.cfg.Hosts {
 		hosts[i] = HostConfig{
-			Label: h.Label, IPs: h.HostKeys(), OverheadWatts: h.OverheadWatts,
+			Label: h.Label, IPs: h.HostKeys(), RawIPs: h.IPs, Links: h.Links, OverheadWatts: h.OverheadWatts,
 			HardwareUSD: h.HardwareCostUSD, Purchased: h.Purchased,
 			AmortizeYears: h.AmortizeYears,
 		}
@@ -382,6 +387,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		"electricity_rate_usd_per_kwh": rate,
 		"hosts":                        hostCosts,
 		"unmatched_backends":           unmatched,
+		"unmatched_gpus":               s.labelled(unmatched),
 		"totals": map[string]any{
 			"total_cost_usd_today":      math.Round(totalToday*100) / 100,
 			"total_cost_usd_30d":        math.Round(total30d*100) / 100,
@@ -423,8 +429,9 @@ func (s *Server) usageCostsPayload() map[string]any {
 					rows[i].EngineInput = 0
 				}
 			}
+			hosts := s.cfg.Hosts
 			s.mu.Unlock()
-			out["gpu_today"] = rows
+			out["gpu_today"] = mergeGPURowsByIdentity(hosts, rows)
 		}
 	}
 	return out
@@ -632,4 +639,56 @@ func (s *Server) recordCostToday(gpuCost, overhead, capital, valueToday float64,
 			log.Printf("cost_history upsert: %v", err)
 		}
 	}
+}
+
+// mergeGPURowsByIdentity folds per-backend rows that are the same engine
+// (e.g. its old direct URL and its link URL after a cutover) into one row.
+// Rows for one engine carry the same engine counters, so they merge by
+// max, not sum.
+func mergeGPURowsByIdentity(hosts []config.HostCfg, rows []embeddedpb.GPUDailyRow) []map[string]any {
+	type acc struct {
+		id                             gpuIdentity
+		backends                       []string
+		tokens, cacheHits, engineInput int64
+		kwh                            float64
+	}
+	byKey := map[string]*acc{}
+	var order []string
+	for _, r := range rows {
+		id := identifyGPU(hosts, r.Backend)
+		a := byKey[id.Key]
+		if a == nil {
+			a = &acc{id: id}
+			byKey[id.Key] = a
+			order = append(order, id.Key)
+		}
+		if r.Backend != "" && isLinkURL(r.Backend) {
+			a.id.Via = "link" // current path wins over a stale direct row
+		}
+		a.backends = append(a.backends, r.Backend)
+		a.tokens = max(a.tokens, r.Tokens)
+		a.cacheHits = max(a.cacheHits, r.CacheHits)
+		a.engineInput = max(a.engineInput, r.EngineInput)
+		a.kwh = max(a.kwh, r.Kwh)
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		out = append(out, map[string]any{
+			"gpu_key": a.id.Key, "gpu_label": a.id.Label, "host": a.id.Host, "via": a.id.Via,
+			"backend": a.backends[0], "backends": a.backends,
+			"tokens": a.tokens, "cache_hits": a.cacheHits, "engine_input": a.engineInput, "kwh": a.kwh,
+		})
+	}
+	return out
+}
+
+// labelled: backend URLs with their GPU identity, for display lists.
+func (s *Server) labelled(urls []string) []map[string]any {
+	out := make([]map[string]any, 0, len(urls))
+	for _, u := range urls {
+		id := s.gpuIdentity(u)
+		out = append(out, map[string]any{"url": u, "gpu_label": id.Label, "via": id.Via})
+	}
+	return out
 }

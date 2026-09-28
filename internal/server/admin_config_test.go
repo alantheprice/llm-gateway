@@ -131,3 +131,24 @@ func TestAdminConfigPageRedirectsNonAdmin(t *testing.T) {
 		t.Fatalf("non-admin page = %d, want redirect", w.Code)
 	}
 }
+
+// A host reached only by link is valid, keeps its links through
+// validation, and may not claim a link another host already claims.
+func TestValidateConfigLinkOnlyHost(t *testing.T) {
+	c := &config.Config{Gateway: config.GatewayCfg{Port: 8033}, Hosts: []config.HostCfg{
+		{Label: "offsite", Links: []string{"gpu-b"}, OverheadWatts: 100},
+	}}
+	if err := validateConfig(c); err != nil {
+		t.Fatalf("link-only host rejected: %v", err)
+	}
+	if len(c.Hosts) != 1 || len(c.Hosts[0].Links) != 1 {
+		t.Fatalf("links lost in validation: %+v", c.Hosts)
+	}
+	dup := &config.Config{Gateway: config.GatewayCfg{Port: 8033}, Hosts: []config.HostCfg{
+		{Label: "a", Links: []string{"gpu-b"}},
+		{Label: "b", Links: []string{"GPU-B"}},
+	}}
+	if err := validateConfig(dup); err == nil {
+		t.Fatal("two hosts claiming the same link should be rejected")
+	}
+}

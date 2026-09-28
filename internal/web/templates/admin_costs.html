@@ -28,7 +28,8 @@ async function load() {
         ? pct(h.pct_depreciated) + ' · ' + Number(h.months_remaining).toFixed(1) + ' mo left'
         : '<span class="muted">no capex configured</span>');
     return '<tr>' +
-      '<td data-label="Host"><strong>' + esc(h.label) + '</strong><br><span class="muted">' + esc((h.ips || []).join(', ')) + '</span></td>' +
+      '<td data-label="Host"><strong>' + esc(h.label) + '</strong><br><span class="muted">' +
+        esc([...(h.ips || []), ...(h.links || []).map(l => 'link: ' + l)].join(', ') || 'no ips or links') + '</span></td>' +
       '<td data-label="GPU today">' + (h.gpu_kwh_today||0).toFixed(3) + ' kWh<br>' + usd(h.gpu_cost_usd_today, 4) + '</td>' +
       '<td data-label="Overhead today">' + (h.overhead_kwh_today||0).toFixed(2) + ' kWh<br>' + usd(h.overhead_cost_usd_today, 4) + '</td>' +
       '<td data-label="Capex today">' + usd(h.capital_usd_today, 4) + '</td>' +
@@ -50,7 +51,7 @@ async function load() {
     gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) => {
       const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit' : '';
       return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
-      esc(r.backend.replace('http://', '')) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
+      gpuName(r) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
       (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of input' + (rate ? ' · ' + rate : '') + '</span>';
     }).join('') + '</div>' +
     '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = per-day delta of engine prefix-reuse counters (day-start snapshots). "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
@@ -62,8 +63,9 @@ async function load() {
   }
 
   const un = document.getElementById('unmatched');
-  un.innerHTML = (d.unmatched_backends || []).length
-    ? 'Uncounted GPU hosts (not in hosts config): <code>' + d.unmatched_backends.map(esc).join('</code>, <code>') + '</code>'
+  const um = d.unmatched_gpus || (d.unmatched_backends || []).map(u => ({url: u}));
+  un.innerHTML = um.length
+    ? 'Uncounted GPUs (no host in the cost config claims them by ip or link): ' + um.map(g => gpuName(g, g.url)).join(', ')
     : '';
 
   // Price book + value-vs-cost chart + user value.

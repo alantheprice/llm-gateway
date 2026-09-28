@@ -40,7 +40,7 @@ async function load() {
   const gr = document.getElementById('gpurows');
   gr.innerHTML = (d.per_gpu || []).map(g =>
     '<tr>' +
-    '<td data-label="GPU"><strong>' + esc(g.backend.replace('http://','')) + '</strong></td>' +
+    '<td data-label="GPU"><strong>' + gpuName(g) + '</strong></td>' +
     '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
     '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
     '<td data-label="Tokens out">' + fmtNum(g.output) + '</td>' +

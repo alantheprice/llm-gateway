@@ -23,7 +23,7 @@ async function load() {
     const cost = ((b.energy || {}).today || {}).cost_usd || 0;
     const thr = b.throughput || {};
     const lanes = b.lanes || {};
-    return '<tr><td><code>' + esc(url) + '</code></td>' +
+    return '<tr><td>' + gpuName(b, url) + '</td>' +
       '<td>' + (lanes.capacity || '—') + '</td><td>' + (lanes.processing || 0) + '</td>' +
       '<td>' + Math.round(thr.decode_tok_per_s || 0) + '</td>' +
       '<td>' + Math.round(thr.prefill_tok_per_s || 0) + '</td>' +

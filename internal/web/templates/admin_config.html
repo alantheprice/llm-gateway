@@ -24,7 +24,9 @@ function hostRow(h) {
     '<div class="cfggrid">' +
     field('label', txt('label', h.label, 'gpu-a (5090)')) +
     field('ips (comma-separated)', txt('ips', (h.ips||[]).join(', '), '127.0.0.1, 192.168.1.10'),
-      'Backend URL hosts living on this box (1 IP = 1 box).') +
+      'LAN backend addresses on this box (1 IP = 1 box). Leave empty for a box reached only by link.') +
+    field('links (comma-separated)', txt('links', (h.links||[]).join(', '), 'gpu-b'),
+      'Link agent names running on this box (the <agent> in http://link/<agent>:port). Costs follow the link, wherever the box is.') +
     field('overhead_watts', num('overhead_watts', h.overhead_watts ?? 0, 10),
       'Whole-system draw minus the GPUs: CPU, RAM, fans, PSU loss.') +
     field('hardware_cost_usd', num('hardware_cost_usd', h.hardware_cost_usd ?? 0, 10), 'Original purchase price.') +
@@ -46,7 +48,7 @@ function memberRow(m) {
     '<label class="mf"><span>model id</span>' +
     '<input name="member_model" type="text" value="' + escAttr(m.model_id||'') + '" placeholder="qwen3.8-27b-5090" title="Engine model id as the backend reports it (hidden from /v1/models)"></label>' +
     '<label class="mf"><span>backend url</span>' +
-    '<input name="member_backend" type="text" value="' + escAttr(m.backend||'') + '" placeholder="http://127.0.0.1:8000" title="Base URL of the engine serving this model"></label>' +
+    '<input name="member_backend" type="text" value="' + escAttr(m.backend||'') + '" placeholder="http://127.0.0.1:8000" title="Base URL of the engine: http://host:port on the LAN, or http://link/<agent>:<port> for a linked GPU"></label>' +
     '<label class="mf mf-num" title="Context window override in tokens (0 = use what the engine reports). Requests larger than this skip the member."><span>max ctx</span>' +
     '<input name="member_maxctx" type="number" step="1024" min="0" value="' + (m.max_context ?? 0) + '"></label>' +
     '<label class="mf mf-num" title="Relative capacity vs other members (default 1)"><span>weight</span>' +
@@ -183,13 +185,14 @@ function collect() {
     return {
       label: g('label').trim(),
       ips: g('ips').split(',').map(s => s.trim()).filter(Boolean),
+      links: g('links').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
       overhead_watts: parseFloat(g('overhead_watts')) || 0,
       hardware_cost_usd: parseFloat(g('hardware_cost_usd')) || 0,
       purchased: g('purchased') || '',
       amortize_years: parseFloat(g('amortize_years')) || 0,
       gpu_idle_watts: parseFloat(g('gpu_idle_watts')) || 0,
     };
-  }).filter(h => h.ips.length);
+  }).filter(h => h.ips.length || h.links.length);
 
   const model_pools = {};
   document.querySelectorAll('.poolrow').forEach(row => {

@@ -177,11 +177,14 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 	perBackend := map[string]any{}
 	for _, url := range urls {
 		usage := usageByBackend[url]
+		id := s.gpuIdentity(url)
 		if usage == nil {
-			perBackend[url] = map[string]any{"reachable": false, "engine": s.engineOf(url)}
+			perBackend[url] = map[string]any{"reachable": false, "engine": s.engineOf(url),
+				"gpu_key": id.Key, "gpu_label": id.Label, "host": id.Host, "via": id.Via}
 			continue
 		}
 		perBackend[url] = map[string]any{
+			"gpu_key": id.Key, "gpu_label": id.Label, "host": id.Host, "via": id.Via,
 			"reachable":             true,
 			"model":                 usage["model"],
 			"uptime_seconds":        usageMap(usage, "uptime")["seconds"],
@@ -446,10 +449,9 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for _, u := range urls {
 		info := infoByURL[u]
-		e := map[string]any{"url": u, "models": info.Models}
-		if isLinkURL(u) {
-			e["via"] = "link"
-		}
+		id := identifyGPU(s.cfg.Hosts, u) // s.mu held
+		e := map[string]any{"url": u, "models": info.Models,
+			"gpu_key": id.Key, "gpu_label": id.Label, "host": id.Host, "via": id.Via}
 		if n := s.maxCtx[u].tokens; n > 0 { // s.mu held
 			e["max_context"] = n
 		}

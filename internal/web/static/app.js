@@ -113,3 +113,14 @@ const TZ = (() => {
   return { offsetMin, offsetLabel, tzName, dayLabel, dayWindow,
            bucketNote, todayBucketNote, nextUtcMidnight, instantLocal };
 })();
+
+// gpuName: the one way every page shows a GPU engine — its identity label
+// from the server (host from the cost config + engine port), a "link" badge
+// when it is reached over a link agent, and the raw backend URL on hover.
+function gpuName(o, url) {
+  o = o || {};
+  const raw = url || o.backend || o.url || '';
+  const label = o.gpu_label || raw.replace(/^https?:\/\//, '');
+  const via = o.via === 'link' ? ' <span class="badge ok" title="served over a link agent">link</span>' : '';
+  return '<span title="' + escAttr(raw) + '">' + esc(label) + '</span>' + via;
+}

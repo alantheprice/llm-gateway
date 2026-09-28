@@ -63,11 +63,77 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"days":      days,
 		"hourly":    hourly,
-		"per_gpu":   perGPU,
+		"per_gpu":   s.mergePerGPU(perGPU),
 		"per_user":  perUser,
 		"reuse":     reuse,
 		"generated": time.Now().UTC().Format(time.RFC3339),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// mergePerGPU: per-backend analytics rows folded by GPU identity, so one
+// engine reached by different URLs over the window (direct, then link)
+// is one row. Request rows are distinct, so counts sum; rates are
+// recomputed from the sums; speed is request-weighted; worst TTFT is max.
+func (s *Server) mergePerGPU(rows []embeddedpb.GPURow) []map[string]any {
+	s.mu.Lock()
+	hosts := s.cfg.Hosts
+	s.mu.Unlock()
+	type acc struct {
+		id                                      gpuIdentity
+		backends                                []string
+		requests, input, output, cached, dn, da int64
+		tpsWeighted, ttftMax                    float64
+		latestLink                              bool
+	}
+	byKey := map[string]*acc{}
+	var order []string
+	for _, r := range rows {
+		id := identifyGPU(hosts, r.Backend)
+		a := byKey[id.Key]
+		if a == nil {
+			a = &acc{id: id}
+			byKey[id.Key] = a
+			order = append(order, id.Key)
+		}
+		if isLinkURL(r.Backend) {
+			a.latestLink = true
+		}
+		a.backends = append(a.backends, r.Backend)
+		a.requests += r.Requests
+		a.input += r.Input
+		a.output += r.Output
+		a.cached += r.Cached
+		a.dn += r.DraftN
+		a.da += r.DraftAccepted
+		a.tpsWeighted += r.TokPerSec * float64(r.Requests)
+		a.ttftMax = max(a.ttftMax, r.TTFTP95)
+	}
+	pct := func(n, d int64) float64 {
+		if d <= 0 {
+			return 0
+		}
+		return float64(int64(1000*float64(n)/float64(d)+0.5)) / 10
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		via := a.id.Via
+		if a.latestLink {
+			via = "link"
+		}
+		tps := 0.0
+		if a.requests > 0 {
+			tps = float64(int64(a.tpsWeighted/float64(a.requests) + 0.5))
+		}
+		out = append(out, map[string]any{
+			"gpu_key": a.id.Key, "gpu_label": a.id.Label, "host": a.id.Host, "via": via,
+			"backend": a.backends[0], "backends": a.backends,
+			"requests": a.requests, "input": a.input, "output": a.output, "cached": a.cached,
+			"cache_hit_pct": pct(a.cached, a.input), "tok_per_s": tps, "ttft_p95": a.ttftMax,
+			"draft_n": a.dn, "draft_accepted": a.da, "draft_accept_pct": pct(a.da, a.dn),
+		})
+	}
+	return out
 }
