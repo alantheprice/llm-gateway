@@ -167,7 +167,7 @@
   function cardFor(nerd) {
     const info = nerd && cardCache[nerd.model];
     if (!info) return null;
-    if (!info.pool) return info.model_card ? { summary: null, card: info.model_card } : null;
+    if (!info.pool) return info.model_card ? { summary: info.card_summary || null, card: info.model_card } : null;
     const members = info.members || [];
     const label = nerd.gateway && nerd.gateway.gpu_label;
     const m = members.find(x => x.gpu_label === label) || (members.length === 1 ? members[0] : null);

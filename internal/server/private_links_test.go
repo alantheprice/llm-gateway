@@ -29,6 +29,29 @@ func TestPrivateLinkResponseModelName(t *testing.T) {
 	}
 }
 
+// A single GPU's model info carries the same card summary pools give per
+// member (chat's Stats for nerds reads it).
+func TestPrivateLinkCardSummary(t *testing.T) {
+	rig, _ := newLinkRig(t, "carol", auth.RoleLink)
+	rig.waitRegistered(t)
+	rig.s.PollOnce() // caches the engine's card
+	carol, _, _ := rig.s.store.CreateKey("carol", "k", "user", false)
+	req, _ := http.NewRequest("GET", rig.gw.URL+"/v1/models/e2e%2Fm", nil)
+	req.Header.Set("Authorization", "Bearer "+carol)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Summary map[string]any `json:"card_summary"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != 200 || out.Summary["gpu"] != "RTX PRO 6000" {
+		t.Fatalf("card summary = %d %v", resp.StatusCode, out.Summary)
+	}
+}
+
 // chatAs posts a one-message chat for model with key (Bearer; "" = none)
 // through the rig's gateway.
 func chatAs(t *testing.T, rig *linkRig, key, model string) int {

@@ -214,6 +214,11 @@ func (s *Server) writeEngineInfo(w http.ResponseWriter, backend, engineID, view 
 		payload = redactCard(payload)
 	}
 	if m, ok := payload.(map[string]any); ok && view == "" {
+		// Same summary pools give per member, so a client renders one
+		// shape whether it called a pool or a single engine.
+		if card, ok := m["model_card"].(map[string]any); ok {
+			m["card_summary"] = cardSummary(card)
+		}
 		id := s.gpuIdentity(backend)
 		m["via"] = id.Via
 		if id.Host != "" || isAdmin {
