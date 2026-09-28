@@ -346,6 +346,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = withClientModel(r, req.Model) // responses carry the name the client called
+	noteAccess(r, user, req.Model, req.Stream)
 	if kindFor(req.Model) == "embeddings" {
 		errBody(w, http.StatusBadRequest, fmt.Sprintf("%q is an embedding model; call it at /v1/embeddings", req.Model))
 		return
@@ -413,6 +414,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	var req chatReq
 	json.Unmarshal(body, &req)
 	r = withClientModel(r, req.Model)
+	noteAccess(r, user, req.Model, req.Stream)
 	url, mid := s.resolve(req.Model)
 	if url == "" {
 		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {

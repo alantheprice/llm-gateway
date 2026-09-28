@@ -32,6 +32,16 @@ func accessFrom(r *http.Request) *accessInfo {
 	return ai
 }
 
+// noteAccess records who asked for what as soon as the request is parsed,
+// so a request that never reaches a backend (client gave up while it was
+// queued or routed, or it was refused) still names its user and model.
+// relay() later fills in the backend and the model that actually served it.
+func noteAccess(r *http.Request, user, model string, stream bool) {
+	if ai := accessFrom(r); ai != nil {
+		ai.user, ai.model, ai.stream = user, model, stream
+	}
+}
+
 // statusRecorder captures status and bytes; it forwards Flush so SSE
 // streaming keeps working through the wrapper.
 type statusRecorder struct {

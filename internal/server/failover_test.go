@@ -228,6 +228,36 @@ func TestAccessLogClientClosed(t *testing.T) {
 	}
 }
 
+// A client that gives up before the engine answers is still logged with
+// who asked and for which model.
+func TestAccessLogAbandonedNamesUserAndModel(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			select { // doesn't answer before the client leaves
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}))
+	defer eng.Close()
+	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_A%", eng.URL)
+	conf = strings.ReplaceAll(conf, "%BACKEND_B%", eng.URL)
+	s := testServer(t, conf, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"qwen","messages":[{"role":"user","content":"hi"}]}`)).WithContext(ctx)
+	r.RemoteAddr = "192.168.1.50:5555"
+	s.Handler().ServeHTTP(httptest.NewRecorder(), r)
+	line := buf.String()
+	if !strings.Contains(line, "status=499") || !strings.Contains(line, "user=local") || !strings.Contains(line, "model=qwen") {
+		t.Fatalf("abandoned request should name user and model:\n%s", line)
+	}
+}
+
 // Time to first token is measured at the gateway for streams: request
 // received → first byte relayed. Here the engine waits 150ms before its
 // first chunk, then keeps streaming for another 150ms.
