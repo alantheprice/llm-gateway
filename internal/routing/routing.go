@@ -195,9 +195,34 @@ func (t *Tracker) Score(url string) float64 {
 type Member struct {
 	URL            string
 	ModelID        string
-	LargeContext   bool
+	MaxContext     int // tokens this member can hold (prompt + output); 0 = unknown
 	CapacityWeight int // 0 => use lanes from tracker (or 1)
 	Lanes          int // resolved lane count for capacity math
+}
+
+// FitContext keeps the members whose context window can hold `need`
+// tokens (prompt estimate + requested output). Members with an unknown
+// window are kept. If nobody fits, all members are returned: the engine
+// then rejects with its own, more precise error rather than the gateway
+// guessing from a chars/4 estimate.
+//
+// This replaces size-based routing (large_context / large_prompt_tokens):
+// every member that can physically serve a request is a candidate, and
+// cache affinity applies at every prompt size.
+func FitContext(members []Member, need int) []Member {
+	if need <= 0 {
+		return members
+	}
+	fit := make([]Member, 0, len(members))
+	for _, m := range members {
+		if m.MaxContext == 0 || m.MaxContext >= need {
+			fit = append(fit, m)
+		}
+	}
+	if len(fit) == 0 {
+		return members
+	}
+	return fit
 }
 
 // DayShare: rolling per-member count of NEW conversations routed today
@@ -344,8 +369,8 @@ func PickCache(ct *CacheTable, poolName string, members []Member, tr *Tracker,
 // PickPool implements SPEC §5.4 deterministically.
 // leader is the current leader URL ("" if none); it is updated by the caller
 // from the returned URL.
-func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTokens int,
-	capacityBias float64, members []Member, tr *Tracker, estTokens int, session, leader string,
+func PickPool(poolName string, poolThreshold, stickyBias float64,
+	capacityBias float64, members []Member, tr *Tracker, session, leader string,
 	affinityMode bool) PickResult {
 
 	scores := map[string]float64{}
@@ -428,16 +453,6 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 		}
 	}
 
-	wantsLarge := largePromptTokens > 0 && estTokens >= largePromptTokens
-
-	// 5a. Large-prompt fast path
-	if wantsLarge {
-		bestLarge := pickLarge(members, scores, 0.90)
-		if bestLarge != nil {
-			return PickResult{URL: bestLarge.URL, ModelID: bestLarge.ModelID, Scores: scores}
-		}
-	}
-
 	// 6. Threshold filter
 	var eligible []Member
 	for _, m := range members {
@@ -456,16 +471,12 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 		return PickResult{URL: best.URL, ModelID: best.ModelID, Scores: scores}
 	}
 
-	// 7. Choice: min by (score + sizePenalty - sticky, original index)
+	// 7. Choice: min by (score - sticky, original index). Members that
+	// cannot fit the request were already removed by FitContext.
 	bestIdx := -1
 	bestScore := 2.0
 	for i, m := range eligible {
 		s := scores[m.URL]
-		if wantsLarge && !m.LargeContext {
-			s += 0.50
-		} else if !wantsLarge && m.LargeContext {
-			s += 0.50
-		}
 		if m.URL == leader {
 			s -= stickyBias
 		}
@@ -476,23 +487,6 @@ func PickPool(poolName string, poolThreshold, stickyBias float64, largePromptTok
 	}
 	chosen := eligible[bestIdx]
 	return PickResult{URL: chosen.URL, ModelID: chosen.ModelID, Scores: scores}
-}
-
-func pickLarge(members []Member, scores map[string]float64, cap float64) *Member {
-	var best *Member
-	for i := range members {
-		m := &members[i]
-		if !m.LargeContext {
-			continue
-		}
-		if scores[m.URL] >= cap {
-			continue
-		}
-		if best == nil || scores[m.URL] < scores[best.URL] {
-			best = m
-		}
-	}
-	return best
 }
 
 // md5Mod returns int(md5hex(s), 16) mod n — Python parity for pin hashing.

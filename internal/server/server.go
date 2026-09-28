@@ -57,6 +57,7 @@ type Server struct {
 	usage                *UsageStore
 	lastMetrics          map[string]map[string]any // url -> raw /usage payload for merge
 	lastPollAt           map[string]time.Time      // url -> last metrics poll attempt
+	maxCtx               map[string]ctxInfo        // url -> engine context window (max_model_len)
 	lastCostRecord       atomic.Int64              // unix-nano of last poll-loop cost write
 	costRecorderDisabled atomic.Bool               // tests: disable the async cost recorder
 	costRecorderOff      atomic.Bool               // tests: disable the background cost recorder
@@ -575,6 +576,19 @@ func (s *Server) PollOnce() {
 	// NOT in s.backends: that map feeds raw model-id resolution, and a
 	// linked engine must only be reachable through the pools that name it.
 	urls = append(urls, s.linkReg.LiveURLs()...)
+	// Pool members are always polled, discovered or not: an unpolled
+	// member has no load score (reads as idle), no down detection until a
+	// request fails, and no known context window.
+	s.mu.Lock()
+	for _, pool := range s.cfg.ModelPools {
+		for _, m := range pool.Members {
+			if m.Backend != "" && !isLinkURL(m.Backend) { // live links added above
+				urls = append(urls, m.Backend)
+			}
+		}
+	}
+	s.mu.Unlock()
+	urls = dedupeStrings(urls)
 	// A member already known to be down is re-probed at most every
 	// downReprobe: PollOnce runs on every pool request, and polling an
 	// unreachable host costs a full timeout per request.
@@ -603,10 +617,12 @@ func (s *Server) PollOnce() {
 				s.lastMetrics[u] = raw // raw /usage payload for /backends extras
 				s.mu.Unlock()
 				s.recordGPUDaily(u, raw)
+				s.refreshMaxContext(u)
 				return
 			}
 			if l := s.pollVLLM(u); l != nil {
 				s.tracker.Set(u, l)
+				s.refreshMaxContext(u)
 				return
 			}
 			// Both shapes failed once — retry before marking down. Under
@@ -639,6 +655,56 @@ func (s *Server) PollOnce() {
 
 // downReprobe: minimum spacing between metrics polls of a down member.
 const downReprobe = 5 * time.Second
+
+// ctxInfo: a backend's context window and when it was read.
+type ctxInfo struct {
+	tokens int
+	at     time.Time
+}
+
+// maxContextRefresh: context windows only change when an engine restarts
+// with new flags, so they are re-read rarely.
+const maxContextRefresh = 10 * time.Minute
+
+// maxContext: the engine-reported context window for a backend (0 when
+// unknown — the router then treats the member as able to fit anything).
+func (s *Server) maxContext(url string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxCtx[url].tokens
+}
+
+// refreshMaxContext re-reads max_model_len from the backend's /v1/models
+// (directly or over its link) when the cached value is missing or old.
+// Called from the poller after a successful metrics poll.
+func (s *Server) refreshMaxContext(url string) {
+	s.mu.Lock()
+	cur, ok := s.maxCtx[url]
+	s.mu.Unlock()
+	if ok && time.Since(cur.at) < maxContextRefresh {
+		return
+	}
+	models, ok := s.backendJSON(url, "/v1/models", 3*time.Second)
+	if !ok {
+		return
+	}
+	best := 0
+	if data, ok := models["data"].([]any); ok {
+		for _, d := range data {
+			if m, ok := d.(map[string]any); ok {
+				if n, ok := toInt(m["max_model_len"]); ok && n > best {
+					best = n
+				}
+			}
+		}
+	}
+	s.mu.Lock()
+	if s.maxCtx == nil {
+		s.maxCtx = map[string]ctxInfo{}
+	}
+	s.maxCtx[url] = ctxInfo{tokens: best, at: time.Now()}
+	s.mu.Unlock()
+}
 
 // recordGPUDaily: persist a backend's engine-reported daily tokens + kWh
 // into the gpu_daily ops table (MAX-merge; engines are the source of
@@ -832,4 +898,17 @@ func streamTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	return t
+}
+
+// dedupeStrings keeps the first occurrence of each string, in order.
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }

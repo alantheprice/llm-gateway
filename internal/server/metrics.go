@@ -450,6 +450,9 @@ func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 		if isLinkURL(u) {
 			e["via"] = "link"
 		}
+		if n := s.maxCtx[u].tokens; n > 0 { // s.mu held
+			e["max_context"] = n
+		}
 		l := s.tracker.Get(u)
 		if l == nil {
 			e["engine"] = "unknown"

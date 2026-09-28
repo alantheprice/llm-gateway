@@ -47,13 +47,14 @@ function memberRow(m) {
     '<input name="member_model" type="text" value="' + escAttr(m.model_id||'') + '" placeholder="qwen3.8-27b-5090" title="Engine model id as the backend reports it (hidden from /v1/models)"></label>' +
     '<label class="mf"><span>backend url</span>' +
     '<input name="member_backend" type="text" value="' + escAttr(m.backend||'') + '" placeholder="http://127.0.0.1:8000" title="Base URL of the engine serving this model"></label>' +
-    '<label class="mf mf-check" title="Big prompts prefer this member (large_prompt_tokens threshold)"><input name="member_large" type="checkbox"' + (m.large_context ? ' checked' : '') + '><span>large ctx</span></label>' +
+    '<label class="mf mf-num" title="Context window override in tokens (0 = use what the engine reports). Requests larger than this skip the member."><span>max ctx</span>' +
+    '<input name="member_maxctx" type="number" step="1024" min="0" value="' + (m.max_context ?? 0) + '"></label>' +
     '<label class="mf mf-num" title="Relative capacity vs other members (default 1)"><span>weight</span>' +
     '<input name="member_weight" type="number" step="1" value="' + (m.capacity_weight ?? 1) + '"></label>' +
     delBtn('member') + '</div>';
 }
 function memberLegend() {
-  return '<div class="rowlegend"><span>model id</span><span>backend url</span><span>large ctx</span><span>weight</span><span></span></div>';
+  return '<div class="rowlegend"><span>model id</span><span>backend url</span><span>max ctx</span><span>weight</span><span></span></div>';
 }
 function poolRow(name, p) {
   p = p || {};
@@ -62,7 +63,6 @@ function poolRow(name, p) {
     field('pool name', txt('pool_name', name, 'qwen3.8-27b'), 'The model id clients call; member ids are hidden.') +
     field('overflow_threshold', num('pool_threshold', p.overflow_threshold ?? 0.20, 0.05), 'Load score (0-1) above which a member is skipped for new requests.') +
     field('sticky_bias', num('pool_sticky', p.sticky_bias ?? 0, 0.05), 'Score bonus for a member already holding the session (KV cache reuse).') +
-    field('large_prompt_tokens', num('pool_big', p.large_prompt_tokens ?? 0, 1000), 'Prompts above this size go to large-ctx members first.') +
     field('capacity_bias', num('pool_bias', p.capacity_bias ?? 0, 0.05), 'Static preference for higher-capacity members.') +
     '<label class="cfgfield cfgtoggle" title="Route conversations to the GPU already holding their KV prefix (content-hash table)"><input name="pool_cacheaff" type="checkbox"' + (p.cache_affinity ? ' checked' : '') + '><span>cache affinity</span></label>' +
     field('max_pool_share', num('pool_maxshare', p.max_pool_share ?? 0, 0.8), 'Fairness cap (0-1, 0=off): new conversations prefer a sibling GPU when one member exceeds this share of today\'s new conversations.') +
@@ -200,7 +200,7 @@ function collect() {
       return {
         model_id: gv('member_model').value.trim(),
         backend: gv('member_backend').value.trim(),
-        large_context: gv('member_large').checked,
+        max_context: parseInt(gv('member_maxctx').value, 10) || 0,
         capacity_weight: parseInt(gv('member_weight').value, 10) || 1,
       };
     }).filter(m => m.model_id && m.backend);
@@ -208,7 +208,6 @@ function collect() {
       members,
       overflow_threshold: parseFloat(row.querySelector('[name="pool_threshold"]').value) || 0,
       sticky_bias: parseFloat(row.querySelector('[name="pool_sticky"]').value) || 0,
-      large_prompt_tokens: parseInt(row.querySelector('[name="pool_big"]').value, 10) || 0,
       capacity_bias: parseFloat(row.querySelector('[name="pool_bias"]').value) || 0,
       cache_affinity: row.querySelector('[name="pool_cacheaff"]').checked,
       max_pool_share: parseFloat(row.querySelector('[name="pool_maxshare"]').value) || 0,

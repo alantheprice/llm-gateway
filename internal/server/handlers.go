@@ -451,27 +451,12 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 		r = withUsageHintCtx(r)
 	}
 
-	s.mu.Lock()
-	membersCfg := pool.Members
-	s.mu.Unlock()
-	members := make([]routing.Member, 0, len(membersCfg))
-	for _, m := range membersCfg {
-		lanes := 0
-		if l := s.tracker.Get(m.Backend); l != nil {
-			lanes = l.Lanes
-		}
-		members = append(members, routing.Member{
-			URL: m.Backend, ModelID: m.ModelID,
-			LargeContext: m.LargeContext, CapacityWeight: m.CapacityWeight, Lanes: lanes,
-		})
-	}
-	members = s.upMembers(members)
+	est := estimateFrom(body)
+	members := s.poolMembers(pool, est+requestedOutputTokens(body))
 	if len(members) == 0 {
 		poolUnavailable(w)
 		return
 	}
-
-	est := estimateFrom(body)
 
 	// Content-affinity: if this pool opts in and the body carries a
 	// messages array, try to ride the GPU that already holds the KV
@@ -492,7 +477,7 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 			}
 		}
 	}
-	if pool.CacheAffinity && len(convMsgs) >= 2 && est < pool.LargePromptTokens {
+	if pool.CacheAffinity && len(convMsgs) >= 2 { // every prompt size
 		inflight := map[string]int{}
 		for _, m := range members {
 			inflight[m.URL] = s.tracker.InFlight(m.URL)
@@ -536,22 +521,7 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	leader := s.leader[modelName]
 	s.mu.Unlock()
 
-	s.mu.Lock()
-	membersCfg := pool.Members
-	s.mu.Unlock()
-	members := make([]routing.Member, 0, len(membersCfg))
-	for _, m := range membersCfg {
-		lanes := 0
-		if l := s.tracker.Get(m.Backend); l != nil {
-			lanes = l.Lanes
-		}
-		members = append(members, routing.Member{
-			URL: m.Backend, ModelID: m.ModelID,
-			LargeContext: m.LargeContext, CapacityWeight: m.CapacityWeight, Lanes: lanes,
-		})
-	}
-
-	members = s.upMembers(members)
+	members := s.poolMembers(pool, est+requestedOutputTokens(body))
 	if len(members) == 0 {
 		poolUnavailable(w)
 		return
@@ -562,8 +532,7 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	candidates := members
 	for len(candidates) > 0 {
 		pick := routing.PickPool(modelName, pool.OverflowThreshold, pool.StickyBias,
-			pool.LargePromptTokens, pool.CapacityBias, candidates, s.tracker, est, sess, leader,
-			pool.CacheAffinity)
+			pool.CapacityBias, candidates, s.tracker, sess, leader, pool.CacheAffinity)
 		leader = pick.URL
 
 		// Rewrite pool name -> the chosen member's backend model id
@@ -628,6 +597,51 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(lastStatus)
 	w.Write(lastBody)
+}
+
+// poolMembers: the pool's routable members for a request needing `need`
+// tokens (prompt estimate + requested output): down members removed, and
+// members whose context window cannot hold the request skipped.
+func (s *Server) poolMembers(pool *poolCfgT, need int) []routing.Member {
+	s.mu.Lock()
+	membersCfg := pool.Members
+	s.mu.Unlock()
+	members := make([]routing.Member, 0, len(membersCfg))
+	for _, m := range membersCfg {
+		lanes := 0
+		if l := s.tracker.Get(m.Backend); l != nil {
+			lanes = l.Lanes
+		}
+		maxCtx := m.MaxContext
+		if maxCtx == 0 {
+			maxCtx = s.maxContext(m.Backend)
+		}
+		members = append(members, routing.Member{
+			URL: m.Backend, ModelID: m.ModelID, MaxContext: maxCtx,
+			CapacityWeight: m.CapacityWeight, Lanes: lanes,
+		})
+	}
+	return routing.FitContext(s.upMembers(members), need)
+}
+
+// requestedOutputTokens: the output budget a request asks for
+// (max_completion_tokens, else max_tokens); 0 if unspecified. It counts
+// against the context window alongside the prompt.
+func requestedOutputTokens(body []byte) int {
+	var req struct {
+		MaxTokens           int `json:"max_tokens"`
+		MaxCompletionTokens int `json:"max_completion_tokens"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return 0
+	}
+	if req.MaxCompletionTokens > 0 {
+		return req.MaxCompletionTokens
+	}
+	if req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	return 0
 }
 
 // upMembers drops members currently marked down. If every member is down

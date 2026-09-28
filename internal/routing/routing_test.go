@@ -72,7 +72,7 @@ func TestScoreStaleIsIdle(t *testing.T) {
 func members() []Member {
 	return []Member{
 		{URL: "http://127.0.0.1:8000", ModelID: "qwen-a", Lanes: 6},
-		{URL: "http://192.168.1.100:8006", ModelID: "qwen-b", LargeContext: true, CapacityWeight: 8, Lanes: 8},
+		{URL: "http://192.168.1.100:8006", ModelID: "qwen-b", CapacityWeight: 8, Lanes: 8},
 	}
 }
 
@@ -88,34 +88,60 @@ func TestPinningParityWithPython(t *testing.T) {
 		"session-9f8e7d6c": "http://192.168.1.100:8006", // idx 1
 	}
 	for sess, wantURL := range cases {
-		got := PickPool("qwen", 0.20, 0.05, 48000, 0.15, members(), tr, 100, sess, "", false)
+		got := PickPool("qwen", 0.20, 0.05, 0.15, members(), tr, sess, "", false)
 		if got.URL != wantURL {
 			t.Errorf("pin(%s) = %s, want %s", sess, got.URL, wantURL)
 		}
 	}
 }
 
-func TestSizeAffinity(t *testing.T) {
+// No size-based preference: an idle member wins whatever the prompt size
+// (the old large_context penalty queued small prompts on the busy GPU
+// while a large-context GPU sat idle).
+func TestNoSizePenalty(t *testing.T) {
 	tr := NewTracker(DefaultWeights())
-	// local busy, remote idle-ish
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 6, 0, 6, 0, 0, 0))
 	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 2, 0, 8, 0, 0, 0))
-
-	// Large prompt must go to large_context member despite its load,
-	// unless it's >= 0.90 saturated.
-	got := PickPool("qwen", 0.20, 0.05, 48000, 0.15, members(), tr, 50000, "", "", false)
+	// local at 6/6 lanes (0.75+) is over the 0.20 threshold; remote
+	// (2/8 lanes = 0.1875) is eligible and wins.
+	got := PickPool("qwen", 0.20, 0.05, 0.15, members(), tr, "", "", false)
 	if got.URL != "http://192.168.1.100:8006" {
-		t.Errorf("large prompt -> %s, want large member", got.URL)
+		t.Errorf("-> %s, want the less-loaded remote", got.URL)
 	}
+	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 0, 0, 6, 0, 0, 0))
+	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
+	got = PickPool("qwen", 0.20, 0.05, 0.15, members(), tr, "", "", false)
+	if got.URL != "http://127.0.0.1:8000" {
+		t.Errorf("both idle -> %s, want first member (tie keeps config order)", got.URL)
+	}
+}
 
-	// Small prompt: local is at 6/6 lanes => score 0.75 (>=0.20 threshold);
-	// remote blended... remote lanes 8, cap weight 8; scores:
-	// local 0.75*1.0 = 0.75; remote 0.75*0.25=0.1875; capacity scaling pushes
-	// remote up by (1+0.15*(1-8/8))=1.0 (it IS max) and local up by
-	// 1+0.15*(1-6/8)=1.0375 => local 0.7781. Eligible(<0.20): remote only.
-	got = PickPool("qwen", 0.20, 0.05, 48000, 0.15, members(), tr, 100, "", "", false)
-	if got.URL != "http://192.168.1.100:8006" {
-		t.Errorf("small prompt -> %s, want idle-capable remote", got.URL)
+// FitContext drops members whose window cannot hold the request, keeps
+// unknown windows, and falls back to everyone when nobody fits.
+func TestFitContext(t *testing.T) {
+	ms := []Member{
+		{URL: "small", MaxContext: 32000},
+		{URL: "big", MaxContext: 262144},
+		{URL: "unknown"},
+	}
+	urls := func(ms []Member) (out []string) {
+		for _, m := range ms {
+			out = append(out, m.URL)
+		}
+		return
+	}
+	if got := urls(FitContext(ms, 20000)); len(got) != 3 {
+		t.Errorf("20K fits all: %v", got)
+	}
+	if got := urls(FitContext(ms, 100000)); len(got) != 2 || got[0] != "big" || got[1] != "unknown" {
+		t.Errorf("100K -> %v, want [big unknown]", got)
+	}
+	known := ms[:2]
+	if got := urls(FitContext(known, 500000)); len(got) != 2 {
+		t.Errorf("nobody fits -> %v, want all (engine rejects precisely)", got)
+	}
+	if got := urls(FitContext(ms, 0)); len(got) != 3 {
+		t.Errorf("need 0 -> %v, want all", got)
 	}
 }
 
@@ -123,7 +149,7 @@ func TestAllSaturatedFallsBackToLeastBad(t *testing.T) {
 	tr := NewTracker(DefaultWeights())
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 6, 0, 6, 0, 0, 0))     // 0.75
 	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 7, 2, 8, 0, 0, 0)) // 0.75*0.875+0.15*0.5=0.731
-	got := PickPool("qwen", 0.20, 0.05, 48000, 0, members(), tr, 100, "", "", false)
+	got := PickPool("qwen", 0.20, 0.05, 0, members(), tr, "", "", false)
 	if got.URL != "http://192.168.1.100:8006" {
 		t.Errorf("least-bad = %s, want remote (0.731 < 0.75)", got.URL)
 	}
@@ -137,7 +163,7 @@ func TestInFlightBlending(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		tr.InFlightInc("http://127.0.0.1:8000")
 	}
-	got := PickPool("qwen", 0.20, 0.05, 48000, 0, members(), tr, 100, "", "", false)
+	got := PickPool("qwen", 0.20, 0.05, 0, members(), tr, "", "", false)
 	if got.URL != "http://192.168.1.100:8006" {
 		t.Errorf("burst should push to remote, got %s (scores %v)", got.URL, got.Scores)
 	}
@@ -152,7 +178,7 @@ func TestStickyBiasPrefersLeader(t *testing.T) {
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 0, 0, 6, 0, 0, 0))
 	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
 	// no capacity bias so scores stay equal
-	got := PickPool("qwen", 0.20, 0.05, 0, 0, members(), tr, 100, "", "http://127.0.0.1:8000", false)
+	got := PickPool("qwen", 0.20, 0.05, 0, members(), tr, "", "http://127.0.0.1:8000", false)
 	if got.URL != "http://127.0.0.1:8000" {
 		t.Errorf("leader should win ties, got %s", got.URL)
 	}

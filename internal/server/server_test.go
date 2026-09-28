@@ -220,19 +220,22 @@ func TestPoolFailoverOn503(t *testing.T) {
 func TestSessionPinningSameMember(t *testing.T) {
 	var hitsA, hitsB int
 	var mu = make(chan int, 1)
-	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if strings.HasSuffix("/slots", "/slots") {
+	// Count chat requests only: pool members are also polled for metrics.
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			mu <- 1
+			hitsA++
+			<-mu
 		}
-		mu <- 1
-		hitsA++
-		<-mu
 		w.WriteHeader(404)
 	}))
 	defer a.Close()
-	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu <- 1
-		hitsB++
-		<-mu
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			mu <- 1
+			hitsB++
+			<-mu
+		}
 		w.WriteHeader(404)
 	}))
 	defer b.Close()

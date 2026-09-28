@@ -74,7 +74,7 @@ the log says otherwise.</p>
 <p>Add the member to the pool (<code>/admin/config/page</code> → pools, or conf):</p>
 <pre><code class="language-json">&quot;model_pools&quot;: { &quot;qwen3.8-27b&quot;: { &quot;members&quot;: [
   {&quot;model_id&quot;: &quot;qwen3.8-27b&quot;, &quot;backend&quot;: &quot;http://&lt;engine-host&gt;:8006&quot;,
-   &quot;large_context&quot;: true, &quot;capacity_weight&quot;: 8}
+   &quot;capacity_weight&quot;: 8}
 ], &quot;cache_affinity&quot;: true } }
 </code></pre>
 <p><code>sudo systemctl restart llm-gateway</code>, then verify at <code>/backends</code>:</p>

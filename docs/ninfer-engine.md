@@ -100,7 +100,7 @@ Add the member to the pool (`/admin/config/page` → pools, or conf):
 ```json
 "model_pools": { "qwen3.8-27b": { "members": [
   {"model_id": "qwen3.8-27b", "backend": "http://<engine-host>:8006",
-   "large_context": true, "capacity_weight": 8}
+   "capacity_weight": 8}
 ], "cache_affinity": true } }
 ```
 

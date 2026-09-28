@@ -129,13 +129,16 @@ current leader (per pool, in-memory).
    `eff = 1 + capacity_bias * (1 - lanesWeight/maxLanesWeight)` where
    lanesWeight = member.capacity_weight or lanes; `score *= eff` (cap 1.0).
    Only applied when lane counts differ.
-5. **Size affinity**: `wantsLarge = estTokens >= pool.large_prompt_tokens`
-   (if configured >0). Members flagged `large_context` get +0.50 penalty
-   when NOT wanted; small prompts get +0.50 on large_context members.
-   If wantsLarge and best large-context member has score < 0.90 → pick it.
+5. **Context fit** (before any scoring): members whose context window
+   (engine `/v1/models` `max_model_len`, or the member's `max_context`
+   override) is smaller than `estTokens + requested max_tokens` are
+   skipped. Unknown windows count as fitting; if no member fits, all are
+   kept and the engine rejects with its own error. Cache affinity applies
+   at every prompt size. (Replaces the retired size routing:
+   `large_context` / `large_prompt_tokens` are still parsed but ignored.)
 6. **Threshold filter**: eligible = score < pool.overflow_threshold; if none
    eligible → least-loaded single member.
-7. **Choice**: min by `(score + sizePenalty - (member==leader ? sticky_bias:0),
+7. **Choice**: min by `(score - (member==leader ? sticky_bias:0),
    original index)`. Set leader = chosen.
 
 ### 5.5 Reactive failover
