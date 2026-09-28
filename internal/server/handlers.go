@@ -128,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 		http.MethodPost: s.handleChangePWSubmit,
 	}))
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
+	mux.HandleFunc("/models", s.handleModelsPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
 	mux.HandleFunc("/downloads/llm-link-agent-linux-amd64", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{

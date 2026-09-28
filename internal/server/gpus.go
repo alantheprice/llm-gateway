@@ -38,6 +38,16 @@ func (s *Server) handleGPUsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, "gpus.html", "gpus", "My GPUs")
 }
 
+// handleModelsPage: /models — every model the user can call and its model
+// card. The page reads the same /v1/models endpoints API clients use (with
+// the user's UI key), so redaction matches the API exactly.
+func (s *Server) handleModelsPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSessionPage(w, r); !ok {
+		return
+	}
+	s.renderPage(w, r, "models.html", "models", "Models")
+}
+
 // agentEngineView: one engine behind a live agent, as shown on the page.
 type agentEngineView struct {
 	URL         string         `json:"url"`

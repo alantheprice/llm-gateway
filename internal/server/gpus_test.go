@@ -148,6 +148,13 @@ func TestGPUsPageAndGuide(t *testing.T) {
 		t.Fatalf("/gpus: %d", w.Code)
 	}
 	w = httptest.NewRecorder()
+	r = httptest.NewRequest("GET", "/models", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: s.store.SignSession(auth.Claims{U: "carol", Role: "user"}, time.Hour)})
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `id="models"`) || !strings.Contains(w.Body.String(), `href="/models"`) {
+		t.Fatalf("/models: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/guide/link-gpu", nil))
 	for _, id := range []string{"requirements", "troubleshooting", "platform-models", "managing-a-link", "how-it-works", "step-5-use-it-and-share-it"} {
 		if !strings.Contains(w.Body.String(), `id="`+id+`"`) {

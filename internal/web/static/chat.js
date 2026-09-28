@@ -16,6 +16,11 @@
   const promptEl = document.getElementById('prompt');
   const sendBtn = document.getElementById('send');
   const modelEl = document.getElementById('model');
+  // Header ⓘ: the selected model's card on the Models page.
+  const infoEl = document.getElementById('modelinfo');
+  if (infoEl) infoEl.addEventListener('click', () => {
+    if (modelEl.value) infoEl.href = '/models#' + encodeURIComponent(modelEl.value);
+  });
   const newBtn = document.getElementById('newchat');
 
   function loadStore() {
@@ -219,6 +224,13 @@
       tr.appendChild(th); tr.appendChild(td); tbl.appendChild(tr);
     }
     det.appendChild(tbl);
+    if (n.model) {
+      const more = document.createElement('a');
+      more.href = '/models#' + encodeURIComponent(n.model);
+      more.textContent = 'Full model card →';
+      more.className = 'nerd-more';
+      det.appendChild(more);
+    }
     return det;
   }
 
