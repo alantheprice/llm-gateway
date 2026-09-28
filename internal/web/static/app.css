@@ -75,6 +75,8 @@ code, .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size:
   font-weight: 600; font-size: 15px;
 }
 .brand-mark { color: var(--accent); font-size: 18px; display: flex; }
+.brand-mark .brand-svg { width: 20px; height: 20px; display: block; }
+.auth-card h1 .brand-svg { width: 22px; height: 22px; }
 .nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
 .nav-section {
   font-size: 11px; text-transform: uppercase; letter-spacing: .06em;

@@ -1,15 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1f6feb"/>
-      <stop offset="1" stop-color="#1a7f64"/>
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
-  <!-- routing mark: one request fanning out to two engines -->
-  <circle cx="18" cy="32" r="6" fill="#fff"/>
-  <circle cx="46" cy="18" r="6" fill="#fff" opacity="0.92"/>
-  <circle cx="46" cy="46" r="6" fill="#fff" opacity="0.92"/>
-  <path d="M24 32 C 34 32, 34 18, 40 18" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <path d="M24 32 C 34 32, 34 46, 40 46" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- LLM Gateway mark: a gateway arch with a bolt cut through it -->
+  <rect x="0.3" y="0.3" width="23.4" height="23.4" rx="5.4" fill="#e3b341"/>
+  <g transform="translate(3.2 3.2) scale(0.7333)" fill="#1b1404">
+    <path fill-rule="evenodd" d="M4 21.4V10.6a8 8 0 0 1 16 0v10.8z M14.2 5.2 7.2 14.6h4.4l-1.4 5.8 6.8-9.2h-4.4z"/>
+  </g>
 </svg>

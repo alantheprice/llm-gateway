@@ -162,3 +162,16 @@ func TestGPUsPageAndGuide(t *testing.T) {
 		}
 	}
 }
+
+// Logo assets referenced by the layout, login page and manifest are served.
+func TestLogoAssetsServed(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	for _, p := range []string{"/static/favicon.svg", "/static/apple-touch-icon.png", "/static/icon-192.png",
+		"/static/icon-512.png", "/static/icon-maskable-512.png", "/static/manifest.json"} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("GET", p, nil))
+		if w.Code != 200 || w.Body.Len() == 0 {
+			t.Fatalf("%s: %d (%d bytes)", p, w.Code, w.Body.Len())
+		}
+	}
+}

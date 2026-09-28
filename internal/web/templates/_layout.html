@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/static/app.css?v={{$.StaticVer}}">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <meta name="theme-color" content="#0d1117">
 {{template "head" .}}
 </head>
@@ -21,7 +21,7 @@
 {{define "chrome"}}<div class="backdrop" id="backdrop"></div>
 <div class="shell">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><span class="brand-mark">⚡</span><span class="brand-name">LLM Gateway</span></div>
+    <div class="brand"><span class="brand-mark"><svg class="brand-svg" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path fill-rule="evenodd" d="M4 21.4V10.6a8 8 0 0 1 16 0v10.8z M14.2 5.2 7.2 14.6h4.4l-1.4 5.8 6.8-9.2h-4.4z"/></svg></span><span class="brand-name">LLM Gateway</span></div>
     <nav class="nav">
       <a href="/chat" class="nav-item {{if eq .Nav "chat"}}active{{end}}">{{Icon "message-square"}}<span>Chat</span></a>
       <a href="/models" class="nav-item {{if eq .Nav "models"}}active{{end}}">{{Icon "box"}}<span>Models</span></a>
