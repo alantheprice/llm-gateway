@@ -168,12 +168,14 @@ function renderEditor() {
       '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
     '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
   h += '<div class="sub">Behaviour</div><div class="grid2">' +
-    field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
-    field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
-    field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets requests when every GPU is.') +
-    field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping.') +
-    field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size).') +
-    '</div>';
+  field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
+  field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets new conversations when every GPU is. A GPU with requests queued counts as 100%.') +
+  field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
+  '</div>' +
+  '<details class="more"><summary>More settings</summary><div class="grid2">' +
+  field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping. Default 0.05.') +
+  field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size). Default 0.5.') +
+  '</div></details>';
   h += '<div class="ed-actions"><button class="btn primary" id="ed-save">Save</button><button class="btn" id="ed-cancel">Cancel</button>' +
     (EDIT.isNew ? '' : '<span style="flex:1"></span><button class="btn danger" id="ed-del">Delete ' + esc(EDIT.name) + '</button>') + '</div>' +
     '<p class="hint">Saving updates the gateway config file and takes effect for the next request. GPUs keep their live load state.</p>';
@@ -313,6 +315,8 @@ tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); 
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
 .hint { font-size: 12px; color: var(--muted); }
+details.more { margin-top: 8px; }
+details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .ed-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .headrow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 </style>
