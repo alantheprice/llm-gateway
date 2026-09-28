@@ -10,7 +10,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install.sh | bash
 ```
 
 Useful flags (pass after `--`):

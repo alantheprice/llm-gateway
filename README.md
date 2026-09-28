@@ -14,7 +14,7 @@ doing.
                  └───────────────────────────────┘
 ```
 
-**New here? The [setup guide](https://github.com/sprout-foundry/llm-gateway/blob/main/docs/start.md)
+**New here? The [setup guide](https://github.com/alantheprice/llm-gateway/blob/main/docs/start.md)
 is the shortest path from install to first request** — or run the installer
 and open `/guide` on your gateway.
 
@@ -36,7 +36,7 @@ and open `/guide` on your gateway.
 ## Install (Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install.sh | bash
 ```
 
 Installs a `llmgateway` systemd service, provisions the first admin
@@ -58,7 +58,7 @@ A gateway needs something to route to. The recommended engine is the
 **NInfer fork** (below) — one script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install-ninfer-engine.sh | bash -s -- --arch 120a
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install-ninfer-engine.sh | bash -s -- --arch 120a
 ```
 
 Already running vLLM or llama.cpp? Set `model_pools` in

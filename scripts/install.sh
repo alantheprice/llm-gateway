@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # llm-gateway installer (Linux + systemd).
 #
-#   curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install.sh | bash
 #
 # Flags (after --):
 #   --version vX.Y.Z   pin a release (default: latest)
@@ -11,7 +11,7 @@
 #   --purge            with --uninstall: also delete /opt/llm-gateway + /var/lib/llm-gateway
 set -euo pipefail
 
-REPO="sprout-foundry/llm-gateway"
+REPO="alantheprice/llm-gateway"
 DL_BASE="https://github.com/${REPO}/releases/download"
 GW_USER="llmgateway"
 OPT_DIR="/opt/llm-gateway"

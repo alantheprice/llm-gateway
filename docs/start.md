@@ -21,13 +21,13 @@ One binary that sits between your AI clients and your GPU servers:
 ## Install (Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install.sh | bash
 ```
 
 or, pinned to a release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
 The script installs a `llmgateway` systemd service and prints the
@@ -62,7 +62,7 @@ The script installs a `llmgateway` systemd service and prints the
 | Install/upgrade the gateway | [Installation Runbook](/guide/install) |
 | Serve models with the NInfer fork (energy metrics) | [NInfer Engine Runbook](/guide/ninfer-engine) |
 | Price it, set quotas, back up, debug | [Operations Runbook](/guide/operations) |
-| Full behavioral spec | [docs/SPEC.md](https://github.com/sprout-foundry/llm-gateway/blob/main/docs/SPEC.md) |
+| Full behavioral spec | [docs/SPEC.md](https://github.com/alantheprice/llm-gateway/blob/main/docs/SPEC.md) |
 
 ## Ten thousand feet
 

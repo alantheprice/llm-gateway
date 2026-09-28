@@ -32,7 +32,7 @@ energy rollups survive.
 ## Install (scripted)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sprout-foundry/llm-gateway/main/scripts/install-ninfer-engine.sh | bash -s -- --arch 120a
+curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scripts/install-ninfer-engine.sh | bash -s -- --arch 120a
 ```
 
 `--arch`: `120a` for RTX 5090 / 6000 Pro Ada, `90a` for 4090-class. The
