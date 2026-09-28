@@ -146,6 +146,82 @@
     return s;
   }
 
+  /* ---------- stats for nerds ---------- */
+  // Model cards per pool/model name, from GET /v1/models/<name> (the gateway
+  // lists each pool member's card summary, labelled by GPU).
+  const cardCache = {};
+  function loadCard(model) {
+    if (!model || cardCache[model] !== undefined) return;
+    cardCache[model] = null; // in flight / unavailable
+    fetch('/v1/models/' + encodeURIComponent(model), {
+      headers: { 'Authorization': 'Bearer ' + (cfg && cfg.api_key || '') }
+    }).then(r => r.ok ? r.json() : null).then(j => {
+      if (j) { cardCache[model] = j; render(); }
+    }).catch(() => {});
+  }
+  function cardFor(nerd) {
+    const info = nerd && cardCache[nerd.model];
+    if (!info) return null;
+    if (!info.pool) return info.model_card ? { summary: null, card: info.model_card } : null;
+    const members = info.members || [];
+    const label = nerd.gateway && nerd.gateway.gpu_label;
+    const m = members.find(x => x.gpu_label === label) || (members.length === 1 ? members[0] : null);
+    return m ? { summary: m.card_summary, card: m.model_card } : null;
+  }
+  function nerdPanel(m) {
+    const n = m.nerd || {};
+    const st = n.stats || {};
+    const gw = n.gateway || {};
+    const rows = [];
+    const add = (k, v) => { if (v !== undefined && v !== null && v !== '') rows.push([k, String(v)]); };
+    const ms = v => (v == null ? null : (v >= 1000 ? (v / 1000).toFixed(2) + ' s' : Math.round(v) + ' ms'));
+    add('Served by', gw.gpu_label ? gw.gpu_label + (gw.via === 'link' ? ' (via link)' : '') : null);
+    add('Engine model', gw.served_model);
+    const c = cardFor(n);
+    const sum = c && c.summary;
+    if (sum) {
+      add('Model', sum.source_model);
+      add('Weights', sum.weights);
+      add('KV cache', sum.kv_cache);
+      add('Speculative', sum.speculative ? sum.speculative + (sum.draft_tokens ? ' ×' + sum.draft_tokens : '') : null);
+      add('GPU', sum.gpu ? sum.gpu + (sum.vram_mib ? ' (' + Math.round(sum.vram_mib / 1024) + ' GB)' : '') : null);
+      add('Context', sum.context ? fmtNum(sum.context) + ' tokens' : null);
+      add('Engine', sum.engine);
+    }
+    add('Time to first token', ms(st.ttft_ms));
+    add('Queue wait', ms(st.queue_wait_ms));
+    add('Prefill', ms(st.prefill_ms));
+    add('Decode', ms(st.decode_ms));
+    add('Decode speed', st.tokens_per_second ? Math.round(st.tokens_per_second) + ' tok/s' : null);
+    if (st.prompt_tokens != null) {
+      add('Prompt', fmtNum(st.prompt_tokens) + ' tokens' +
+        (st.cache_hit_tokens != null ? ' · ' + fmtNum(st.cache_hit_tokens) + ' cached (' + Math.round(st.cache_hit_pct || 0) + '%)' : ''));
+    }
+    add('Cache reuse path', st.prefix_reuse_path);
+    add('Output', st.completion_tokens != null ? fmtNum(st.completion_tokens) + ' tokens' +
+      (st.reasoning_tokens ? ' (' + fmtNum(st.reasoning_tokens) + ' thinking)' : '') : null);
+    const sp = st.speculative;
+    if (sp) add('Draft acceptance', sp.backend + ' ×' + sp.draft_window + ': ' + sp.accepted_tokens + '/' + sp.draft_tokens +
+      ' (' + Math.round(sp.acceptance_pct || 0) + '%)');
+    if (!rows.length) return null;
+    const det = document.createElement('details');
+    det.className = 'nerd';
+    det.open = !!m.nerdOpen;
+    det.addEventListener('toggle', () => { m.nerdOpen = det.open; });
+    const summ = document.createElement('summary');
+    summ.textContent = 'Stats for nerds';
+    det.appendChild(summ);
+    const tbl = document.createElement('table');
+    for (const [k, v] of rows) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th'); th.textContent = k;
+      const td = document.createElement('td'); td.textContent = v;
+      tr.appendChild(th); tr.appendChild(td); tbl.appendChild(tr);
+    }
+    det.appendChild(tbl);
+    return det;
+  }
+
   /* ---------- rendering ---------- */
   function msgDiv(m, idx) {
     const row = document.createElement('div');
@@ -187,6 +263,11 @@
         f.className = 'statsline';
         f.textContent = statsLine(m.stats);
         div.appendChild(f);
+      }
+      if (m.nerd) {
+        loadCard(m.nerd.model);
+        const panel = nerdPanel(m);
+        if (panel) div.appendChild(panel);
       }
       // actions on completed assistant messages
       if (idx != null && !m.pending) {
@@ -321,6 +402,9 @@
         headers,
         body: JSON.stringify({
           model: modelEl.value, stream: !useTools,
+          // Per-response engine stats (NInfer serving standard) for the
+          // "Stats for nerds" panel; the gateway adds which GPU served it.
+          return_stats: !useTools,
           messages: s.messages.filter(m => !m.pending && m.content)
             .map(m => ({ role: m.role, content: m.content }))
         })
@@ -428,6 +512,11 @@
                   draft_pct: t.draft_n ? (t.draft_n_accepted / t.draft_n) * 100 : null,
                   out_tokens: t.predicted_n,
                 };
+              }
+              if (j.stats || j.gateway) {
+                a.nerd = Object.assign(a.nerd || {}, { model: modelEl.value },
+                  j.stats ? { stats: j.stats } : {}, j.gateway ? { gateway: j.gateway } : {});
+                loadCard(modelEl.value);
               }
               const d = j.choices && j.choices[0] && j.choices[0].delta || {};
               if (d.reasoning_content) { a.thinking += d.reasoning_content; if (!tokEnd) tok0 = tok0 || performance.now(); }
