@@ -28,13 +28,13 @@ function kindLabel(e) {
 
 /* ---------- route map ---------- */
 function memberRow(m, entry) {
-  return '<tr><td data-label="GPU"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span><br>' +
-    '<span class="muted mono">' + esc(m.model_id) + '</span> ' + consentBadge(m.consent) + '</td>' +
-    '<td data-label="Load">' + loadBar(m) + '</td>' +
-    '<td data-label="Today" class="tn">' + (m.requests_today || 0).toLocaleString() + (m.share_pct ? ' <span class="muted">(' + m.share_pct + '%)</span>' : '') + '</td>' +
-    '<td data-label="Context" class="tn">' + (m.max_context ? Math.round(m.max_context / 1000) + 'K' : '—') +
-      (m.max_context_override ? ' <span class="muted">(capped)</span>' : '') + '</td>' +
-    '<td data-label="Weight" class="tn">' + (m.capacity_weight || '<span class="muted">lanes</span>') + '</td></tr>';
+  return '<tr><td data-label="GPU"><div class="cv"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span><br>' +
+    '<span class="muted mono">' + esc(m.model_id) + '</span> ' + consentBadge(m.consent) + '</div></td>' +
+    '<td data-label="Load"><div class="cv">' + loadBar(m) + '</div></td>' +
+    '<td data-label="Today" class="tn"><div class="cv">' + (m.requests_today || 0).toLocaleString() + (m.share_pct ? ' <span class="muted">(' + m.share_pct + '%)</span>' : '') + '</div></td>' +
+    '<td data-label="Context" class="tn"><div class="cv">' + (m.max_context ? Math.round(m.max_context / 1000) + 'K' : '—') +
+      (m.max_context_override ? ' <span class="muted">(capped)</span>' : '') + '</div></td>' +
+    '<td data-label="Weight" class="tn"><div class="cv">' + (m.capacity_weight || '<span class="muted">lanes</span>') + '</div></td></tr>';
 }
 function entryCard(e) {
   let h = '<article class="route" id="r-' + escAttr(e.name) + '"><header class="route-head">' +
@@ -69,9 +69,9 @@ function problemsBlock(ps) {
 function privateBlock(list) {
   if (!list.length) return '<p class="muted">No private GPUs are linked right now.</p>';
   return '<div class="tablewrap"><table><thead><tr><th>Name</th><th>Owner</th><th>Shared with</th><th>Load</th></tr></thead><tbody>' +
-    list.map(p => '<tr><td data-label="Name" class="mono">' + esc(p.name) + (p.paused ? ' ' + badge('grace', 'paused') : '') + '</td>' +
-      '<td data-label="Owner">' + esc(p.owner) + '</td><td data-label="Shared with">' + esc(p.sharing) + '</td>' +
-      '<td data-label="Load">' + loadBar(p.engine) + '</td></tr>').join('') + '</tbody></table></div>';
+    list.map(p => '<tr><td data-label="Name" class="mono"><div class="cv">' + esc(p.name) + (p.paused ? ' ' + badge('grace', 'paused') : '') + '</div></td>' +
+      '<td data-label="Owner"><div class="cv">' + esc(p.owner) + '</div></td><td data-label="Shared with"><div class="cv">' + esc(p.sharing) + '</div></td>' +
+      '<td data-label="Load"><div class="cv">' + loadBar(p.engine) + '</div></td></tr>').join('') + '</tbody></table></div>';
 }
 
 function render() {
@@ -116,8 +116,8 @@ async function runTest() {
     : '<strong>' + esc(d.result) + '</strong>') + '</div>';
   h += '<ol class="steps">' + (d.steps || []).map(s => '<li>' + esc(s) + '</li>').join('') + '</ol>';
   if (d.candidates) h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load score</th><th>Status</th></tr></thead><tbody>' +
-    d.candidates.map(c => '<tr' + (c.backend === d.pick_backend ? ' class="picked"' : '') + '><td>' + esc(c.gpu_label) + (c.backend === d.pick_backend ? ' ' + badge('ok', 'picked') : '') + '</td>' +
-      '<td class="tn">' + pct(c.score) + '</td><td>' + esc(c.status) + '</td></tr>').join('') + '</tbody></table></div>';
+    d.candidates.map(c => '<tr' + (c.backend === d.pick_backend ? ' class="picked"' : '') + '><td data-label="GPU"><div class="cv">' + esc(c.gpu_label) + (c.backend === d.pick_backend ? ' ' + badge('ok', 'picked') : '') + '</div></td>' +
+      '<td data-label="Load score" class="tn"><div class="cv">' + pct(c.score) + '</div></td><td data-label="Status"><div class="cv">' + esc(c.status) + '</div></td></tr>').join('') + '</tbody></table></div>';
   out.innerHTML = h + '<p class="hint">A dry run: nothing is sent to any GPU, and routing state isn’t changed.</p>';
 }
 
@@ -314,6 +314,18 @@ tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); 
 .mrow .field { margin: 0; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.cv { min-width: 0; }
+@media (max-width: 720px) {
+  .tablewrap table td > .cv { flex: 1; text-align: right; overflow-wrap: anywhere; }
+  .tablewrap table td.tn, .tablewrap table td .tn { white-space: normal; }
+  .routes, article.route, .route-head > div { min-width: 0; }
+  .route-head h2 { font-size: 15px; }
+  #updated { display: none; }
+  .route-head { flex-direction: column; }
+  .facts { gap: 6px 14px; }
+  .flow { flex-direction: column; align-items: stretch; }
+  .flow .arrow { display: none; }
+}
 .hint { font-size: 12px; color: var(--muted); }
 details.more { margin-top: 8px; }
 details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
