@@ -197,3 +197,24 @@ func TestEstimatePromptParity(t *testing.T) {
 		t.Errorf("EstimateTokens = %d, want 2003", got)
 	}
 }
+
+// Regression: a tracked member's poll failures must not panic. failStreak
+// was added without being initialized in NewTracker, so the first failed
+// poll of a healthy member crashed the gateway ("assignment to entry in
+// nil map" in MarkDownIfTracked, 2026-09-27 22:01).
+func TestMarkDownIfTrackedFreshTracker(t *testing.T) {
+	tr := NewTracker(DefaultWeights())
+	tr.Set("u", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
+	tr.MarkDownIfTracked("u") // first failure: tolerated
+	if tr.IsDown("u") {
+		t.Fatal("one failed poll must not mark a member down")
+	}
+	tr.MarkDownIfTracked("u") // second consecutive failure
+	if !tr.IsDown("u") {
+		t.Fatal("two consecutive failures should mark the member down")
+	}
+	tr.Set("u", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
+	if tr.IsDown("u") {
+		t.Fatal("a successful poll should clear down")
+	}
+}

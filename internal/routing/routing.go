@@ -67,6 +67,7 @@ func NewTracker(w Weights) *Tracker {
 	return &Tracker{
 		loads: map[string]*Load{}, baseline: map[string][2]int{},
 		inFlight: map[string]int{}, weights: w, down: map[string]time.Time{},
+		failStreak: map[string]int{},
 	}
 }
 
