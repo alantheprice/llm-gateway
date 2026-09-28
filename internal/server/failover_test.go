@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -222,5 +223,46 @@ func TestAccessLogClientClosed(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	if !strings.Contains(buf.String(), "status=499") {
 		t.Fatalf("want status=499:\n%s", buf.String())
+	}
+}
+
+// Time to first token is measured at the gateway for streams: request
+// received → first byte relayed. Here the engine waits 150ms before its
+// first chunk, then keeps streaming for another 150ms.
+func TestAccessLogTTFT(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		time.Sleep(150 * time.Millisecond)
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+		time.Sleep(150 * time.Millisecond)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer eng.Close()
+	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_A%", eng.URL)
+	conf = strings.ReplaceAll(conf, "%BACKEND_B%", eng.URL)
+	s := testServer(t, conf, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"qwen","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	r.RemoteAddr = "192.168.1.50:5555"
+	s.Handler().ServeHTTP(w, r)
+
+	m := regexp.MustCompile(`dur=(\S+) ttft=(\S+) `).FindStringSubmatch(buf.String())
+	if m == nil {
+		t.Fatalf("no ttft in access log:\n%s", buf.String())
+	}
+	dur, _ := time.ParseDuration(m[1])
+	ttft, err := time.ParseDuration(m[2])
+	if err != nil || ttft < 150*time.Millisecond || ttft >= dur-100*time.Millisecond {
+		t.Fatalf("ttft=%s dur=%s: want >=150ms and well before the end", m[2], m[1])
 	}
 }

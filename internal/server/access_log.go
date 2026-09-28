@@ -22,7 +22,9 @@ const statusClientClosed = 499
 type accessInfo struct {
 	user, model, backend string
 	stream               bool
-	streamErr            string // non-EOF error ending a relayed stream
+	streamErr            string        // non-EOF error ending a relayed stream
+	start                time.Time     // gateway received the request
+	ttft                 time.Duration // start → first streamed byte to the client (0 = none)
 }
 
 func accessFrom(r *http.Request) *accessInfo {
@@ -69,7 +71,7 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 			return
 		}
 		start := time.Now()
-		ai := &accessInfo{}
+		ai := &accessInfo{start: start}
 		sr := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(sr, r.WithContext(context.WithValue(r.Context(), ctxKeyAccess{}, ai)))
 		status := sr.status
@@ -80,8 +82,12 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 				status = http.StatusOK // handler wrote nothing
 			}
 		}
-		log.Printf("access %s %s status=%d dur=%s bytes=%d user=%s model=%s backend=%s stream=%t client_gone=%t stream_err=%q",
-			r.Method, r.URL.Path, status, time.Since(start).Round(time.Millisecond), sr.bytes,
+		ttft := "-"
+		if ai.ttft > 0 {
+			ttft = ai.ttft.Round(time.Millisecond).String()
+		}
+		log.Printf("access %s %s status=%d dur=%s ttft=%s bytes=%d user=%s model=%s backend=%s stream=%t client_gone=%t stream_err=%q",
+			r.Method, r.URL.Path, status, time.Since(start).Round(time.Millisecond), ttft, sr.bytes,
 			orDash(ai.user), orDash(ai.model), orDash(ai.backend), ai.stream, r.Context().Err() != nil, ai.streamErr)
 	})
 }

@@ -101,7 +101,8 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	hdr http.Header, buffered []byte, stream io.Reader, status int,
 	user, keyID, model string, est int, backendURL string) {
 
-	if ai := accessFrom(r); ai != nil {
+	ai := accessFrom(r)
+	if ai != nil {
 		ai.user, ai.model, ai.backend, ai.stream = user, model, backendURL, stream != nil
 	}
 	copyHeader(w.Header(), hdr)
@@ -117,6 +118,12 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			if n > 0 {
 				out := filter.write(buf[:n])
 				if len(out) > 0 {
+					if ai != nil && ai.ttft == 0 {
+						// Time to first token as the user sees it: request
+						// received → first streamed byte, including routing,
+						// queueing, relay hops and prefill.
+						ai.ttft = time.Since(ai.start)
+					}
 					w.Write(out)
 					if f := flusher; f != nil {
 						f.Flush()
@@ -138,6 +145,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			}
 		}
 		pt, ot, cached, extras := usageFromSSE(captured.bytes(), est)
+		if ai != nil && ai.ttft > 0 {
+			extras.TTFTms = float64(ai.ttft) / float64(time.Millisecond)
+		}
 		if status < 400 { // failed requests don't burn quota or count as usage
 			s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
 			s.reqLog.Add(embeddedpb.RequestRecord{
@@ -155,6 +165,11 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	}
 	w.Write(stripIfInjected(r, buffered))
 	pt, ot, cached, extras := usageFromJSON(buffered, est)
+	if extras.TTFTms == 0 {
+		// Non-streamed: nothing reaches the client before the end, so the
+		// closest "first token" figure is the engine's prefill time.
+		extras.TTFTms = extras.Prefillms
+	}
 	if status < 400 {
 		s.usage.RecordDetailed(user, keyID, model, pt, ot, cached)
 		s.reqLog.Add(embeddedpb.RequestRecord{
