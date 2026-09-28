@@ -407,6 +407,12 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(body, &req)
 	r = withClientModel(r, req.Model)
 	noteAccess(r, user, req.Model, req.Stream)
+	// Shared models serve every endpoint, not only chat (e.g. a FIM model
+	// behind a link).
+	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
+		s.routePool(w, r, &pool, poolName, body, user, keyID)
+		return
+	}
 	url, mid := s.resolve(req.Model)
 	if url == "" {
 		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
@@ -420,7 +426,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := s.checkAuth(w, r)
+	user, keyID, ok := s.checkAuth(w, r)
 	if !ok {
 		return
 	}
@@ -430,6 +436,13 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	var req chatReq
 	json.Unmarshal(body, &req)
+	r = withClientModel(r, req.Model)
+	noteAccess(r, user, req.Model, false)
+	// A shared model (e.g. an embedding engine behind a link).
+	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
+		s.routePool(w, r, &pool, poolName, body, user, keyID)
+		return
+	}
 	s.mu.Lock()
 	var url, mid string
 	for u, info := range s.backends {

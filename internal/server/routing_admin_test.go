@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -249,5 +250,44 @@ func TestOpenAPIDocsOnlySchemas(t *testing.T) {
 		if !ok || len(get.Responses["200"].Content) == 0 {
 			t.Errorf("%s: missing GET or 200 schema", p)
 		}
+	}
+}
+
+// Embeddings and completions reach engines through a shared model too.
+func TestPoolServesEmbeddingsAndCompletions(t *testing.T) {
+	hits := map[string]int{}
+	var mu sync.Mutex
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits[r.URL.Path]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/embeddings":
+			fmt.Fprint(w, `{"object":"list","model":"emb-engine","data":[{"embedding":[0.1]}],"usage":{"prompt_tokens":2}}`)
+		case "/v1/completions":
+			fmt.Fprint(w, `{"model":"fim-engine","choices":[{"text":"x"}],"usage":{"prompt_tokens":2,"completion_tokens":1}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer eng.Close()
+	conf := `{"gateway":{"port":0,"trust_local_networks":true},"local_networks":["192.168.1.0/24"],
+	 "model_pools":{"embed-shared":{"members":[{"model_id":"emb-engine","backend":"` + eng.URL + `"}]},
+	                "fim-shared":{"members":[{"model_id":"fim-engine","backend":"` + eng.URL + `"}]}}}`
+	s := testServer(t, conf, nil)
+	for path, model := range map[string]string{"/v1/embeddings": "embed-shared", "/v1/completions": "fim-shared"} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", path, strings.NewReader(`{"model":"`+model+`","input":"hi","prompt":"hi"}`))
+		r.RemoteAddr = "192.168.1.50:5555"
+		s.Handler().ServeHTTP(w, r)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != 200 || out["model"] != model {
+			t.Fatalf("%s via pool: %d %s", path, w.Code, w.Body)
+		}
+	}
+	if hits["/v1/embeddings"] != 1 || hits["/v1/completions"] != 1 {
+		t.Fatalf("engine hits = %v", hits)
 	}
 }
