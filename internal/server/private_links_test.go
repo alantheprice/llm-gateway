@@ -123,6 +123,24 @@ func TestPrivateLinkSharing(t *testing.T) {
 		t.Fatalf("shared_with_me = %v", list["shared_with_me"])
 	}
 
+	// Share with everyone: a user nobody named gets access; turning it off
+	// falls back to the named list.
+	erin, _, _ := rig.s.store.CreateKey("erin", "k", "user", false)
+	if chatAs(t, rig, erin, name) != 404 {
+		t.Fatal("unnamed user reached a link before it was shared with everyone")
+	}
+	gpusCall(t, rig.s, "carol", "user", "POST", `{"action":"update_link","key_id":"link-e2e","shared_all":true}`)
+	if !has(modelsAs(t, rig, erin), name) || chatAs(t, rig, erin, name) != 200 {
+		t.Fatal("shared-with-everyone link not usable by another user")
+	}
+	if _, ok := rig.s.resolvePrivate(privateCaller("local", ""), name); ok {
+		t.Fatal("anonymous LAN caller reaches a link shared with everyone")
+	}
+	gpusCall(t, rig.s, "carol", "user", "POST", `{"action":"update_link","key_id":"link-e2e","shared_all":false}`)
+	if chatAs(t, rig, erin, name) != 404 || chatAs(t, rig, dave, name) != 200 {
+		t.Fatal("unsharing with everyone did not fall back to the named list")
+	}
+
 	gpusCall(t, rig.s, "carol", "user", "POST", `{"action":"update_link","key_id":"link-e2e","paused":true}`)
 	if chatAs(t, rig, carol, name) != 404 || chatAs(t, rig, dave, name) != 404 {
 		t.Fatal("paused link still serves")

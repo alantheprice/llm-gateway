@@ -121,6 +121,8 @@ You also get the admin views for it: `GET /v1/models/<gpu-name>/<model-id>` retu
 - call it with their own API key; the requests count against their own quota
 - can be removed at any time with ×; the next request is refused
 
+**Share it with everyone.** Tick **Share with everyone** on the link to open it to every signed-in user on the gateway, each calling with their own API key. Untick it to go back to just the people you named; that list is kept. Requests without an API key (anonymous LAN access) never reach a linked GPU.
+
 The link's **Usage** table shows who used it over the last 7 days: requests, tokens, latency and errors.
 
 ## Platform models

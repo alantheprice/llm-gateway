@@ -58,10 +58,15 @@ function engineBlock(e, row, isAdmin) {
 
 function sharingBlock(row) {
   const shared = (row.settings && row.settings.shared_with) || [];
+  const all = !!(row.settings && row.settings.shared_all);
   return '<div class="sub">Shared with</div>' +
+    '<label class="consent everyone"><input type="checkbox" id="everyone-' + escAttr(row.key_id) + '" data-everyone="' + escAttr(row.key_id) + '"' + (all ? ' checked' : '') + '> ' +
+    '<strong>Share with everyone</strong> <span class="muted">— every signed-in user can call it</span></label>' +
+    (all ? '<div class="hint">Everyone on this gateway sees <code>' + esc(((row.agent && row.agent.engines && row.agent.engines[0]) || {}).model || linkName(row.key_id) + '/…') +
+      '</code> in their model list. The people below keep access if you turn this off.</div>' : '') +
     '<div class="chips">' + (shared.length ? shared.map(u => '<span class="chip">' + esc(u) +
       ' <button title="Stop sharing" data-unshare="' + escAttr(u) + '" data-key="' + escAttr(row.key_id) + '">×</button></span>').join('')
-      : '<span class="muted">Only you. Nobody else can see or call this GPU.</span>') + '</div>' +
+      : '<span class="muted">' + (all ? 'No one named individually.' : 'Only you. Nobody else can see or call this GPU.') + '</span>') + '</div>' +
     '<div class="sharebar"><input placeholder="username" data-shareinput="' + escAttr(row.key_id) + '" autocomplete="off">' +
     '<button class="btn sm" data-share="' + escAttr(row.key_id) + '">Share</button></div>' +
     '<div class="hint">People you share with call it by the same name with their own API key. Their requests count against their quota, and their prompts reach your machine.</div>';
@@ -133,6 +138,16 @@ function bindLinkCards(root) {
   root.querySelectorAll('[data-unshare]').forEach(b => b.addEventListener('click', () => {
     const cur = (rowOf(b.dataset.key).settings.shared_with || []).filter(u => u !== b.dataset.unshare);
     setShares(b.dataset.key, cur, 'Stopped sharing with ' + b.dataset.unshare + '.');
+  }));
+  root.querySelectorAll('[data-everyone]').forEach(cb => cb.addEventListener('change', async () => {
+    const keyID = cb.dataset.everyone;
+    if (cb.checked && !confirm('Share "' + linkName(keyID) + '" with everyone? Every signed-in user will be able to call it with their own API key, and their prompts will reach your machine.')) {
+      cb.checked = false; return;
+    }
+    if (await post({action: 'update_link', key_id: keyID, shared_all: cb.checked})) {
+      flash(cb.checked ? linkName(keyID) + ' is now shared with everyone.' : linkName(keyID) + ' is no longer shared with everyone.');
+      load(true);
+    } else cb.checked = !cb.checked;
   }));
   root.querySelectorAll('[data-pool]').forEach(cb => cb.addEventListener('change', async () => {
     const keyID = cb.dataset.key;
@@ -329,6 +344,7 @@ setInterval(() => { if (step !== 4) load(); }, 15000);
 .sub { font-weight: 600; font-size: 12.5px; margin: 12px 0 4px; }
 .callme { margin-top: 4px; font-size: 13px; }
 .consent { display: flex; gap: 6px; align-items: baseline; font-size: 13px; margin: 3px 0; }
+.consent.everyone { margin-bottom: 8px; flex-wrap: wrap; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12.5px; }
 .chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
@@ -363,7 +379,7 @@ table.mini { font-size: 12px; }
         <li><span class="badge grace">not connected</span> the token exists but no agent is using it. Run the install script, or check the agent's log.</li>
         <li><span class="badge grace">paused</span> the agent stays connected but nobody is routed to it. Resume any time.</li>
         <li><span class="badge off">revoked</span> the token no longer works. Create a new link if you still want this GPU.</li>
-        <li><strong>Share</strong> names people who may call your GPU with their own API keys. Remove them with ×.</li>
+        <li><strong>Share</strong> names people who may call your GPU with their own API keys. Remove them with ×. <strong>Share with everyone</strong> opens it to every signed-in user.</li>
         <li><strong>Platform models</strong>: if an admin lists your GPU in a shared model (like <code>qwen3.8-27b</code>), it only serves that model once you tick the box. <a href="/guide/link-gpu#platform-models">More →</a></li>
         <li>To <strong>replace a token</strong>, create a new link, run its script, then revoke the old one.</li>
       </ul>

@@ -115,6 +115,7 @@ type Store struct {
 // owner can call the GPU, it joins no pool, it is serving.
 type LinkSettings struct {
 	SharedWith []string `json:"shared_with,omitempty"` // users who may call it
+	SharedAll  bool     `json:"shared_all,omitempty"`  // every signed-in user may call it
 	Pools      []string `json:"pools,omitempty"`       // pools the owner consents to serve
 	Paused     bool     `json:"paused,omitempty"`      // stop serving without revoking
 }
@@ -136,7 +137,7 @@ func (s *Store) SetLinkSettings(owner, keyID string, ls LinkSettings) error {
 	if s.LinkSettings == nil {
 		s.LinkSettings = map[string]map[string]LinkSettings{}
 	}
-	if len(ls.SharedWith) == 0 && len(ls.Pools) == 0 && !ls.Paused {
+	if len(ls.SharedWith) == 0 && len(ls.Pools) == 0 && !ls.Paused && !ls.SharedAll {
 		delete(s.LinkSettings[owner], keyID)
 		if len(s.LinkSettings[owner]) == 0 {
 			delete(s.LinkSettings, owner)

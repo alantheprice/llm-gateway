@@ -154,6 +154,7 @@ func (s *Server) handleAPIGPUs(w http.ResponseWriter, r *http.Request) {
 			SharedWith *[]string `json:"shared_with"`
 			Pools      *[]string `json:"pools"`
 			Paused     *bool     `json:"paused"`
+			SharedAll  *bool     `json:"shared_all"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&body); err != nil {
 			errBody(w, http.StatusBadRequest, "bad json")
@@ -165,7 +166,7 @@ func (s *Server) handleAPIGPUs(w http.ResponseWriter, r *http.Request) {
 		case "revoke_link":
 			s.revokeLink(w, user, body.KeyID)
 		case "update_link":
-			s.updateLink(w, user, body.KeyID, body.SharedWith, body.Pools, body.Paused)
+			s.updateLink(w, user, body.KeyID, body.SharedWith, body.Pools, body.Paused, body.SharedAll)
 		default:
 			errBody(w, http.StatusBadRequest, "unknown action")
 		}
@@ -304,7 +305,7 @@ const maxShares = 50
 
 // updateLink: the owner's controls — share with named users, consent to
 // platform models, pause. Takes effect on the next request.
-func (s *Server) updateLink(w http.ResponseWriter, user, keyID string, shared, pools *[]string, paused *bool) {
+func (s *Server) updateLink(w http.ResponseWriter, user, keyID string, shared, pools *[]string, paused, sharedAll *bool) {
 	active := false
 	for _, k := range s.store.ListLinkKeys(user) {
 		if k.KeyID == keyID && k.Active {
@@ -353,11 +354,14 @@ func (s *Server) updateLink(w http.ResponseWriter, user, keyID string, shared, p
 	if paused != nil {
 		ls.Paused = *paused
 	}
+	if sharedAll != nil {
+		ls.SharedAll = *sharedAll
+	}
 	if err := s.store.SetLinkSettings(user, keyID, ls); err != nil {
 		errBody(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	log.Printf("User %s updated GPU link %s: shared=%v pools=%v paused=%v", user, keyID, ls.SharedWith, ls.Pools, ls.Paused)
+	log.Printf("User %s updated GPU link %s: shared=%v everyone=%v pools=%v paused=%v", user, keyID, ls.SharedWith, ls.SharedAll, ls.Pools, ls.Paused)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "settings": ls})
 }

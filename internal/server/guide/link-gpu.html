@@ -113,6 +113,7 @@ agent: relay GET /slots
 <li>call it with their own API key; the requests count against their own quota</li>
 <li>can be removed at any time with ×; the next request is refused</li>
 </ul>
+<p><strong>Share it with everyone.</strong> Tick <strong>Share with everyone</strong> on the link to open it to every signed-in user on the gateway, each calling with their own API key. Untick it to go back to just the people you named; that list is kept. Requests without an API key (anonymous LAN access) never reach a linked GPU.</p>
 <p>The link's <strong>Usage</strong> table shows who used it over the last 7 days: requests, tokens, latency and errors.</p>
 <h2 id="platform-models">Platform models</h2>
 <p>A platform model is a shared name such as <code>qwen3.8-27b</code>, which the gateway routes across several GPUs by load, cache affinity and context window. Everyone with an API key can call it.</p>

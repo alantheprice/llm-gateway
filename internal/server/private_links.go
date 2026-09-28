@@ -11,7 +11,8 @@ import (
 
 // Private GPU links. A linked engine serves its owner by default: it is
 // listed and callable as "<gpu>/<model-id>" for the owner and for users the
-// owner names, and for no one else. The owner administers their link —
+// owner names (or every signed-in user, when shared with everyone), and for
+// no one else. Anonymous LAN-trusted callers never reach a link. The owner administers their link —
 // sharing, pausing, pool consent, usage, the unredacted card and live
 // details — the way the platform admin administers the gateway's own GPUs.
 //
@@ -53,7 +54,7 @@ func (s *Server) privateModels(user string) []privateModel {
 			continue
 		}
 		shared := c.Owner != user
-		if shared && !slices.Contains(ls.SharedWith, user) {
+		if shared && !ls.SharedAll && !slices.Contains(ls.SharedWith, user) {
 			continue
 		}
 		for _, e := range c.Engines() {
