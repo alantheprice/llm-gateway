@@ -346,6 +346,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = withClientModel(r, req.Model) // responses carry the name the client called
+	if kindFor(req.Model) == "embeddings" {
+		errBody(w, http.StatusBadRequest, fmt.Sprintf("%q is an embedding model; call it at /v1/embeddings", req.Model))
+		return
+	}
 
 	// Pool path
 	s.mu.Lock()

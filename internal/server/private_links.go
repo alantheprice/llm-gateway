@@ -157,3 +157,79 @@ func (s *Server) platformModelsFor(backend string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// chatModelGroup: one <optgroup> in the chat model picker.
+type chatModelGroup struct {
+	Label  string   `json:"label"`
+	Models []string `json:"models"`
+}
+
+// isChatModel: false for embedding and fill-in-the-middle models, which
+// can't hold a conversation. Judged per model name (the same rule usage
+// accounting uses); the engine-level embeddings flag can't tell models on
+// one engine apart.
+func (s *Server) isChatModel(id string) bool { return kindFor(id) == "chat" }
+
+// chatModelGroups: what the chat UI offers — chat models from the public
+// catalog (shared pools, standalone models), the user's own and shared
+// GPUs, and for admins the individual engines behind pools (for testing
+// one GPU directly).
+func (s *Server) chatModelGroups(user string, isAdmin bool) []chatModelGroup {
+	var groups []chatModelGroup
+	var main []string
+	for _, e := range s.catalog() {
+		if s.isChatModel(e.ID) {
+			main = append(main, e.ID)
+		}
+	}
+	sort.Strings(main)
+	if len(main) > 0 {
+		groups = append(groups, chatModelGroup{Label: "Models", Models: main})
+	}
+	var mine []string
+	for _, pm := range s.privateModels(user) {
+		if s.isChatModel(pm.ModelID) {
+			mine = append(mine, pm.Name)
+		}
+	}
+	if len(mine) > 0 {
+		groups = append(groups, chatModelGroup{Label: "Your & shared GPUs", Models: mine})
+	}
+	if isAdmin {
+		seen := map[string]bool{}
+		for _, id := range main {
+			seen[id] = true
+		}
+		var members []string
+		s.mu.Lock()
+		for _, pool := range s.cfg.ModelPools {
+			for _, m := range pool.Members {
+				if m.ModelID != "" && !seen[m.ModelID] {
+					seen[m.ModelID] = true
+					members = append(members, m.ModelID)
+				}
+			}
+		}
+		s.mu.Unlock()
+		var reachable []string
+		for _, id := range members {
+			if u, _ := s.resolve(id); u != "" && s.isChatModel(id) {
+				reachable = append(reachable, id)
+			}
+		}
+		sort.Strings(reachable)
+		if len(reachable) > 0 {
+			groups = append(groups, chatModelGroup{Label: "Specific GPU (admin)", Models: reachable})
+		}
+	}
+	return groups
+}
+
+// flatModels: the groups' models in order.
+func flatModels(groups []chatModelGroup) []string {
+	out := []string{}
+	for _, g := range groups {
+		out = append(out, g.Models...)
+	}
+	return out
+}

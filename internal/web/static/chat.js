@@ -580,11 +580,22 @@
     const r = await fetch('/chat/config');
     if (!r.ok) { location = '/'; return; }
     cfg = await r.json();
-    for (const mid of cfg.models) {
-      const o = document.createElement('option');
-      o.value = mid; o.textContent = mid;
-      if (mid === 'qwen3.8-27b') o.selected = true;
-      modelEl.appendChild(o);
+    // Chat-capable models only (no embedding / code-completion models),
+    // grouped: shared models, your & shared GPUs, admin-only single GPUs.
+    const groups = cfg.model_groups || [{ label: '', models: cfg.models || [] }];
+    for (const g of groups) {
+      let parent = modelEl;
+      if (g.label && groups.length > 1) {
+        parent = document.createElement('optgroup');
+        parent.label = g.label;
+        modelEl.appendChild(parent);
+      }
+      for (const mid of g.models) {
+        const o = document.createElement('option');
+        o.value = mid; o.textContent = mid;
+        if (mid === 'qwen3.8-27b') o.selected = true;
+        parent.appendChild(o);
+      }
     }
     loadStore();
     render();

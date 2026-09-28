@@ -370,27 +370,51 @@ func TestModelsCatalogHidesPoolMembersSynthesizesVirtual(t *testing.T) {
 	}
 }
 
-func TestChatConfigModelsAreNames(t *testing.T) {
+// Chat offers chat models only: the shared pool, not embedding or
+// code-completion models, and not a pool GPU's own id (admins get those in
+// a separate group). The chat API refuses embedding models clearly.
+func TestChatConfigModels(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{
-			{"id": "qwen3.8-27b-5090"}, {"id": "Qwen3-Embedding-0.6B"},
+			{"id": "qwen3.8-27b-5090"}, {"id": "Qwen3-Embedding-0.6B"}, {"id": "qwen3.5-9b-fim"},
 		}})
 	}))
 	defer up.Close()
 	conf := `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"],"discovery":{"local_ports":[` +
-		strings.TrimPrefix(up.URL, "http://127.0.0.1:") + `]}}`
+		strings.TrimPrefix(up.URL, "http://127.0.0.1:") + `]},
+	 "model_pools":{"qwen3.8-27b":{"members":[{"model_id":"qwen3.8-27b-5090","backend":"` + up.URL + `"}]}}}`
 	s := testServer(t, conf, nil)
-	tok := s.store.SignSession(auth.Claims{U: "bob", Role: "user"}, time.Hour)
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/chat/config", nil)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
-	s.Handler().ServeHTTP(w, r)
-	var out struct {
-		Models []string `json:"models"`
+	get := func(user, role string) (models []string, groups []chatModelGroup) {
+		tok := s.store.SignSession(auth.Claims{U: user, Role: role}, time.Hour)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/chat/config", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+		s.Handler().ServeHTTP(w, r)
+		var out struct {
+			Models []string         `json:"models"`
+			Groups []chatModelGroup `json:"model_groups"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != 200 {
+			t.Fatalf("chat/config: %d %s", w.Code, w.Body)
+		}
+		return out.Models, out.Groups
 	}
-	json.Unmarshal(w.Body.Bytes(), &out)
-	if w.Code != 200 || len(out.Models) != 2 || out.Models[0] != "Qwen3-Embedding-0.6B" {
-		t.Fatalf("chat/config models = %v (code %d, body %s)", out.Models, w.Code, w.Body.String())
+	if m, _ := get("bob", "user"); len(m) != 1 || m[0] != "qwen3.8-27b" {
+		t.Fatalf("user chat models = %v, want only the pool", m)
+	}
+	m, g := get("root", "admin")
+	if len(m) != 2 || len(g) != 2 || g[1].Models[0] != "qwen3.8-27b-5090" {
+		t.Fatalf("admin chat models = %v groups %+v", m, g)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"Qwen3-Embedding-0.6B","messages":[{"role":"user","content":"hi"}]}`))
+	r.RemoteAddr = "192.168.1.50:5555"
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "/v1/embeddings") {
+		t.Fatalf("chat on embedding model: %d %s", w.Code, w.Body)
 	}
 }
 

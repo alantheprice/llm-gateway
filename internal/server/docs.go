@@ -260,7 +260,10 @@ type ChatConfigOutput struct {
 		Username string   `json:"username"`
 		Role     string   `json:"role"`
 		APIKey   string   `json:"api_key"`
-		Models   []string `json:"models"`
+		Models   []string `json:"models" doc:"chat-capable models, flattened from model_groups"`
+		// ModelGroups: the picker's sections (Models, your & shared GPUs,
+		// and for admins the individual engines behind pools).
+		ModelGroups []chatModelGroup `json:"model_groups"`
 	}
 }
 
@@ -320,7 +323,9 @@ func (s *Server) registerIdentityDocs() {
 		out.Body.Username = sess.U
 		out.Body.Role = sess.Role
 		out.Body.APIKey = apiKey
-		out.Body.Models = s.modelIDs()
+		groups := s.chatModelGroups(sess.U, sess.Role == "admin")
+		out.Body.Models = flatModels(groups)
+		out.Body.ModelGroups = groups
 		return out, nil
 	}, func(o *huma.Operation) {
 		o.Tags = []string{"identity"}

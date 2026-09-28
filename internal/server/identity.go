@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -191,38 +190,18 @@ func (s *Server) handleChatConfig(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 		return
 	}
+	groups := s.chatModelGroups(sess.U, sess.Role == "admin")
 	apiKey := s.uiKeyFor(sess.U, sess.Role)
 	// Persist mint-time role on the key record (admin Bearer checks use it).
 	s.store.SetKeyRoleIfDiffers(sess.U, apiKey, sess.Role)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"username": sess.U,
-		"role":     sess.Role,
-		"api_key":  apiKey,
-		"models":   append(s.modelIDs(), s.privateModelNames(sess.U)...),
+		"username":     sess.U,
+		"role":         sess.Role,
+		"api_key":      apiKey,
+		"models":       flatModels(groups),
+		"model_groups": groups,
 	})
-}
-
-// modelIDs returns the chat-UI model list: every discovered model id
-// (Python parity — /chat/config serves sorted _backend_cache.keys(), which
-// includes pool member ids; /v1/models is the filtered public catalog).
-func (s *Server) modelIDs() []string {
-	set := map[string]bool{}
-	s.mu.Lock()
-	for _, info := range s.backends {
-		for _, id := range info.Models {
-			if id != "" {
-				set[id] = true
-			}
-		}
-	}
-	s.mu.Unlock()
-	ids := make([]string, 0, len(set))
-	for id := range set {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
 }
 
 // ---- /keys: self-service key management (SPEC parity) ----
