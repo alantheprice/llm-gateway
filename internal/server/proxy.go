@@ -167,6 +167,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 				QueueWaitms: extras.QueueWaitms,
 			})
 		}
+		if extras.QueueWaitms > 0 {
+			s.tracker.ObserveQueueWait(backendURL, extras.QueueWaitms)
+		}
 		s.observePeak(model, backendURL, captured.bytes(), false)
 		return
 	}
@@ -192,6 +195,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 			DraftN: extras.DraftN, DraftAccepted: extras.DraftAccepted,
 			QueueWaitms: extras.QueueWaitms,
 		})
+	}
+	if extras.QueueWaitms > 0 {
+		s.tracker.ObserveQueueWait(backendURL, extras.QueueWaitms)
 	}
 	s.observePeak(model, backendURL, buffered, true)
 }

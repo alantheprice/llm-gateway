@@ -158,6 +158,9 @@ func main() {
 		log.Fatalf("templates: %v", err)
 	}
 
+	// Keep live conversations on their GPUs across restarts.
+	srv.LoadAffinity()
+
 	// Initial discovery + first metrics snapshot.
 	srv.Discover()
 	srv.PollOnce()
@@ -205,6 +208,7 @@ func main() {
 				return
 			case <-tick.C:
 				srv.FlushUsage()
+				srv.SaveAffinity()
 				if err := srv.SyncUsageToOps(); err != nil {
 					log.Printf("usage→sqlite sync: %v", err)
 				}
@@ -238,6 +242,7 @@ func main() {
 	// so restarts lose nothing. The periodic re-import below re-merges any
 	// window that ever slips through.
 	srv.FlushUsage()
+	srv.SaveAffinity()
 	if ops := srv.Ops(); ops != nil && pbApp.OpsReady() {
 		srv.SyncUsageToOps()
 	}

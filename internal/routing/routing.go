@@ -55,6 +55,9 @@ type Tracker struct {
 	// (observed as a ~1-in-5 flake in the CI matrix under -race load).
 	down       map[string]time.Time
 	failStreak map[string]int
+	// queueMs: moving average of engine-reported queue wait per backend
+	// (from the per-response stats block). Feeds queue-aware affinity.
+	queueMs map[string]float64
 }
 
 // DownTTL: how long one failure keeps a member out of rotation. The
@@ -67,8 +70,34 @@ func NewTracker(w Weights) *Tracker {
 	return &Tracker{
 		loads: map[string]*Load{}, baseline: map[string][2]int{},
 		inFlight: map[string]int{}, weights: w, down: map[string]time.Time{},
-		failStreak: map[string]int{},
+		failStreak: map[string]int{}, queueMs: map[string]float64{},
 	}
+}
+
+// queueAlpha: weight of the newest sample in the queue-wait average
+// (≈ the last 5–10 requests dominate).
+const queueAlpha = 0.3
+
+// ObserveQueueWait folds one request's engine-reported queue wait (ms) into
+// the backend's moving average.
+func (t *Tracker) ObserveQueueWait(url string, ms float64) {
+	if ms < 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if cur, ok := t.queueMs[url]; ok {
+		t.queueMs[url] = cur + queueAlpha*(ms-cur)
+	} else {
+		t.queueMs[url] = ms
+	}
+}
+
+// QueueWait: the backend's recent average queue wait in ms (0 if unknown).
+func (t *Tracker) QueueWait(url string) float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.queueMs[url]
 }
 
 func (t *Tracker) Set(url string, l *Load) {
@@ -326,8 +355,12 @@ type PickResult struct {
 // thousand scraper sessions sharing an opener must not pile onto one GPU).
 // Large prompts are handled by the caller's size-affinity path and never
 // reach here.
+// coldPrefillMs is the caller's estimate of what moving this conversation to
+// another GPU would cost (re-prefilling it there). When the pinned GPU is
+// queueing for longer than that and another member has a free lane, the
+// cache hit is declined and the conversation moves. 0 disables the check.
 func PickCache(ct *CacheTable, poolName string, members []Member, tr *Tracker,
-	msgs []Message, inFlightByURL map[string]int) *PickResult {
+	msgs []Message, inFlightByURL map[string]int, coldPrefillMs float64) *PickResult {
 	if ct == nil || len(msgs) < 2 || len(members) == 0 {
 		return nil
 	}
@@ -364,7 +397,33 @@ func PickCache(ct *CacheTable, poolName string, members []Member, tr *Tracker,
 	if score >= guard {
 		return nil // cache hit but GPU too busy: fall through to score-based pick
 	}
+	// Queue-aware: a lane-based score can sit just under the guard while the
+	// engine queues for seconds. Moving costs one cold prefill elsewhere;
+	// staying costs the queue. Move when staying is clearly worse.
+	if coldPrefillMs > 0 {
+		if l := tr.Get(url); l != nil && l.Waiting > 0 && tr.QueueWait(url) > coldPrefillMs &&
+			hasFreeLane(members, url, tr, inFlightByURL) {
+			return nil
+		}
+	}
 	return &PickResult{URL: picked.URL, ModelID: picked.ModelID, CacheHit: true, CacheDepth: depth}
+}
+
+// hasFreeLane: some member other than `except` has an idle lane right now.
+func hasFreeLane(members []Member, except string, tr *Tracker, inFlightByURL map[string]int) bool {
+	for _, m := range members {
+		if m.URL == except {
+			continue
+		}
+		l := tr.Get(m.URL)
+		if l == nil || l.Lanes < 1 {
+			continue
+		}
+		if l.Waiting == 0 && l.Running+inFlightByURL[m.URL] < l.Lanes {
+			return true
+		}
+	}
+	return false
 }
 
 // PickPool implements SPEC §5.4 deterministically.
@@ -474,14 +533,18 @@ func PickPool(poolName string, poolThreshold, stickyBias float64,
 
 	// 7. Choice: min by (score - sticky, original index). Members that
 	// cannot fit the request were already removed by FitContext.
+	// Ties (e.g. every member idle at score 0) go to the larger member —
+	// more lanes or a higher capacity_weight — not to config order, so new
+	// conversations start on the GPU with the most headroom.
 	bestIdx := -1
 	bestScore := 2.0
+	const eps = 1e-9
 	for i, m := range eligible {
 		s := scores[m.URL]
 		if m.URL == leader {
 			s -= stickyBias
 		}
-		if s < bestScore {
+		if s < bestScore-eps || (s <= bestScore+eps && bestIdx >= 0 && memberCapacity(m) > memberCapacity(eligible[bestIdx])) {
 			bestScore = s
 			bestIdx = i
 		}
@@ -530,3 +593,12 @@ func EstimateTokens(messages []map[string]any) int {
 }
 
 func clamp01(f float64) float64 { return min(max(f, 0.0), 1.0) }
+
+// memberCapacity: a member's relative size for tie-breaking —
+// capacity_weight when configured, else its lane count.
+func memberCapacity(m Member) int {
+	if m.CapacityWeight > 0 {
+		return m.CapacityWeight
+	}
+	return m.Lanes
+}

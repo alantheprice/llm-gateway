@@ -926,3 +926,33 @@ func dedupeStrings(in []string) []string {
 	}
 	return out
 }
+
+// affinityPath: the cache-affinity table's file, next to usage.json.
+func (s *Server) affinityPath() string {
+	return filepath.Join(filepath.Dir(UsagePath(s.cfg)), "cache_affinity.json")
+}
+
+// LoadAffinity restores the cache-affinity table at startup.
+func (s *Server) LoadAffinity() {
+	if s.cacheTable == nil {
+		return
+	}
+	n, err := s.cacheTable.Load(s.affinityPath())
+	if err != nil {
+		log.Printf("cache affinity: load failed: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("cache affinity: restored %d conversations", n)
+	}
+}
+
+// SaveAffinity persists the cache-affinity table (periodically + shutdown).
+func (s *Server) SaveAffinity() {
+	if s.cacheTable == nil {
+		return
+	}
+	if err := s.cacheTable.Save(s.affinityPath()); err != nil {
+		log.Printf("cache affinity: save failed: %v", err)
+	}
+}

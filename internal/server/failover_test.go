@@ -60,8 +60,10 @@ func TestPoolSkipsDownMember(t *testing.T) {
 	alive := okBackend(t, &hits)
 	defer alive.Close()
 	dead := deadURL(t)
-	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_A%", dead)
-	conf = strings.ReplaceAll(conf, "%BACKEND_B%", alive.URL)
+	// The dead member is the larger one (capacity_weight 4), so the capacity
+	// tie-break tries it first and the failure path is exercised.
+	conf := strings.ReplaceAll(twoBackendConf, "%BACKEND_B%", dead)
+	conf = strings.ReplaceAll(conf, "%BACKEND_A%", alive.URL)
 	s := testServer(t, conf, nil)
 
 	for i := 0; i < 3; i++ {

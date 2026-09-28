@@ -111,8 +111,8 @@ func TestNoSizePenalty(t *testing.T) {
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 0, 0, 6, 0, 0, 0))
 	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
 	got = PickPool("qwen", 0.20, 0.05, 0.15, members(), tr, "", "", false)
-	if got.URL != "http://127.0.0.1:8000" {
-		t.Errorf("both idle -> %s, want first member (tie keeps config order)", got.URL)
+	if got.URL != "http://192.168.1.100:8006" {
+		t.Errorf("both idle -> %s, want the larger member (capacity tie-break)", got.URL)
 	}
 }
 
@@ -216,5 +216,36 @@ func TestMarkDownIfTrackedFreshTracker(t *testing.T) {
 	tr.Set("u", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
 	if tr.IsDown("u") {
 		t.Fatal("a successful poll should clear down")
+	}
+}
+
+// Equal scores go to the larger member (lanes / capacity_weight), not to
+// config order.
+func TestTieBreakPrefersCapacity(t *testing.T) {
+	tr := NewTracker(DefaultWeights())
+	small := Member{URL: "small", ModelID: "m", Lanes: 5, CapacityWeight: 1}
+	big := Member{URL: "big", ModelID: "m", Lanes: 8, CapacityWeight: 8}
+	tr.Set("small", mkLoad("ninfer", 0, 0, 5, 0, 0, 0))
+	tr.Set("big", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
+	got := PickPool("qwen", 0.20, 0.05, 0.15, []Member{small, big}, tr, "", "", true)
+	if got.URL != "big" {
+		t.Fatalf("idle tie -> %s, want the larger member", got.URL)
+	}
+	// The sticky leader bonus still wins over capacity.
+	got = PickPool("qwen", 0.20, 0.05, 0.15, []Member{small, big}, tr, "", "small", true)
+	if got.URL != "small" {
+		t.Fatalf("leader -> %s, want sticky leader", got.URL)
+	}
+}
+
+func TestQueueWaitAverage(t *testing.T) {
+	tr := NewTracker(DefaultWeights())
+	if tr.QueueWait("x") != 0 {
+		t.Fatal("unknown backend should report 0")
+	}
+	tr.ObserveQueueWait("x", 1000)
+	tr.ObserveQueueWait("x", 0)
+	if q := tr.QueueWait("x"); q < 600 || q > 800 {
+		t.Fatalf("EWMA = %v, want ~700", q)
 	}
 }

@@ -17,12 +17,15 @@
 //   - Rolling chain = O(n) over the text, one pass, no re-hash. FNV-1a 64:
 //     ~30µs for 8K tokens of text; GPU work is seconds. Not on any critical path.
 //
-// Entries are in-memory only: a stale entry costs one prefill miss, never
-// correctness. TTL + LRU-ish cap + backend-restart invalidation keep it
+// Entries live in memory and are saved to disk periodically (Save/Load) so
+// restarts keep conversations on their GPUs. A stale entry costs one prefill
+// miss, never correctness. TTL + LRU-ish cap + backend-restart invalidation keep it
 // honest. Load guards live at the call site (routing rules), not here.
 package routing
 
 import (
+	"encoding/json"
+	"os"
 	"sync"
 	"time"
 )
@@ -198,4 +201,67 @@ func (t *CacheTable) Len() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.entries)
+}
+
+// persistedEntry: on-disk form of one affinity entry.
+type persistedEntry struct {
+	Hash    uint64    `json:"h"`
+	Backend string    `json:"b"`
+	Depth   int       `json:"d"`
+	At      time.Time `json:"t"`
+}
+
+// Save writes the unexpired entries to path (atomic rename). Called
+// periodically and at shutdown so a gateway restart doesn't re-place every
+// live conversation (each re-placement costs a cold prefill).
+func (t *CacheTable) Save(path string) error {
+	t.mu.Lock()
+	now := time.Now()
+	out := make([]persistedEntry, 0, len(t.entries))
+	for h, e := range t.entries {
+		if now.Sub(e.at) <= t.ttl {
+			out = append(out, persistedEntry{Hash: h, Backend: e.backend, Depth: e.depth, At: e.at})
+		}
+	}
+	t.mu.Unlock()
+	data, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// Load merges unexpired entries from path (missing file = nothing to do).
+// Entries for backends that no longer exist simply miss at lookup time.
+func (t *CacheTable) Load(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var in []persistedEntry
+	if err := json.Unmarshal(data, &in); err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for _, e := range in {
+		if now.Sub(e.At) > t.ttl || e.Backend == "" {
+			continue
+		}
+		if cur, ok := t.entries[e.Hash]; ok && cur.at.After(e.At) {
+			continue
+		}
+		t.entries[e.Hash] = cacheEntry{backend: e.Backend, depth: e.Depth, at: e.At}
+		n++
+	}
+	return n, nil
 }

@@ -483,7 +483,8 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 		for _, m := range members {
 			inflight[m.URL] = s.tracker.InFlight(m.URL)
 		}
-		if cp := routing.PickCache(s.cacheTable, modelName, members, s.tracker, convMsgs, inflight); cp != nil {
+		if cp := routing.PickCache(s.cacheTable, modelName, members, s.tracker, convMsgs, inflight,
+			coldPrefillMs(est)); cp != nil {
 			s.relayPoolPick(w, r, modelName, pool, body, *cp, user, keyID, est, convMsgs)
 			return
 		}
@@ -665,4 +666,18 @@ func poolUnavailable(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "5")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	w.Write([]byte(`{"error":{"message":"no healthy backend available for this model; retry shortly","type":"service_unavailable"}}`))
+}
+
+// coldPrefillAssumedTokS: prefill speed assumed when estimating what moving
+// a conversation to another GPU costs. Conservative: the 5090's measured
+// cold-prefill median (~6,000 tok/s, 2026-09-28); the 6000 Pro is faster.
+const coldPrefillAssumedTokS = 6000.0
+
+// coldPrefillMs: estimated time to re-prefill a conversation of estTokens
+// on another GPU.
+func coldPrefillMs(estTokens int) float64 {
+	if estTokens <= 0 {
+		return 0
+	}
+	return float64(estTokens) / coldPrefillAssumedTokS * 1000
 }

@@ -111,7 +111,7 @@ func TestPickCacheGuards(t *testing.T) {
 
 	ct.Record("pool", msgs, "gpuA")
 	// Deep match (depth 4) + idle GPU → hit.
-	pick := PickCache(ct, "pool", members, tr, msgs, nil)
+	pick := PickCache(ct, "pool", members, tr, msgs, nil, 0)
 	if pick == nil || pick.URL != "gpuA" || !pick.CacheHit || pick.CacheDepth != 4 {
 		t.Fatalf("deep pick = %+v, want gpuA cache-hit", pick)
 	}
@@ -120,7 +120,7 @@ func TestPickCacheGuards(t *testing.T) {
 	shallow := conv("", "sys", "u1", "", "", "")
 	tr.Set("gpuA", &Load{Engine: "ninfer", Running: 3, Lanes: 6, LastUpdated: time.Now()})
 	ct.Record("pool", shallow, "gpuA")
-	if pick := PickCache(ct, "pool", members, tr, shallow, nil); pick != nil {
+	if pick := PickCache(ct, "pool", members, tr, shallow, nil, 0); pick != nil {
 		t.Fatalf("shallow match on busy GPU must be released: %+v", pick)
 	}
 
@@ -128,13 +128,63 @@ func TestPickCacheGuards(t *testing.T) {
 	deep := conv("", "sys", "u1", "a1", "u2", "")
 	tr.Set("gpuA", &Load{Engine: "ninfer", Running: 3, Lanes: 6, LastUpdated: time.Now()})
 	ct.Record("pool", deep, "gpuA")
-	if pick := PickCache(ct, "pool", members, tr, deep, nil); pick == nil {
+	if pick := PickCache(ct, "pool", members, tr, deep, nil, 0); pick == nil {
 		t.Fatal("deep match should survive 0.5 load")
 	}
 
 	// Matched member missing from members list → miss.
 	foreign := []Member{{URL: "gpuX", ModelID: "m-x", Lanes: 6}}
-	if pick := PickCache(ct, "pool", foreign, tr, msgs, nil); pick != nil {
+	if pick := PickCache(ct, "pool", foreign, tr, msgs, nil, 0); pick != nil {
 		t.Fatal("match to non-member must be dropped")
+	}
+}
+
+// A cache hit on a GPU that is queueing longer than a cold prefill elsewhere
+// is declined when another member has a free lane; kept otherwise.
+func TestPickCacheQueueAware(t *testing.T) {
+	ct := NewCacheTable(time.Hour, 100)
+	msgs := []Message{{"system", "s"}, {"user", "u1"}, {"assistant", "a1"}, {"user", "u2"}}
+	ct.Record("pool", msgs[:3], "busy")
+	members := []Member{{URL: "busy", ModelID: "m", Lanes: 5}, {URL: "idle", ModelID: "m", Lanes: 8}}
+	tr := NewTracker(DefaultWeights())
+	tr.Set("busy", &Load{Engine: "ninfer", Running: 4, Waiting: 1, Lanes: 5, LastUpdated: time.Now()})
+	tr.Set("idle", &Load{Engine: "ninfer", Running: 0, Lanes: 8, LastUpdated: time.Now()})
+	tr.ObserveQueueWait("busy", 4800)
+
+	if pick := PickCache(ct, "pool", members, tr, msgs, nil, 3000); pick != nil {
+		t.Fatalf("queued 4.8s vs 3s cold prefill with a free lane elsewhere: should move, got %v", pick.URL)
+	}
+	if pick := PickCache(ct, "pool", members, tr, msgs, nil, 6000); pick == nil {
+		t.Fatal("cold prefill (6s) costs more than the queue (4.8s): should stay")
+	}
+	tr.Set("idle", &Load{Engine: "ninfer", Running: 8, Lanes: 8, LastUpdated: time.Now()})
+	if pick := PickCache(ct, "pool", members, tr, msgs, nil, 3000); pick == nil {
+		t.Fatal("no free lane elsewhere: should stay")
+	}
+}
+
+// The table survives a save/load round trip; expired entries are dropped.
+func TestCacheTablePersistence(t *testing.T) {
+	ct := NewCacheTable(time.Hour, 100)
+	msgs := []Message{{"system", "s"}, {"user", "u1"}}
+	ct.Record("pool", msgs, "gpu-a")
+	path := t.TempDir() + "/aff.json"
+	if err := ct.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewCacheTable(time.Hour, 100)
+	if n, err := fresh.Load(path); err != nil || n != 1 {
+		t.Fatalf("load = %d, %v", n, err)
+	}
+	if b, _, ok := fresh.Lookup("pool", msgs); !ok || b != "gpu-a" {
+		t.Fatalf("restored lookup = %q %v", b, ok)
+	}
+	short := NewCacheTable(time.Nanosecond, 100)
+	time.Sleep(time.Millisecond)
+	if n, _ := short.Load(path); n != 0 {
+		t.Fatalf("expired entries restored: %d", n)
+	}
+	if n, err := NewCacheTable(time.Hour, 100).Load(t.TempDir() + "/missing.json"); err != nil || n != 0 {
+		t.Fatalf("missing file: %d %v", n, err)
 	}
 }
