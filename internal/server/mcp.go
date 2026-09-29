@@ -35,6 +35,9 @@ type mcpServerView struct {
 	Headers map[string]string `json:"headers"`
 	Enabled bool              `json:"enabled"`
 	Added   string            `json:"added,omitempty"`
+	// Auth: "oauth" (sign-in), "header" or "none"; SignedIn for oauth.
+	Auth     string `json:"auth"`
+	SignedIn bool   `json:"signed_in,omitempty"`
 }
 
 func maskSecret(v string) string {
@@ -51,7 +54,15 @@ func mcpViews(list []auth.MCPServer) []mcpServerView {
 		for k, v := range m.Headers {
 			h[k] = maskSecret(v)
 		}
-		out = append(out, mcpServerView{ID: m.ID, Name: m.Name, URL: m.URL, Headers: h, Enabled: m.Enabled, Added: m.Added})
+		v := mcpServerView{ID: m.ID, Name: m.Name, URL: m.URL, Headers: h, Enabled: m.Enabled, Added: m.Added, Auth: "none"}
+		switch {
+		case m.OAuth != nil:
+			v.Auth, v.SignedIn = "oauth", m.OAuth.AccessToken != "" &&
+				(m.OAuth.Expiry == 0 || m.OAuth.RefreshToken != "" || time.Now().Unix() < m.OAuth.Expiry)
+		case len(m.Headers) > 0:
+			v.Auth = "header"
+		}
+		out = append(out, v)
 	}
 	return out
 }
@@ -160,6 +171,7 @@ func (s *Server) handleAPIMCP(w http.ResponseWriter, r *http.Request) {
 		URL     *string           `json:"url"`
 		Headers map[string]string `json:"headers"` // masked values keep the stored secret
 		Enabled *bool             `json:"enabled"`
+		Auth    string            `json:"auth"` // "oauth" on add: sign in instead of a header
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
 		errBody(w, http.StatusBadRequest, "invalid JSON")
@@ -216,6 +228,9 @@ func (s *Server) handleAPIMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m := apply(auth.MCPServer{ID: newMCPID(), Enabled: true, Added: time.Now().UTC().Format(time.RFC3339)})
+		if body.Auth == "oauth" {
+			m.OAuth, m.Headers = &auth.MCPOAuth{}, nil
+		}
 		if err := validateMCPServer(m, isAdmin); err != nil {
 			errBody(w, http.StatusBadRequest, err.Error())
 			return
@@ -240,6 +255,14 @@ func (s *Server) handleAPIMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		list[idx] = m
+	case "sign_out":
+		if idx < 0 || list[idx].OAuth == nil {
+			errBody(w, http.StatusNotFound, "no such connector")
+			return
+		}
+		o := *list[idx].OAuth
+		o.AccessToken, o.RefreshToken, o.Expiry = "", "", 0
+		list[idx].OAuth = &o
 	case "delete":
 		if idx < 0 {
 			errBody(w, http.StatusNotFound, "no such server")
@@ -257,6 +280,14 @@ func (s *Server) handleAPIMCP(w http.ResponseWriter, r *http.Request) {
 		if err := validateMCPServer(m, isAdmin); err != nil {
 			errBody(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if m.OAuth != nil {
+			h, err := s.mcpHeaders(r.Context(), user, m)
+			if err != nil {
+				reply(map[string]any{"test": map[string]any{"ok": false, "error": err.Error()}})
+				return
+			}
+			m.Headers = h
 		}
 		res, err := s.agentMCPTools(r.Context(), m, isAdmin)
 		if err != nil {
@@ -308,20 +339,28 @@ func (s *Server) agentMCPTools(ctx context.Context, m auth.MCPServer, allowPriva
 // withMCPServers sets the caller's enabled MCP servers on an agent request
 // body (overwriting anything the client sent: only the gateway decides
 // which servers, and whether LAN addresses are allowed).
-func (s *Server) withMCPServers(body []byte, user, keyID string) []byte {
+func (s *Server) withMCPServers(ctx context.Context, body []byte, user, keyID string) []byte {
 	var m map[string]any
 	if json.Unmarshal(body, &m) != nil || m == nil {
 		return body
 	}
 	var servers []map[string]any
+	var notices []string
 	if privateCaller(user, keyID) != "" {
 		for _, sv := range s.store.MCPServersOf(user) {
-			if sv.Enabled {
-				servers = append(servers, map[string]any{"name": sv.Name, "url": sv.URL, "headers": sv.Headers})
+			if !sv.Enabled {
+				continue
 			}
+			h, err := s.mcpHeaders(ctx, user, sv)
+			if err != nil {
+				notices = append(notices, sv.Name+": "+err.Error()+" (Connectors → Sign in)")
+				continue
+			}
+			servers = append(servers, map[string]any{"name": sv.Name, "url": sv.URL, "headers": h})
 		}
 	}
 	m["mcp_servers"] = servers
+	m["mcp_notices"] = notices
 	m["allow_private"] = user != "" && s.store.RoleOf(user) == "admin"
 	out, err := json.Marshal(m)
 	if err != nil {

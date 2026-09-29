@@ -44,9 +44,17 @@
       <label class="cx-grow">URL<input id="cxURL" type="url" placeholder="https://example.com/mcp" required></label>
     </div>
     <div class="cx-row">
-      <label>Auth header<input id="cxHName" value="Authorization"></label>
-      <label class="cx-grow">Value (optional)<input id="cxHVal" type="password" placeholder="Bearer …"></label>
+      <label>Sign-in<select id="cxAuth">
+        <option value="header">API key or token</option>
+        <option value="oauth">Sign in with the service (OAuth)</option>
+        <option value="none">None</option>
+      </select></label>
     </div>
+    <div class="cx-row" id="cxHeaderRow">
+      <label>Auth header<input id="cxHName" value="Authorization"></label>
+      <label class="cx-grow">Value<input id="cxHVal" type="password" placeholder="Bearer …"></label>
+    </div>
+    <p class="muted cx-hint" id="cxOAuthHint" hidden>After adding, click <strong>Sign in</strong>: a window opens where you approve access at the service.</p>
     <div class="cx-actions"><button type="button" class="btn sm" id="cxTest">Test</button><button type="submit" class="btn sm primary">Add</button></div>
     <div id="cxTestOut"></div>
   </form>

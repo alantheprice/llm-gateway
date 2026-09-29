@@ -8,10 +8,16 @@
 <ul>
 <li><strong>Name:</strong> a short name, e.g. <code>github</code> (lowercase letters, digits, <code>-</code>, <code>_</code>). Tools show up as <code>&lt;name&gt;__&lt;tool&gt;</code>.</li>
 <li><strong>URL:</strong> the server's MCP endpoint, e.g. <code>https://mcp.example.com/mcp</code>.</li>
-<li><strong>Auth header</strong> (if the server needs one): usually <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. Some servers use another header, such as <code>X-API-Key</code>.</li>
+<li><strong>Sign-in</strong>, one of:
+<ul>
+<li><strong>API key or token:</strong> a header, usually <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. Some servers use another header, such as <code>X-API-Key</code>.</li>
+<li><strong>Sign in with the service (OAuth):</strong> for servers that have you approve access in the browser. After <strong>Add</strong>, a window opens at the service; approve there and it closes by itself. The connector then shows <strong>✓ Signed in</strong>.</li>
+<li><strong>None:</strong> for public servers.</li>
 </ul>
 </li>
-<li>Click <strong>Test</strong> to connect and list its tools, then <strong>Add</strong>.</li>
+</ul>
+</li>
+<li>Click <strong>Test</strong> to connect and list its tools (for a token), then <strong>Add</strong>.</li>
 </ol>
 <p>Turn on <strong>🌐 Web</strong> in the composer to use connectors. The toggle reads <strong>Web + N connectors</strong> while any are on. Each connector has its own on/off switch.</p>
 <p>In a reply, each tool call shows as a chip, e.g. <code>🔌 github · list_issues ✓</code>. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.</p>
@@ -30,7 +36,7 @@
 </tr>
 <tr>
 <td><strong>Auth</strong></td>
-<td>A static header: an API key or personal access token. Servers that only offer an OAuth sign-in flow aren't supported yet; use a token if the service offers one.</td>
+<td>A header (API key or personal access token), or OAuth sign-in following the MCP authorization spec: the gateway finds the service's sign-in endpoints, registers itself as a client, signs you in with PKCE, and refreshes the token before it expires. Services that need a client registered by hand (no dynamic client registration) aren't supported for sign-in; use a token for those.</td>
 </tr>
 <tr>
 <td><strong>Tools</strong></td>
@@ -45,11 +51,12 @@
 <p>Stdio servers (the kind you run locally with <code>npx …</code> or <code>uvx …</code>) aren't connectors. Use a hosted version of the server if there is one.</p>
 <h2 id="security">Security</h2>
 <ul>
-<li><strong>Your header values are secret.</strong> The gateway stores them server-side and never shows them again; the list shows only the last four characters. They're sent only to that server, with each chat request that uses connectors.</li>
+<li><strong>Your header values and sign-in tokens are secret.</strong> The gateway stores them server-side, encrypted, and never shows them again; the list shows only the last four characters of a header. They're sent only to that server, with each chat request that uses connectors. <strong>Sign out</strong> (or <strong>Remove</strong>) deletes the tokens; to revoke the gateway's access entirely, also remove it in the service's own settings.</li>
+<li>If a sign-in expires and can't be refreshed, the chat says so; click <strong>Sign in</strong> again.</li>
 <li><strong>A connector's tools act with your token's permissions.</strong> The model decides when to call them, based on your conversation. Give connectors tokens with only the access they need (read-only where possible).</li>
 <li><strong>Tool results go into the conversation</strong>, and a server's text can try to steer the model. Add servers you trust.</li>
 <li>Connectors must be on the public internet and use <code>https://</code>. Only admins can add servers on the local network or over plain <code>http://</code>.</li>
 </ul>
 <h2 id="for-admins">For admins</h2>
 <p>Connectors run in the agent service (<code>seed-agent</code>) that powers the chat's Web mode. The gateway stores each user's servers with their account and passes the enabled ones to the agent with each request; the agent connects, lists the tools, and calls them during the conversation. The agent refuses connections to loopback, private and link-local addresses for non-admins, checked after DNS resolution.</p>
-<p>API: <code>GET /api/mcp</code> lists the signed-in user's servers (header values masked); <code>POST /api/mcp</code> with <code>{&quot;action&quot;: &quot;add&quot; | &quot;update&quot; | &quot;delete&quot; | &quot;test&quot;, ...}</code> manages them.</p>
+<p>API: <code>GET /api/mcp</code> lists the signed-in user's servers (header values masked); <code>POST /api/mcp</code> with <code>{&quot;action&quot;: &quot;add&quot; | &quot;update&quot; | &quot;delete&quot; | &quot;test&quot; | &quot;sign_out&quot;, ...}</code> manages them (<code>&quot;auth&quot;: &quot;oauth&quot;</code> on add for sign-in). Sign-in runs through <code>GET /api/mcp/oauth/start?id=&lt;id&gt;</code> and returns to <code>/api/mcp/oauth/callback</code>, on the address the browser used; the service must allow that address as a redirect (dynamic registration registers it).</p>

@@ -10,6 +10,23 @@ type MCPServer struct {
 	Headers map[string]string `json:"headers,omitempty"` // e.g. Authorization; secret
 	Enabled bool              `json:"enabled"`
 	Added   string            `json:"added,omitempty"`
+	OAuth   *MCPOAuth         `json:"oauth,omitempty"` // set for servers you sign in to
+}
+
+// MCPOAuth: an OAuth sign-in to a connector. Secrets (client secret,
+// tokens) are encrypted at rest with the rest of users.json's secrets.
+type MCPOAuth struct {
+	Issuer                string `json:"issuer,omitempty"`
+	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+	ClientID              string `json:"client_id,omitempty"`
+	ClientSecret          string `json:"client_secret,omitempty"`
+	RedirectURI           string `json:"redirect_uri,omitempty"`
+	Scope                 string `json:"scope,omitempty"`
+	Resource              string `json:"resource,omitempty"`
+	AccessToken           string `json:"access_token,omitempty"`
+	RefreshToken          string `json:"refresh_token,omitempty"`
+	Expiry                int64  `json:"expiry,omitempty"` // unix seconds; 0 = unknown
 }
 
 func copyMCP(in []MCPServer) []MCPServer {
@@ -21,6 +38,10 @@ func copyMCP(in []MCPServer) []MCPServer {
 			for k, v := range m.Headers {
 				out[i].Headers[k] = v
 			}
+		}
+		if m.OAuth != nil {
+			o := *m.OAuth
+			out[i].OAuth = &o
 		}
 	}
 	return out

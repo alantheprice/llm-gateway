@@ -14,7 +14,7 @@ import (
 )
 
 // Secrets at rest: users.json holds the session signing secret, each
-// user's plaintext UI key and connector auth headers. They're stored
+// user's plaintext UI key, and connector auth headers and OAuth tokens. They're stored
 // encrypted (AES-256-GCM) with a key kept in a separate file, so a copy of
 // users.json alone (a backup, a stray commit) reveals none of them.
 //
@@ -132,6 +132,9 @@ func (s *Store) decryptSecrets() (legacy bool, err error) {
 			for k, v := range list[i].Headers {
 				list[i].Headers[k] = dec(v)
 			}
+			if o := list[i].OAuth; o != nil {
+				o.ClientSecret, o.AccessToken, o.RefreshToken = dec(o.ClientSecret), dec(o.AccessToken), dec(o.RefreshToken)
+			}
 		}
 		s.MCPServers[u] = list
 	}
@@ -174,6 +177,9 @@ func (s *Store) marshalSealed() ([]byte, error) {
 			for i := range c {
 				for k, v := range c[i].Headers {
 					c[i].Headers[k] = s.seal.seal(v)
+				}
+				if o := c[i].OAuth; o != nil {
+					o.ClientSecret, o.AccessToken, o.RefreshToken = s.seal.seal(o.ClientSecret), s.seal.seal(o.AccessToken), s.seal.seal(o.RefreshToken)
 				}
 			}
 			m[u] = c

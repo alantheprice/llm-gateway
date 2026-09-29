@@ -458,6 +458,9 @@ dialog.connectors::backdrop { background: rgba(0, 0, 0, .5); }
 .cx-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .cx-ok { color: var(--ok, #3fb950); font-size: 13px; }
 .cx-err { color: var(--err, #f85149); font-size: 13px; overflow-wrap: anywhere; }
+.cx-hint { font-size: 12px; margin: 0; }
+.cx-row[hidden], .cx-hint[hidden] { display: none; }
+.cx-row select { width: 100%; font-weight: normal; }
 .cx-tools { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; max-height: 180px; overflow: auto; }
 .composer-hint {
   text-align: center; font-size: 11px; color: var(--muted);

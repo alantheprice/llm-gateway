@@ -756,7 +756,8 @@
   }
   function cxToolList(res) {
     if (!res) return '';
-    if (!res.ok) return '<div class="cx-err">✗ ' + esc(res.error || 'failed') + '</div>';
+    if (!res.ok) return '<div class="cx-err">✗ ' + esc(res.error || 'failed') + '</div>' +
+      (/credentials|401|403/.test(res.error || '') ? '<div class="muted cx-hint">If the service offers it, choose <strong>Sign in with the service</strong> instead.</div>' : '');
     const tools = res.tools || [];
     return '<div class="cx-ok">✓ Connected' + (res.legacy_sse ? ' (older SSE transport)' : '') + ' · ' + tools.length + ' tool' + (tools.length === 1 ? '' : 's') + '</div>' +
       '<ul class="cx-tools">' + tools.map(t => '<li><code>' + esc(t.name) + '</code> <span class="muted">' + esc(t.description || '') + '</span></li>').join('') + '</ul>';
@@ -767,8 +768,12 @@
       '<div class="cx-item" data-id="' + escAttr(v.id) + '">' +
         '<div class="cx-line"><label class="cx-on"><input type="checkbox" data-cxon' + (v.enabled ? ' checked' : '') + '> <strong>' + esc(v.name) + '</strong></label>' +
         '<span class="cx-url">' + esc(v.url) + '</span></div>' +
-        '<div class="cx-line muted">' + (Object.keys(v.headers || {}).map(k => esc(k) + ': ' + esc(v.headers[k])).join(' · ') || 'no auth header') + '</div>' +
-        '<div class="cx-actions"><button class="btn sm" data-cxtest>Test</button><button class="btn sm danger" data-cxdel>Remove</button></div>' +
+        '<div class="cx-line muted">' + (v.auth === 'oauth'
+          ? (v.signed_in ? '<span class="cx-ok">✓ Signed in</span>' : '<span class="cx-err">Not signed in</span>')
+          : (Object.keys(v.headers || {}).map(k => esc(k) + ': ' + esc(v.headers[k])).join(' · ') || 'no auth header')) + '</div>' +
+        '<div class="cx-actions">' +
+          (v.auth === 'oauth' ? (v.signed_in ? '<button class="btn sm" data-cxsignout>Sign out</button>' : '<button class="btn sm primary" data-cxsignin>Sign in</button>') : '') +
+          '<button class="btn sm" data-cxtest>Test</button><button class="btn sm danger" data-cxdel>Remove</button></div>' +
         '<div class="cx-out"></div></div>').join('')
       : '<p class="muted">No connectors yet.</p>';
     list.querySelectorAll('.cx-item').forEach(el => {
@@ -778,6 +783,10 @@
         const v = cxServers.find(x => x.id === id);
         if (confirm('Remove ' + (v ? v.name : 'this connector') + '? Its saved auth header is deleted too.')) cxPost({ action: 'delete', id });
       };
+      const si = el.querySelector('[data-cxsignin]');
+      if (si) si.onclick = () => cxSignIn(id);
+      const so = el.querySelector('[data-cxsignout]');
+      if (so) so.onclick = () => cxPost({ action: 'sign_out', id });
       el.querySelector('[data-cxtest]').onclick = async e => {
         const out = el.querySelector('.cx-out');
         e.target.disabled = true; out.innerHTML = '<span class="muted">Connecting…</span>';
@@ -801,22 +810,44 @@
   }
   function cxFormBody(action) {
     const b = { action, name: document.getElementById('cxName').value.trim(), url: document.getElementById('cxURL').value.trim() };
+    const mode = document.getElementById('cxAuth').value;
     const hn = document.getElementById('cxHName').value.trim(), hv = document.getElementById('cxHVal').value.trim();
-    b.headers = hn && hv ? { [hn]: hv } : {};
+    b.headers = mode === 'header' && hn && hv ? { [hn]: hv } : {};
+    if (mode === 'oauth') b.auth = 'oauth';
     return b;
   }
+  // OAuth: the service's sign-in page in a popup; it reports back by message.
+  function cxSignIn(id) {
+    const w = window.open('/api/mcp/oauth/start?id=' + encodeURIComponent(id), 'mcp-oauth', 'width=540,height=720');
+    if (!w) { flash('Allow pop-ups for this site to sign in.', true, 'cxFlash'); return; }
+    const timer = setInterval(() => { if (w.closed) { clearInterval(timer); cxLoad(); } }, 800);
+  }
+  window.addEventListener('message', e => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== 'mcp-oauth') return;
+    flash(e.data.message, e.data.status !== 'ok', 'cxFlash');
+    cxLoad();
+  });
   if (cx) {
     document.getElementById('connectorsBtn').onclick = () => { cxLoad(); cx.showModal(); };
     document.getElementById('cxClose').onclick = () => cx.close();
     cx.addEventListener('click', e => { if (e.target === cx) cx.close(); });
+    const authSel = document.getElementById('cxAuth');
+    authSel.onchange = () => {
+      document.getElementById('cxHeaderRow').hidden = authSel.value !== 'header';
+      document.getElementById('cxOAuthHint').hidden = authSel.value !== 'oauth';
+    };
     document.getElementById('cxForm').onsubmit = async e => {
       e.preventDefault();
       const b = cxFormBody('add');
       if (!b.name) b.name = (b.url.replace(/^https?:\/\//, '').split(/[./:]/)[0] || 'mcp').toLowerCase();
-      if (await cxPost(b)) {
-        e.target.reset(); document.getElementById('cxHName').value = 'Authorization';
+      const d = await cxPost(b);
+      if (d) {
+        e.target.reset(); document.getElementById('cxHName').value = 'Authorization'; authSel.onchange();
         document.getElementById('cxTestOut').innerHTML = '';
-        flash('Added ' + b.name + '. Turn on 🌐 Web to use it.', false, 'cxFlash');
+        if (b.auth === 'oauth') {
+          const added = (d.servers || []).find(x => x.name === b.name);
+          if (added) cxSignIn(added.id);
+        } else flash('Added ' + b.name + '. Turn on 🌐 Web to use it.', false, 'cxFlash');
       }
     };
     document.getElementById('cxTest').onclick = async e => {

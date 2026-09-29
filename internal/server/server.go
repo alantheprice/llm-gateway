@@ -81,7 +81,8 @@ type Server struct {
 	// PocketBase's database. Nil in tests that don't embed PB — every
 	// call site must nil-check.
 	ops   OpsStore
-	chats ChatStore // chat history (nil without the embedded database)
+	chats ChatStore  // chat history (nil without the embedded database)
+	oauth oauthState // connector sign-ins in progress
 	muOps sync.RWMutex
 
 	// embeddedPB: the in-process PocketBase app (bootstrap flows).

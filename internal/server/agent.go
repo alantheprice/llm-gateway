@@ -23,7 +23,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		errBody(w, http.StatusRequestEntityTooLarge, "body too large")
 		return
 	}
-	body = s.withMCPServers(body, user, keyID)
+	body = s.withMCPServers(r.Context(), body, user, keyID)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		s.agentURL+"/v1/agent/chat", bytesReader(body))
