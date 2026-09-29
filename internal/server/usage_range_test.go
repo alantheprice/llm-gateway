@@ -11,7 +11,7 @@ import (
 )
 
 func TestUsageRange(t *testing.T) {
-	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	s := testServer(t, `{"gateway":{"port":0},"price_book":{"prompt_usd_per_m":1000,"cached_usd_per_m":100,"output_usd_per_m":2000}}`, nil)
 	day := func(d string, user string, prompt, output int) {
 		s.usage.mu.Lock()
 		if s.usage.Data.Daily[d] == nil {
@@ -61,6 +61,10 @@ func TestUsageRange(t *testing.T) {
 	}
 	if u := m["users"].([]any)[0].(map[string]any); u["user"] != "bob" {
 		t.Fatalf("not sorted by tokens: %v", u)
+	}
+	// Value at the price book: bob's 900 prompt + 90 output = $0.90 + $0.18.
+	if u := m["users"].([]any)[0].(map[string]any); u["value_usd"] != 1.08 || m["price_book"] == nil {
+		t.Fatalf("value = %v, book = %v", u["value_usd"], m["price_book"])
 	}
 	m = get("root", "admin", "")
 	if got := totals(m); got["ann"] != 330 || got["bob"] != 1045 || m["first_day"] != "2026-09-01" {

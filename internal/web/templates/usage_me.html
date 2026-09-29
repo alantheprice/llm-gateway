@@ -28,11 +28,20 @@ function drawMine() {
   const kinds = Object.entries(u.kinds || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const box = document.getElementById('mybody');
   if (!u.total_tokens) { box.innerHTML = '<p class="muted">No usage in this range.</p>'; return; }
+  // The usage priced at today's price book: a value, not a charge.
+  const pb = d.price_book, usd = (v, n) => '$' + Number(v).toFixed(n);
+  const valueLine = pb ? '<div class="valueline" title="Prices set by the gateway admin: ' +
+      escAttr(usd(pb.prompt_usd_per_m, 2) + ' per 1M prompt tokens, ' + usd(pb.cached_usd_per_m, 2) + ' per 1M cached, ' + usd(pb.output_usd_per_m, 2) + ' per 1M output') + '">' +
+      '<span class="vl-label">Value of this usage</span>' +
+      '<span class="vl-amount">' + usd(u.value_usd || 0, 2) + '</span>' +
+      '<span class="vl-note">What these tokens would cost at the gateway’s list prices today (' + usd(pb.prompt_usd_per_m, 2) + ' / ' +
+      usd(pb.cached_usd_per_m, 2) + ' / ' + usd(pb.output_usd_per_m, 2) + ' per 1M prompt / cached / output tokens). ' +
+      '<strong>Not a bill</strong>: you aren’t charged for it.</span></div>' : '';
   if (myView.get() === 'table') {
     box.innerHTML =
       '<h3 class="subh">By model type</h3><div class="tablewrap"><table><thead><tr><th>Type</th><th>Tokens</th><th>Share</th></tr></thead><tbody>' +
       kinds.map(([k, v]) => '<tr><td data-label="Type">' + esc(KINDS[k] || k) + '</td><td data-label="Tokens">' + fmtNum(v) +
-        '</td><td data-label="Share">' + (100 * v / u.total_tokens).toFixed(1) + '%</td></tr>').join('') + '</tbody></table></div>' +
+        '</td><td data-label="Share">' + (100 * v / u.total_tokens).toFixed(1) + '%</td></tr>').join('') + '</tbody></table></div>' + valueLine +
       (days.length ? '<h3 class="subh">By day</h3><div class="tablewrap"><table><thead><tr><th>Day (UTC)</th><th>Tokens</th></tr></thead><tbody>' +
         days.map((day, i) => [day, mine[i]]).reverse().map(([day, v]) =>
           '<tr><td data-label="Day">' + esc(TZ.dayLabel(day)) + '</td><td data-label="Tokens">' + fmtNum(v) + '</td></tr>').join('') +
@@ -40,7 +49,7 @@ function drawMine() {
     return;
   }
   let h = '<h3 class="subh">By model type</h3>' + Charts.hbars({ items: kinds.map(([k, v], i) =>
-    ({ label: KINDS[k] || k, value: v, color: SERIES_COLORS[i % SERIES_COLORS.length], sub: (100 * v / u.total_tokens).toFixed(1) + '%' })) });
+    ({ label: KINDS[k] || k, value: v, color: SERIES_COLORS[i % SERIES_COLORS.length], sub: (100 * v / u.total_tokens).toFixed(1) + '%' })) }) + valueLine;
   if (days.length > 1) {
     const c = (getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff').trim();
     h += '<h3 class="subh">Tokens per day</h3>' + Charts.linesMulti({ series: [{ name: 'total tokens', color: c,
@@ -99,7 +108,12 @@ load();
 </script>
 {{end}}
 {{define "content"}}
-<style>.subh { font-size: 13px; margin: 14px 0 6px; }</style>
+<style>.subh { font-size: 13px; margin: 14px 0 6px; }
+.valueline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 12px; padding: 10px 12px;
+  border: 1px dashed var(--border); border-radius: 8px; }
+.valueline .vl-label { font-size: 13px; font-weight: 600; }
+.valueline .vl-amount { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.valueline .vl-note { flex-basis: 100%; font-size: 12px; color: var(--muted); }</style>
 <div class="page">
   <div class="page-head">
     <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>

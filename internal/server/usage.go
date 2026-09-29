@@ -540,6 +540,8 @@ type UserRange struct {
 	Total    int    `json:"total_tokens"`
 	// Kinds: tokens by model type (chat / embeddings / fim).
 	Kinds map[string]int `json:"kinds,omitempty"`
+	// ValueUSD: the usage priced at the price book when asked (not a charge).
+	ValueUSD float64 `json:"value_usd"`
 }
 
 // Range sums usage per user over the UTC days from..to (inclusive,

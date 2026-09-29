@@ -108,6 +108,20 @@ func (s *Server) handleUsageRange(w http.ResponseWriter, r *http.Request) {
 		// records began); the series covers the recorded days.
 		out["users"] = s.usage.LifetimeRange(only)
 	}
+	// Value at today's price book: what this usage would cost at the
+	// operator's list prices. Informational — nobody is charged.
+	s.mu.Lock()
+	book := s.cfg.PriceBook
+	s.mu.Unlock()
+	priced := book.PromptUSDPerM > 0 || book.CachedUSDPerM > 0 || book.OutputUSDPerM > 0
+	if list, ok := out["users"].([]UserRange); ok && priced {
+		for i := range list {
+			list[i].ValueUSD = round4(applyBookPrices(book, list[i].Prompt, list[i].Cached, list[i].Output))
+		}
+	}
+	if priced {
+		out["price_book"] = book
+	}
 	var first string
 	if all := s.usage.Days(); len(all) > 0 {
 		first = all[0]
