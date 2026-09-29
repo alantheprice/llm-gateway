@@ -13,7 +13,9 @@ function lifetimeStat(l) {
   if (!l || l.usd_per_m_tokens == null) return '';
   const tip = 'Hardware ' + usd(l.hardware_usd, 0) + ' (full price, not amortized) + GPU energy ' + usd(l.energy_usd, 2) +
     ' + system overhead ' + usd(l.overhead_usd, 2) + (l.energy_since ? ' (recorded since ' + l.energy_since + ')' : '') +
-    ' = ' + usd(l.spent_usd, 2) + ', over ' + Charts.fmtShort(l.tokens) + ' tokens served.';
+    ' = ' + usd(l.spent_usd, 2) + ', over ' + Charts.fmtShort(l.tokens) + ' tokens served (' +
+    (l.tokens_source === 'engines' ? 'the engines’ own lifetime counters; the gateway has routed ' + Charts.fmtShort(l.gateway_tokens)
+      : 'the gateway’s records; engines report ' + Charts.fmtShort(l.engine_tokens)) + ').';
   return '<div class="stat" title="' + escAttr(tip) + '"><div class="v">' + usd(l.usd_per_m_tokens, 2) + '</div>' +
     '<div class="l">lifetime all-in $ / 1M — hardware at full price over ' + Charts.fmtShort(l.tokens) + ' tokens so far</div></div>';
 }

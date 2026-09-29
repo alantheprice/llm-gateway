@@ -33,7 +33,7 @@ async function load() {
 
   const tk = usageR.data.totals;
   document.getElementById('tokstats').innerHTML =
-    '<div class="stat"><div class="v">' + fmtNum(tk.tokens_input) + '</div><div class="l">prompt tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(tk.tokens_input) + '</div><div class="l">prompt tokens, engines’ lifetime counters (incl. traffic that didn’t pass the gateway)</div></div>' +
     '<div class="stat"><div class="v">' + fmtNum(tk.tokens_cached) + '</div><div class="l">cached (prefix hits)</div></div>' +
     '<div class="stat"><div class="v">' + fmtNum(tk.tokens_output) + '</div><div class="l">output tokens</div></div>';
 

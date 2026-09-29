@@ -483,10 +483,30 @@ func (s *Server) lifetimeCost(hosts []HostConfig, history map[string]any) map[st
 			}
 		}
 	}
+	// Tokens: the engines' own lifetime counters see all the work the
+	// hardware did (including before the gateway's records began, and
+	// direct calls); the gateway's records cover only traffic it routed.
+	// Use whichever is larger.
 	users, _ := s.usage.UsersSnapshot()
-	var tokens float64
+	var gateway, engines float64
 	for _, u := range users {
-		tokens += float64(u.PromptTokens + u.OutputTokens)
+		gateway += float64(u.PromptTokens + u.OutputTokens)
+	}
+	// One count per engine, even when it was reached both directly and by
+	// link (same identity).
+	perEngine := map[string]float64{}
+	s.mu.Lock()
+	for u, raw := range s.lastMetrics {
+		k := identifyGPU(s.cfg.Hosts, u).Key
+		perEngine[k] = max(perEngine[k], usageNum(raw, "tokens", "input", "total")+usageNum(raw, "tokens", "output", "total"))
+	}
+	s.mu.Unlock()
+	for _, n := range perEngine {
+		engines += n
+	}
+	tokens, source := gateway, "gateway"
+	if engines > gateway {
+		tokens, source = engines, "engines"
 	}
 	spent := hardware + energy + overhead
 	var perM any
@@ -496,6 +516,7 @@ func (s *Server) lifetimeCost(hosts []HostConfig, history map[string]any) map[st
 	return map[string]any{
 		"hardware_usd": round2(hardware), "energy_usd": round2(energy), "overhead_usd": round2(overhead),
 		"spent_usd": round2(spent), "tokens": tokens, "usd_per_m_tokens": perM, "energy_since": since,
+		"tokens_source": source, "gateway_tokens": gateway, "engine_tokens": engines,
 	}
 }
 
