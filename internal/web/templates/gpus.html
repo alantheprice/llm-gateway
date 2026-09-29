@@ -52,32 +52,50 @@ function engineBlock(e, row, isAdmin) {
   if (pools.length) {
     h += '<div class="sub">Platform models that list this GPU <a class="hint" href="' + GUIDE + '#platform-models">what’s this?</a></div>';
     if (isAdmin) {
-      h += '<div class="hint">You’re an admin, so this GPU serves them as configured: ' + pools.map(p => '<code>' + esc(p) + '</code>').join(', ') + '.</div>';
+      h += pools.map(p => '<div class="consent">serves <code>' + esc(p) + '</code> ' +
+        ((e.serving || []).includes(p) ? '<span class="badge ok">serving</span>' : '<span class="badge grace">not serving</span>') +
+        ' <span class="muted">— your GPU is an admin’s, so no opt-in is needed</span></div>').join('');
     } else {
       const mine = (row.settings && row.settings.pools) || [];
       h += pools.map(p => '<label class="consent"><input type="checkbox" data-pool="' + escAttr(p) + '" data-key="' + escAttr(row.key_id) + '"' +
         (mine.includes(p) ? ' checked' : '') + '> serve <code>' + esc(p) + '</code> for everyone who can use it' +
-        ((e.serving || []).includes(p) ? ' <span class="badge ok">serving</span>' : '') + '</label>').join('');
+        ((e.serving || []).includes(p) ? ' <span class="badge ok">serving</span>' : ' <span class="badge grace">waiting for your OK</span>') + '</label>').join('');
       h += '<div class="hint">Unchecked, the platform can’t route anyone’s traffic here. Checked, other people’s prompts for that model can reach your machine.</div>';
     }
   }
   return h + '</div>';
 }
 
+// Who may call the GPU by its own name: only me / people I name / everyone.
+const peopleMode = new Set(); // links switched to "people I name" before anyone is added
+function shareMode(row) {
+  const st = row.settings || {};
+  if (st.shared_all) return 'all';
+  return (st.shared_with || []).length || peopleMode.has(row.key_id) ? 'people' : 'me';
+}
 function sharingBlock(row) {
   const shared = (row.settings && row.settings.shared_with) || [];
-  const all = !!(row.settings && row.settings.shared_all);
-  return '<div class="sub">Shared with</div>' +
-    '<label class="consent everyone"><input type="checkbox" id="everyone-' + escAttr(row.key_id) + '" data-everyone="' + escAttr(row.key_id) + '"' + (all ? ' checked' : '') + '> ' +
-    '<strong>Share with everyone</strong> <span class="muted">— every signed-in user can call it</span></label>' +
-    (all ? '<div class="hint">Everyone on this gateway sees <code>' + esc(((row.agent && row.agent.engines && row.agent.engines[0]) || {}).model || linkName(row.key_id) + '/…') +
-      '</code> in their model list. The people below keep access if you turn this off.</div>' : '') +
-    '<div class="chips">' + (shared.length ? shared.map(u => '<span class="chip">' + esc(u) +
-      ' <button title="Stop sharing" data-unshare="' + escAttr(u) + '" data-key="' + escAttr(row.key_id) + '">×</button></span>').join('')
-      : '<span class="muted">' + (all ? 'No one named individually.' : 'Only you. Nobody else can see or call this GPU.') + '</span>') + '</div>' +
-    '<div class="sharebar"><input placeholder="username" data-shareinput="' + escAttr(row.key_id) + '" autocomplete="off">' +
-    '<button class="btn sm" data-share="' + escAttr(row.key_id) + '">Share</button></div>' +
-    '<div class="hint">People you share with call it by the same name with their own API key. Their requests count against their quota, and their prompts reach your machine.</div>';
+  const mode = shareMode(row), k = escAttr(row.key_id);
+  const pooled = ((row.agent && row.agent.engines) || []).filter(e => (e.serving || []).length);
+  const opt = (v, label) => '<label><input type="radio" name="share-' + k + '" data-sharemode="' + k + '" value="' + v + '"' +
+    (mode === v ? ' checked' : '') + '> ' + label + '</label>';
+  let h = '<div class="sub">Who can call it by name</div>' +
+    '<div class="segmented">' + opt('me', 'Only me') + opt('people', 'People I name') + opt('all', 'Everyone') + '</div>';
+  if (pooled.length) {
+    h += '<div class="hint">While this GPU serves ' + pooled.map(e => e.serving.map(p => '<code>' + esc(p) + '</code>').join(', ')).join(', ') +
+      ', other people reach it through that shared model instead, so its load is balanced. This setting applies once it stops serving shared models.</div>';
+  }
+  if (mode === 'people') {
+    h += '<div class="chips">' + (shared.length ? shared.map(u => '<span class="chip">' + esc(u) +
+        ' <button title="Stop sharing" data-unshare="' + escAttr(u) + '" data-key="' + k + '">×</button></span>').join('')
+        : '<span class="muted">No one yet. Add a username.</span>') + '</div>' +
+      '<div class="sharebar"><input placeholder="username" data-shareinput="' + k + '" autocomplete="off">' +
+      '<button class="btn sm" data-share="' + k + '">Share</button></div>';
+  }
+  h += '<div class="hint">' + (mode === 'me' ? 'Nobody else can see or call this GPU by name.' :
+    (mode === 'all' ? 'Every signed-in user' : 'People you name') +
+    ' call it as <code>' + esc(linkName(row.key_id)) + '/…</code> with their own API key. Their requests count against their quota, and their prompts reach your machine.') + '</div>';
+  return h;
 }
 
 function usageBlock(row) {
@@ -147,15 +165,19 @@ function bindLinkCards(root) {
     const cur = (rowOf(b.dataset.key).settings.shared_with || []).filter(u => u !== b.dataset.unshare);
     setShares(b.dataset.key, cur, 'Stopped sharing with ' + b.dataset.unshare + '.');
   }));
-  root.querySelectorAll('[data-everyone]').forEach(cb => cb.addEventListener('change', async () => {
-    const keyID = cb.dataset.everyone;
-    if (cb.checked && !confirm('Share "' + linkName(keyID) + '" with everyone? Every signed-in user will be able to call it with their own API key, and their prompts will reach your machine.')) {
-      cb.checked = false; return;
+  root.querySelectorAll('[data-sharemode]').forEach(rb => rb.addEventListener('change', async () => {
+    const keyID = rb.dataset.sharemode, row = rowOf(keyID), mode = rb.value, name = linkName(keyID);
+    const names = (row.settings && row.settings.shared_with) || [];
+    if (mode === 'all' && !confirm('Share "' + name + '" with everyone? Every signed-in user will be able to call it with their own API key, and their prompts will reach your machine.')) { load(true); return; }
+    if (mode === 'me' && names.length && !confirm('Stop sharing "' + name + '" with ' + names.join(', ') + '?')) { load(true); return; }
+    const body = {action: 'update_link', key_id: keyID, shared_all: mode === 'all'};
+    if (mode === 'me') { body.shared_with = []; peopleMode.delete(keyID); }
+    if (mode === 'people') peopleMode.add(keyID);
+    if (await post(body)) {
+      flash(mode === 'all' ? name + ' is shared with everyone.' : mode === 'me' ? name + ' is private to you.' :
+        names.length ? name + ' is shared with ' + names.join(', ') + '.' : 'Add the people who may use ' + name + '.');
     }
-    if (await post({action: 'update_link', key_id: keyID, shared_all: cb.checked})) {
-      flash(cb.checked ? linkName(keyID) + ' is now shared with everyone.' : linkName(keyID) + ' is no longer shared with everyone.');
-      load(true);
-    } else cb.checked = !cb.checked;
+    load(true);
   }));
   root.querySelectorAll('[data-pool]').forEach(cb => cb.addEventListener('change', async () => {
     const keyID = cb.dataset.key;
@@ -342,7 +364,11 @@ setInterval(() => { if (step !== 4) load(); }, 15000);
 .sub { font-weight: 600; font-size: 12.5px; margin: 12px 0 4px; }
 .callme { margin-top: 4px; font-size: 13px; }
 .consent { display: flex; gap: 6px; align-items: baseline; font-size: 13px; margin: 3px 0; }
-.consent.everyone { margin-bottom: 8px; flex-wrap: wrap; }
+.segmented { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 2px 0 6px; }
+.segmented label { display: flex; align-items: center; gap: 5px; padding: 5px 11px; font-size: 13px; cursor: pointer; border-right: 1px solid var(--border); }
+.segmented label:last-child { border-right: 0; }
+.segmented input { margin: 0; }
+.segmented label:has(input:checked) { background: var(--card2); font-weight: 600; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12.5px; }
 .chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }

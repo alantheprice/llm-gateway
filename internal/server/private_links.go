@@ -39,12 +39,15 @@ type privateModel struct {
 func privateModelName(agent, modelID string) string { return agent + "/" + modelID }
 
 // privateModels: the link engines user may call (owner or shared-with, not
-// paused), sorted by name. Empty for anonymous callers.
+// paused), sorted by name. Empty for anonymous callers. An engine that
+// serves a shared model is reached by others through that model (with its
+// load balancing), so only its owner gets the direct name.
 func (s *Server) privateModels(user string) []privateModel {
 	if user == "" {
 		return nil
 	}
 	var out []privateModel
+	var pools map[string][]string
 	for _, c := range s.linkReg.Conns() {
 		if c.Owner == "" {
 			continue
@@ -58,8 +61,17 @@ func (s *Server) privateModels(user string) []privateModel {
 			continue
 		}
 		for _, e := range c.Engines() {
+			u := link.VirtualURL(c.Agent, e.Port)
+			if shared {
+				if pools == nil {
+					pools = s.linkPoolMembership()
+				}
+				if s.servesAnyPool(u, pools[u]) {
+					continue
+				}
+			}
 			out = append(out, privateModel{
-				Name: privateModelName(c.Agent, e.ModelID), URL: link.VirtualURL(c.Agent, e.Port),
+				Name: privateModelName(c.Agent, e.ModelID), URL: u,
 				ModelID: e.ModelID, Owner: c.Owner, Agent: c.Agent, KeyID: c.KeyID, Shared: shared,
 			})
 		}
@@ -118,6 +130,15 @@ func (s *Server) linkServesPool(backend, pool string) bool {
 		return false
 	}
 	return s.store.RoleOf(c.Owner) == "admin" || slices.Contains(ls.Pools, pool)
+}
+
+func (s *Server) servesAnyPool(backend string, pools []string) bool {
+	for _, p := range pools {
+		if s.linkServesPool(backend, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ownsLinkURL: user owns the live link serving backend.

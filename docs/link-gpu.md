@@ -2,7 +2,7 @@
 
 Link a GPU you run to this gateway, so you can use it from anywhere through the gateway's API, with its analytics, keys and rate limits.
 
-**A linked GPU is private to you.** Only you can see or call it until you share it with people you name. You administer it the way a platform admin administers the gateway's own GPUs: who may use it, whether it helps serve platform models, pausing it, and who used it.
+**A linked GPU is private to you.** Only you can see or call it until you share it with people you name or with everyone. You administer it the way a platform admin administers the gateway's own GPUs: who may use it, whether it helps serve platform models, pausing it, and who used it.
 
 You don't open ports, set up a VPN, or give the gateway access to your network. A small agent on your GPU machine connects **out** to the gateway, and requests reach your engine through that connection.
 
@@ -125,12 +125,22 @@ curl $GATEWAY/v1/chat/completions -H "Authorization: Bearer $YOUR_API_KEY" \
 
 You also get the admin views for it: `GET /v1/models/<gpu-name>/<model-id>` returns the full model card, and `/details` returns live host and GPU facts. Other people get the redacted card only.
 
-**Share it.** On **My GPUs**, add usernames under **Shared with**. Those users:
+**Share it.** On **My GPUs**, choose who can call the GPU by its name:
+
+| Setting | Who can call `<gpu-name>/<model-id>` |
+|---|---|
+| **Only me** (default) | You |
+| **People I name** | You and the usernames you add |
+| **Everyone** | Every signed-in user on the gateway |
+
+People you share with:
 - see the model in their `/v1/models` and chat picker, and under **My GPUs → Shared with me**
 - call it with their own API key; the requests count against their own quota
-- can be removed at any time with ×; the next request is refused
+- lose access at once when you remove them or switch back to **Only me**
 
-**Share it with everyone.** Tick **Share with everyone** on the link to open it to every signed-in user on the gateway, each calling with their own API key. Untick it to go back to just the people you named; that list is kept. Requests without an API key (anonymous LAN access) never reach a linked GPU.
+Requests without an API key (anonymous LAN access) never reach a linked GPU.
+
+**While your GPU serves a platform model** (below), other people reach it only through that model, which balances load across its GPUs. Its own name stays yours for testing, whatever the sharing setting. The setting applies again once it stops serving platform models.
 
 The link's **Usage** table shows who used it over the last 7 days: requests, tokens, latency and errors.
 
@@ -144,7 +154,7 @@ A GPU helps serve a platform model **only when both sides agree**:
 
 Until you tick it, no platform traffic reaches your GPU, even if an admin has listed it. Ticking it means anyone's prompts for that model may be routed to your machine. Untick it, or pause the link, to stop at once.
 
-GPUs linked by admins are platform infrastructure and serve the models that list them without the extra step.
+GPUs linked by admins are platform infrastructure: they serve the models that list them without the extra step. **My GPUs** shows this as "no opt-in is needed" on each of those models.
 
 Once serving, the GPU's requests appear in **Analytics → Per GPU**, and NInfer model cards appear in `GET /v1/models/<platform-model>` and in **Stats for nerds**.
 

@@ -196,6 +196,17 @@ func TestLinkPoolNeedsOwnerConsent(t *testing.T) {
 	if c := chatAs(t, rig, dave, "qwen"); c != 200 {
 		t.Fatalf("pool after consent = %d", c)
 	}
+	// Serving a shared model, the GPU's own name stays the owner's: others
+	// reach it through the pool even when it's shared with everyone.
+	gpusCall(t, rig.s, "carol", "user", "POST", `{"action":"update_link","key_id":"link-e2e","shared_all":true}`)
+	carol, _, _ := rig.s.store.CreateKey("carol", "k", "user", false)
+	if d, c := chatAs(t, rig, dave, "e2e/m"), chatAs(t, rig, carol, "e2e/m"); d != 404 || c != 200 {
+		t.Fatalf("direct name while pooled: dave %d, owner %d", d, c)
+	}
+	gpusCall(t, rig.s, "carol", "user", "POST", `{"action":"update_link","key_id":"link-e2e","pools":[]}`)
+	if c := chatAs(t, rig, dave, "e2e/m"); c != 200 {
+		t.Fatalf("direct name after leaving the pool = %d", c)
+	}
 }
 
 // Owners control only their own links; sharing needs a real account.

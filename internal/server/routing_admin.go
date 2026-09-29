@@ -320,8 +320,12 @@ func (s *Server) routeMap() map[string]any {
 		}
 		for _, en := range c.Engines() {
 			u := link.VirtualURL(c.Agent, en.Port)
+			sh := sharing
+			if pools := s.platformModelsFor(u); sharing != "only the owner" && s.servesAnyPool(u, pools) {
+				sh = "only the owner (others use " + strings.Join(pools, ", ") + ")"
+			}
 			private = append(private, map[string]any{
-				"name": privateModelName(c.Agent, en.ModelID), "owner": c.Owner, "sharing": sharing,
+				"name": privateModelName(c.Agent, en.ModelID), "owner": c.Owner, "sharing": sh,
 				"paused": ls.Paused, "pools": ls.Pools, "engine": s.engineInfoView(u, reqs),
 			})
 		}
