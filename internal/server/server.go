@@ -86,7 +86,7 @@ type Server struct {
 	// alerts: problem detection and notification (alerts.go).
 	alerts   *alerter
 	dataDirs []string // extra directories whose disk space is watched
-	muOps sync.RWMutex
+	muOps    sync.RWMutex
 
 	// embeddedPB: the in-process PocketBase app (bootstrap flows).
 	embeddedPB PBAppStore
