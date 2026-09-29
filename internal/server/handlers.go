@@ -267,14 +267,16 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	user := s.requestUser(r)
 	data := s.catalog()
 	listed := map[string]bool{}
-	for _, e := range data {
+	for i, e := range data {
 		listed[e.ID] = true
+		data[i] = s.describe(e, user)
 	}
-	for _, pm := range s.privateModels(s.requestUser(r)) {
+	for _, pm := range s.privateModels(user) {
 		if !listed[pm.Name] { // platform names win
-			data = append(data, ModelEntry{ID: pm.Name, Object: "model", OwnedBy: pm.Owner})
+			data = append(data, s.describe(ModelEntry{ID: pm.Name, Object: "model", OwnedBy: pm.Owner}, user))
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -352,23 +354,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	r = withClientModel(r, req.Model) // responses carry the name the client called
 	noteAccess(r, user, req.Model, req.Stream)
-	if kindFor(req.Model) == "embeddings" {
-		errBody(w, http.StatusBadRequest, fmt.Sprintf("%q is an embedding model; call it at /v1/embeddings", req.Model))
-		return
-	}
 
-	// Pool path (its name or an alias)
+	// Pool path (its name or an alias). A model none of whose GPUs can
+	// serve this endpoint is refused up front with a pointer to the right one.
 	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
+		if c, _ := s.capsFor(req.Model, ""); !c.has(c.Endpoints, "chat") {
+			checkCaps(w, r, req.Model, c, body)
+			return
+		}
 		s.routePool(w, r, &pool, poolName, body, user, keyID)
 		return
 	}
 
 	// Direct resolution
 	url, mid := s.resolve(req.Model)
+	if url != "" && !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(url, req.Model)), body) {
+		return
+	}
 	if url == "" {
 		// A private GPU link the caller owns or was shared (never shadows
 		// a platform model: resolved last).
 		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
+			if !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(pm.URL, pm.ModelID)), body) {
+				return
+			}
 			s.proxy(w, r, pm.URL, rewriteModel(body, pm.ModelID), user, keyID, req.Model, pm.ModelID)
 			return
 		}
@@ -416,10 +425,16 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	url, mid := s.resolve(req.Model)
 	if url == "" {
 		if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
+			if !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(pm.URL, pm.ModelID)), body) {
+				return
+			}
 			s.proxy(w, r, pm.URL, rewriteModel(body, pm.ModelID), user, keyID, req.Model, pm.ModelID)
 			return
 		}
 		http.Error(w, `{"error":{"message":"no backend"}}`, http.StatusNotFound)
+		return
+	}
+	if !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(url, req.Model)), body) {
 		return
 	}
 	s.proxy(w, r, url, body, user, "", req.Model, mid)
@@ -488,8 +503,19 @@ func (s *Server) routePool(w http.ResponseWriter, r *http.Request, pool *poolCfg
 	}
 
 	est := estimateFrom(body)
-	members := s.poolMembers(modelName, pool, est+requestedOutputTokens(body))
+	needs := requestNeeds(r.URL.Path, body)
+	members := s.poolMembersFor(modelName, pool, est+requestedOutputTokens(body), &needs)
 	if len(members) == 0 {
+		// Nothing can serve it: say why when it's a capability, not an outage.
+		c, _ := s.capsFor(modelName, "")
+		if ok, missing := c.supports(needs); !ok {
+			name := clientModelOf(r)
+			if name == "" {
+				name = modelName
+			}
+			capabilityError(w, name, missing)
+			return
+		}
 		poolUnavailable(w)
 		return
 	}
@@ -558,7 +584,8 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 	leader := s.leader[modelName]
 	s.mu.Unlock()
 
-	members := s.poolMembers(modelName, pool, est+requestedOutputTokens(body))
+	needs := requestNeeds(r.URL.Path, body)
+	members := s.poolMembersFor(modelName, pool, est+requestedOutputTokens(body), &needs)
 	if len(members) == 0 {
 		poolUnavailable(w)
 		return
@@ -641,6 +668,12 @@ func (s *Server) routePoolClassic(w http.ResponseWriter, r *http.Request,
 // tokens (prompt estimate + requested output): down members removed, and
 // members whose context window cannot hold the request skipped.
 func (s *Server) poolMembers(name string, pool *poolCfgT, need int) []routing.Member {
+	return s.poolMembersFor(name, pool, need, nil)
+}
+
+// poolMembersFor is poolMembers restricted to GPUs whose model can serve
+// needs (e.g. image input, tools); nil needs = no restriction.
+func (s *Server) poolMembersFor(name string, pool *poolCfgT, need int, needs *capNeeds) []routing.Member {
 	s.mu.Lock()
 	membersCfg := pool.Members
 	s.mu.Unlock()
@@ -648,6 +681,11 @@ func (s *Server) poolMembers(name string, pool *poolCfgT, need int) []routing.Me
 	for _, m := range membersCfg {
 		if !s.linkServesPool(m.Backend, name) {
 			continue // a user's link serves a pool only with its owner's consent
+		}
+		if needs != nil {
+			if ok, _ := s.engineCaps(m.Backend, m.ModelID).supports(*needs); !ok {
+				continue // this GPU's model can't serve the request
+			}
 		}
 		lanes := 0
 		if l := s.tracker.Get(m.Backend); l != nil {

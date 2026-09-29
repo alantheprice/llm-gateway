@@ -88,6 +88,13 @@ func (s *Server) handleAdminConfigPost(w http.ResponseWriter, r *http.Request) {
 	// set: replace the map outright.
 	var top map[string]json.RawMessage
 	if json.Unmarshal(posted, &top) == nil {
+		if raw, ok := top["model_capabilities"]; ok {
+			nc.ModelCapabilities = nil
+			if err := json.Unmarshal(raw, &nc.ModelCapabilities); err != nil {
+				errBody(w, 400, "model_capabilities: "+err.Error())
+				return
+			}
+		}
 		if raw, ok := top["model_pools"]; ok {
 			nc.ModelPools = nil
 			if err := json.Unmarshal(raw, &nc.ModelPools); err != nil {

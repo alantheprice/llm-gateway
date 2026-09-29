@@ -167,11 +167,12 @@ type chatModelGroup struct {
 	Models []string `json:"models"`
 }
 
-// isChatModel: false only for embedding models, which can't produce text.
-// FIM (code-completion) models answer chat requests too. Judged per model
-// name (the same rule usage accounting uses); the engine-level embeddings
-// flag can't tell models on one engine apart.
-func (s *Server) isChatModel(id string) bool { return kindFor(id) != "embeddings" }
+// isChatModel: the name can serve chat, by its capabilities (engine-reported,
+// overridden in config, or guessed from the name as a last resort).
+func (s *Server) isChatModel(name, user string) bool {
+	c, ok := s.capsFor(name, user)
+	return ok && c.has(c.Endpoints, "chat")
+}
 
 // chatModelGroups: what the chat UI offers — chat models from the public
 // catalog (shared pools, standalone models), the user's own and shared
@@ -181,7 +182,7 @@ func (s *Server) chatModelGroups(user string, isAdmin bool) []chatModelGroup {
 	var groups []chatModelGroup
 	var main []string
 	for _, e := range s.catalog() {
-		if s.isChatModel(e.ID) {
+		if s.isChatModel(e.ID, user) {
 			main = append(main, e.ID)
 		}
 	}
@@ -191,7 +192,7 @@ func (s *Server) chatModelGroups(user string, isAdmin bool) []chatModelGroup {
 	}
 	var mine []string
 	for _, pm := range s.privateModels(user) {
-		if s.isChatModel(pm.ModelID) {
+		if s.isChatModel(pm.Name, user) {
 			mine = append(mine, pm.Name)
 		}
 	}
@@ -221,7 +222,7 @@ func (s *Server) chatModelGroups(user string, isAdmin bool) []chatModelGroup {
 		s.mu.Unlock()
 		var reachable []string
 		for _, id := range members {
-			if u, _ := s.resolve(id); u != "" && s.isChatModel(id) {
+			if u, _ := s.resolve(id); u != "" && s.isChatModel(id, user) {
 				reachable = append(reachable, id)
 			}
 		}

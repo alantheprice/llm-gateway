@@ -53,6 +53,15 @@ type PoolMemberCfg struct {
 	CapacityWeight int `json:"capacity_weight"`
 }
 
+// CapabilityOverride: operator-set capabilities for a model name (pool,
+// alias or engine model id). A non-empty list replaces what was detected.
+type CapabilityOverride struct {
+	Endpoints []string `json:"endpoints,omitempty"`         // chat, completions, embeddings
+	Input     []string `json:"input_modalities,omitempty"`  // text, image, audio, video
+	Output    []string `json:"output_modalities,omitempty"` // text, embeddings
+	Features  []string `json:"features,omitempty"`          // tools, thinking
+}
+
 type PoolCfg struct {
 	Members           []PoolMemberCfg `json:"members"`
 	OverflowThreshold float64         `json:"overflow_threshold"`
@@ -104,7 +113,9 @@ type Config struct {
 	LocalNetworks []string           `json:"local_networks"`
 	Metrics       MetricsCfg         `json:"metrics"`
 	ModelPools    map[string]PoolCfg `json:"model_pools"`
-	Cache         CacheCfg           `json:"cache"`
+	// ModelCapabilities: per-name overrides of detected capabilities.
+	ModelCapabilities map[string]CapabilityOverride `json:"model_capabilities,omitempty"`
+	Cache             CacheCfg                      `json:"cache"`
 	// Full-cost accounting (admin /usage/costs):
 	ElectricityRate float64   `json:"electricity_rate_usd_per_kwh"` // 0 → 0.125
 	Hosts           []HostCfg `json:"hosts"`

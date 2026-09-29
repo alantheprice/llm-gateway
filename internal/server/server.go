@@ -681,6 +681,11 @@ func (s *Server) PollOnce() {
 				s.refreshMaxContext(u)
 				return
 			}
+			if l := s.pollBasic(u); l != nil {
+				s.tracker.Set(u, l)
+				s.refreshMaxContext(u)
+				return
+			}
 			// Both shapes failed once — retry before marking down. Under
 			// load (race builds, GC, port contention) a single probe can
 			// exceed the 1s timeout; a genuinely dead engine fails twice.
@@ -698,6 +703,10 @@ func (s *Server) PollOnce() {
 				return
 			}
 			if l := s.pollVLLM(u); l != nil {
+				s.tracker.Set(u, l)
+				return
+			}
+			if l := s.pollBasic(u); l != nil {
 				s.tracker.Set(u, l)
 				return
 			}
@@ -719,8 +728,9 @@ const downReprobe = 5 * time.Second
 // ctxInfo: a backend's context window and when it was read.
 type ctxInfo struct {
 	tokens   int
-	engineID string         // model id the engine serves (first /v1/models entry)
-	card     map[string]any // engine model card (nil if the engine serves none)
+	engineID string                  // model id the engine serves (first /v1/models entry)
+	card     map[string]any          // engine model card (nil if the engine serves none)
+	caps     map[string]Capabilities // model id -> detected capabilities
 	at       time.Time
 }
 
@@ -751,14 +761,18 @@ func (s *Server) refreshMaxContext(url string) {
 		return
 	}
 	best, engineID := 0, ""
+	var ids []string
 	if data, ok := models["data"].([]any); ok {
 		for _, d := range data {
 			if m, ok := d.(map[string]any); ok {
 				if n, ok := toInt(m["max_model_len"]); ok && n > best {
 					best = n
 				}
-				if id, _ := m["id"].(string); engineID == "" && id != "" {
-					engineID = id
+				if id, _ := m["id"].(string); id != "" {
+					ids = append(ids, id)
+					if engineID == "" {
+						engineID = id
+					}
 				}
 			}
 		}
@@ -772,11 +786,12 @@ func (s *Server) refreshMaxContext(url string) {
 			card, _ = one["model_card"].(map[string]any)
 		}
 	}
+	caps := s.detectCaps(url, ids, engineID, card)
 	s.mu.Lock()
 	if s.maxCtx == nil {
 		s.maxCtx = map[string]ctxInfo{}
 	}
-	s.maxCtx[url] = ctxInfo{tokens: best, engineID: engineID, card: card, at: time.Now()}
+	s.maxCtx[url] = ctxInfo{tokens: best, engineID: engineID, card: card, caps: caps, at: time.Now()}
 	s.mu.Unlock()
 }
 
@@ -870,6 +885,20 @@ func (s *Server) pollNinferFull(backend string) (*routing.Load, map[string]any) 
 		}
 	}
 	return l, usage
+}
+
+// pollBasic: engines that publish no load metrics (Ollama, MLX, LM Studio,
+// others) count as up when /v1/models answers. Their load is what the
+// gateway itself has in flight (blended in by the pool picker), against
+// the configured default lanes.
+func (s *Server) pollBasic(backend string) *routing.Load {
+	status, _, err := s.backendGet(backend, "/v1/models", 3*time.Second)
+	if err != nil || status != 200 {
+		return nil
+	}
+	lanes := s.cfg.MaxSeqsFor(backend)
+	return &routing.Load{Engine: "openai", Lanes: lanes, MaxSeqs: lanes,
+		Running: s.tracker.InFlight(backend), LastUpdated: time.Now()}
 }
 
 // pollLlamaCpp reads a llama.cpp-style server (llama-server and compatible

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -103,6 +104,17 @@ func linkEngineHost(virtualURL string) string {
 // metrics/health fetch goes through here so link engines are polled,
 // scored and metered exactly like LAN backends.
 func (s *Server) backendGet(backend, path string, timeout time.Duration) (int, []byte, error) {
+	return s.backendRequest(http.MethodGet, backend, path, nil, timeout)
+}
+
+// backendRequest: one small request to a backend (direct or over its link)
+// with a JSON body when body is non-nil — for read-only metadata calls such
+// as Ollama's POST /api/show.
+func (s *Server) backendRequest(method, backend, path string, body []byte, timeout time.Duration) (int, []byte, error) {
+	hdr := http.Header{"Accept": {"application/json"}}
+	if body != nil {
+		hdr.Set("Content-Type", "application/json")
+	}
 	if isLinkURL(backend) {
 		conn := s.linkReg.Lookup(backend)
 		if conn == nil {
@@ -110,8 +122,7 @@ func (s *Server) backendGet(backend, path string, timeout time.Duration) (int, [
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		resp, err := conn.RelayContext(ctx, http.MethodGet, linkEngineHost(backend), path,
-			http.Header{"Accept": {"application/json"}}, nil)
+		resp, err := conn.RelayContext(ctx, method, linkEngineHost(backend), path, hdr, body)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -119,8 +130,18 @@ func (s *Server) backendGet(backend, path string, timeout time.Duration) (int, [
 		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		return resp.StatusCode, b, err
 	}
-	c := &http.Client{Timeout: timeout}
-	resp, err := c.Get(backend + path)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, backend+path, rdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header = hdr
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -92,6 +92,18 @@ type ModelEntry struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	OwnedBy string `json:"owned_by"`
+	// Capabilities: endpoints, input/output modalities, features, source.
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	// Architecture: the same modalities in the shape OpenRouter-style
+	// clients read ("text+image->text").
+	Architecture *Architecture `json:"architecture,omitempty"`
+}
+
+// Architecture mirrors OpenRouter's model.architecture block.
+type Architecture struct {
+	Modality         string   `json:"modality"`
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
 }
 
 func (s *Server) registerInferenceDocs() {

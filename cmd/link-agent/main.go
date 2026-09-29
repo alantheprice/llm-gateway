@@ -24,7 +24,7 @@ import (
 )
 
 // agentVersion: protocol level (see link.MinAgentVersion on the gateway).
-const agentVersion = "0.2"
+const agentVersion = "0.3" // 0.3: engine metadata paths, --token-file, macOS
 
 type engine struct {
 	port    int
@@ -282,6 +282,12 @@ func findEngine(engines []engine, host string) *engine {
 }
 
 func validPath(p string) bool {
+	// Read-only engine metadata (llama.cpp /props, Ollama model details):
+	// exact paths only. Mirrors link.ValidEnginePath on the gateway.
+	switch p {
+	case "/props", "/api/show", "/api/tags", "/api/ps", "/api/version":
+		return true
+	}
 	for _, prefix := range []string{"/v1/", "/health", "/usage", "/slots", "/metrics"} {
 		if p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix) {
 			return true

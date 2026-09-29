@@ -126,6 +126,12 @@ func (r *Registry) LiveURLs() []string {
 // ValidEnginePath: SSRF guard — only model-serving surfaces relay.
 // Gateway and agent both enforce this list.
 func ValidEnginePath(p string) bool {
+	// Read-only engine metadata the gateway uses to learn what a model can
+	// do (llama.cpp /props, Ollama's model details): exact paths only.
+	switch p {
+	case "/props", "/api/show", "/api/tags", "/api/ps", "/api/version":
+		return true
+	}
 	for _, prefix := range []string{"/v1/", "/health", "/usage", "/slots", "/metrics"} {
 		if p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix) {
 			return true

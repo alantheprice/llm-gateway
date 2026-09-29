@@ -217,6 +217,7 @@ func (s *Server) writeEngineInfo(w http.ResponseWriter, backend, engineID, view 
 		if card, ok := m["model_card"].(map[string]any); ok {
 			m["card_summary"] = cardSummary(card)
 		}
+		m["capabilities"] = s.engineCaps(backend, engineID)
 		id := s.gpuIdentity(backend)
 		m["via"] = id.Via
 		if id.Host != "" || isAdmin {
@@ -265,12 +266,16 @@ func (s *Server) writePoolInfo(w http.ResponseWriter, name string, pool *poolCfg
 			entry["model_card"] = card
 			entry["card_summary"] = cardSummary(info.card)
 		}
+		entry["capabilities"] = s.engineCaps(m.Backend, m.ModelID)
 		if isAdmin {
 			entry["model_id"], entry["backend"] = m.ModelID, m.Backend
 		}
 		members = append(members, entry)
 	}
 	out := map[string]any{"id": name, "object": "model", "owned_by": "llm-gateway", "pool": true, "members": members}
+	if c, ok := s.capsFor(name, ""); ok {
+		out["capabilities"] = c
+	}
 	if maxCtx > 0 {
 		out["max_model_len"] = maxCtx
 	}
