@@ -21,6 +21,62 @@
 </ol>
 <p>Turn on <strong>🌐 Web</strong> in the composer to use connectors. The toggle reads <strong>Web + N connectors</strong> while any are on. Each connector has its own on/off switch.</p>
 <p>In a reply, each tool call shows as a chip, e.g. <code>🔌 github · list_issues ✓</code>. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.</p>
+<h2 id="finding-servers">Finding servers</h2>
+<p><strong>Quick add</strong> in the Connectors dialog fills in a few well-known remote servers:</p>
+<table>
+<thead>
+<tr>
+<th>Server</th>
+<th>What it does</th>
+<th>Sign-in</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeepWiki</td>
+<td>Docs and Q&amp;A for any public GitHub repo</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Context7</td>
+<td>Up-to-date documentation for libraries</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Hugging Face</td>
+<td>Search models, datasets and Spaces</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Cloudflare Docs</td>
+<td>Cloudflare's documentation</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Notion, Linear, Sentry, Atlassian (Jira &amp; Confluence)</td>
+<td>Work with your own workspace</td>
+<td>sign in with the service</td>
+</tr>
+<tr>
+<td>GitHub</td>
+<td>Repos, issues, pull requests</td>
+<td>a personal access token</td>
+</tr>
+<tr>
+<td>Stripe</td>
+<td>Your Stripe account</td>
+<td>a secret or restricted key</td>
+</tr>
+</tbody>
+</table>
+<p>For more, browse a directory and pick servers marked <strong>remote</strong> or <strong>hosted</strong> (their address is an <code>https://…/mcp</code> or <code>…/sse</code> URL):</p>
+<ul>
+<li><a href="https://registry.modelcontextprotocol.io">Official MCP Registry</a>: the protocol's own catalog</li>
+<li><a href="https://smithery.ai">Smithery</a>: many hosted servers, each with a remote URL</li>
+<li><a href="https://glama.ai/mcp/servers">Glama</a>: a large directory you can filter by hosting</li>
+<li><a href="https://mcp.so">mcp.so</a>: a community directory</li>
+<li><a href="https://github.com/modelcontextprotocol/servers">modelcontextprotocol/servers</a>: reference servers and a long list of official integrations</li>
+</ul>
 <h2 id="what-works">What works</h2>
 <table>
 <thead>

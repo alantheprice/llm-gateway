@@ -437,9 +437,9 @@
     const s = active();
     landing.style.display = 'none';
     msgs.innerHTML = '';
-    msgs.appendChild(landing); // the conversation list lives inside #msgs
-    if (!s) { renderLanding(); return; }
-    if (!s.messages.length) { renderLanding(); return; }
+    msgs.appendChild(landing); // the welcome screen lives inside #msgs
+    if (!busy) renderConvos();
+    if (!s || !s.messages.length) { renderWelcome(); return; }
     s.messages.forEach((m, i) => msgs.appendChild(msgDiv(m, i)));
     // typing indicator while the assistant message is pending with no text
     const last = s.messages[s.messages.length - 1];
@@ -452,51 +452,106 @@
     msgs.scrollTop = msgs.scrollHeight;
   }
 
-  function renderLanding() {
-    const list = [...sessions].sort((a, b) => b.updated - a.updated);
-    landing.innerHTML =
-      '<div class="card" style="margin:40px auto;max-width:640px">' +
-      '<h2>Conversations</h2>' +
-      (list.length ? '<ul class="session-list">' + list.map(s => {
-        const st = s.messages.filter(m => m.stats && m.stats.tg);
-        const avgTg = st.length ? Math.round(st.reduce((a, m) => a + m.stats.tg, 0) / st.length) : 0;
-        return '<li data-id="' + esc(s.id) + '">' +
-        '<span class="s-title">' + esc(s.title) + '</span>' +
-        '<span class="s-meta">' + (s.stale ? s.msgCount || 0 : s.messages.length) + ' msg' +
-        (avgTg ? ' · ⚡' + avgTg + ' tok/s avg' : '') +
-        ' · ' + fmtTime(s.updated) + '</span>' +
-        '<span class="s-actions">' +
-        '<button class="btn sm" data-act="rename" data-id="' + esc(s.id) + '" title="Rename">✎</button>' +
-        '<button class="btn sm danger" data-act="del" data-id="' + esc(s.id) + '" title="Delete">🗑</button>' +
-        '</span></li>';
-      }).join('') + '</ul>'
-        : '<p class="muted">No conversations yet. Start one below.</p>') +
-      '<div class="row" style="margin-top:14px"><button class="btn primary" id="landing-new">+ Start a new chat</button></div></div>';
+  /* ---------- conversation list (side panel) ---------- */
+  const convosEl = document.getElementById('convos');
+  const convoList = document.getElementById('convoList');
+  const convoSearch = document.getElementById('convoSearch');
+  const convosBackdrop = document.getElementById('convosBackdrop');
+  const msgCount = s => s.stale ? (s.msgCount || 0) : s.messages.length;
+  function dayStart(offset) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - offset); return d.getTime(); }
+  function groupOf(t) {
+    if (t >= dayStart(0)) return 'Today';
+    if (t >= dayStart(1)) return 'Yesterday';
+    if (t >= dayStart(7)) return 'Previous 7 days';
+    if (t >= dayStart(30)) return 'Previous 30 days';
+    return 'Older';
+  }
+  function whenLabel(t) {
+    const d = new Date(t);
+    if (t >= dayStart(0)) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (t >= dayStart(7)) return d.toLocaleDateString(undefined, { weekday: 'short' });
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  function matches(s, q) {
+    if (!q) return true;
+    if ((s.title || '').toLowerCase().includes(q)) return true;
+    return s.messages.some(m => (m.content || '').toLowerCase().includes(q));
+  }
+  function renderConvos() {
+    const q = (convoSearch.value || '').trim().toLowerCase();
+    // Empty chats (nothing sent yet) aren't listed; "New chat" is that state.
+    const list = sessions.filter(s => msgCount(s) > 0 && matches(s, q)).sort((a, b) => b.updated - a.updated);
+    let h = '', group = '';
+    for (const s of list) {
+      const g = groupOf(s.updated);
+      if (g !== group) { h += '<div class="convo-group">' + g + '</div>'; group = g; }
+      const n = msgCount(s);
+      h += '<div class="convo' + (s.id === activeId ? ' active' : '') + '" role="link" tabindex="0" data-id="' + escAttr(s.id) + '"' +
+        (s.id === activeId ? ' aria-current="page"' : '') + ' title="' + escAttr(s.title) + '">' +
+        '<span class="c-text"><span class="c-title">' + esc(s.title) + '</span>' +
+        '<span class="c-meta">' + esc(whenLabel(s.updated)) + ' · ' + n + ' message' + (n === 1 ? '' : 's') + '</span></span>' +
+        '<span class="c-actions"><button type="button" data-act="rename" title="Rename" aria-label="Rename">✎</button>' +
+        '<button type="button" class="del" data-act="del" title="Delete" aria-label="Delete">🗑</button></span></div>';
+    }
+    convoList.innerHTML = h || '<p class="convo-empty muted">' + (q ? 'No chats match “' + esc(q) + '”.' : 'No chats yet. Your conversations will appear here.') + '</p>';
+    const title = document.getElementById('chatTitle');
+    const a = active();
+    if (title) title.textContent = a && msgCount(a) ? a.title : 'New chat';
+  }
+  convoList.addEventListener('click', ev => {
+    const row = ev.target.closest('.convo');
+    if (!row) return;
+    const s = sessions.find(x => x.id === row.dataset.id);
+    if (!s) return;
+    const act = ev.target.closest('[data-act]');
+    if (!act) { openSession(s.id); closeConvos(); return; }
+    ev.stopPropagation();
+    if (act.dataset.act === 'del') {
+      if (!confirm('Delete "' + s.title + '"? It\'s removed from all your devices.')) return;
+      sessions = sessions.filter(x => x.id !== s.id);
+      if (activeId === s.id) activeId = '';
+      delete synced[s.id]; saveSynced();
+      if (serverSync) fetch('/api/chats/' + encodeURIComponent(s.id) + '?at=' + Date.now(), { method: 'DELETE' }).catch(() => {});
+      saveStore(false); render();
+    } else if (act.dataset.act === 'rename') {
+      const t = prompt('Rename chat:', s.title);
+      if (t && t.trim()) { s.title = t.trim().slice(0, 80); s.updated = Date.now(); saveStore(); renderConvos(); }
+    }
+  });
+  convoList.addEventListener('keydown', ev => {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList.contains('convo')) { ev.preventDefault(); ev.target.click(); }
+  });
+  convoSearch.addEventListener('input', renderConvos);
+  function openConvos() { convosEl.classList.add('open'); convosBackdrop.classList.add('show'); }
+  function closeConvos() { convosEl.classList.remove('open'); convosBackdrop.classList.remove('show'); }
+  document.getElementById('convosBtn').addEventListener('click', openConvos);
+  document.getElementById('convosClose').addEventListener('click', closeConvos);
+  convosBackdrop.addEventListener('click', closeConvos);
+  // New chat: reuse an empty one instead of piling up blanks.
+  function newChat() {
+    const a = active();
+    if (!a || msgCount(a) > 0 || busy) newSession();
+    closeConvos(); render(); promptEl.focus();
+  }
+  document.getElementById('convosNew').addEventListener('click', newChat);
+
+  // New-chat screen: the model in use and a few ways to start.
+  const STARTERS = [
+    'Explain a concept to me simply',
+    'Help me write or edit something',
+    'Review this code and suggest fixes',
+    'Plan a project step by step',
+  ];
+  function renderWelcome() {
+    landing.innerHTML = '<div class="welcome"><h2>What can I help with?</h2>' +
+      '<p class="w-sub">Chatting with <strong>' + esc(modelEl.value || 'a model') + '</strong>. Turn on 🌐 Web to let it search the web and use your connectors.</p>' +
+      '<div class="w-starters">' + STARTERS.map(t => '<button type="button">' + esc(t) + '</button>').join('') + '</div></div>';
     landing.style.display = 'block';
-    landing.querySelectorAll('li').forEach(li => {
-      li.addEventListener('click', ev => {
-        if (ev.target.closest('button')) return;
-        openSession(li.dataset.id);
-      });
+    landing.querySelectorAll('.w-starters button').forEach(b => b.onclick = () => {
+      promptEl.value = b.textContent + ': ';
+      promptEl.focus();
+      promptEl.dispatchEvent(new Event('input'));
     });
-    landing.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', ev => {
-      ev.stopPropagation();
-      const s = sessions.find(x => x.id === b.dataset.id);
-      if (!s) return;
-      if (b.dataset.act === 'del') {
-        if (!confirm('Delete "' + s.title + '"? It\'s removed from all your devices.')) return;
-        sessions = sessions.filter(x => x.id !== s.id);
-        if (activeId === s.id) activeId = '';
-        delete synced[s.id]; saveSynced();
-        if (serverSync) fetch('/api/chats/' + encodeURIComponent(s.id) + '?at=' + Date.now(), { method: 'DELETE' }).catch(() => {});
-        saveStore(false); renderLanding();
-      } else if (b.dataset.act === 'rename') {
-        const t = prompt('Rename conversation:', s.title);
-        if (t && t.trim()) { s.title = t.trim().slice(0, 80); s.updated = Date.now(); saveStore(); renderLanding(); }
-      }
-    }));
-    const ln = document.getElementById('landing-new');
-    if (ln) ln.addEventListener('click', () => { newSession(); render(); promptEl.focus(); });
   }
 
   /* ---------- chat ---------- */
@@ -688,6 +743,8 @@
     if (s.messages.length === 0) s.title = text.slice(0, 60);
     s.model = modelEl.value;
     s.messages.push({ role: 'user', content: text });
+    s.updated = Date.now();
+    renderConvos();
     generate();
   }
 
@@ -721,10 +778,15 @@
       for (const mid of g.models) {
         const o = document.createElement('option');
         o.value = mid; o.textContent = mid;
-        if (mid === 'qwen3.8-27b') o.selected = true;
+        if (mid === 'qwen3.8-27b') o.selected = true; // default until you pick one
         parent.appendChild(o);
       }
     }
+    // Remember the last model picked (when it's still available).
+    let lastModel = '';
+    try { lastModel = localStorage.getItem('chat.model') || ''; } catch (e) {}
+    if (lastModel && [...modelEl.options].some(o => o.value === lastModel)) modelEl.value = lastModel;
+    modelEl.addEventListener('change', () => { try { localStorage.setItem('chat.model', modelEl.value); } catch (e) {} });
     loadStore();
     loadSynced();
     const cur = active();
@@ -741,8 +803,12 @@
   const toolsToggle = document.getElementById('toolsToggle');
   const toolsLabel = document.getElementById('toolsLabel');
   if (toolsToggle && toolsLabel) {
+    // Web mode stays as you left it.
+    try { toolsToggle.checked = localStorage.getItem('chat.web') === '1'; } catch (e) {}
+    toolsLabel.classList.toggle('on', toolsToggle.checked);
     toolsToggle.addEventListener('change', () => {
       toolsLabel.classList.toggle('on', toolsToggle.checked);
+      try { localStorage.setItem('chat.web', toolsToggle.checked ? '1' : '0'); } catch (e) {}
     });
   }
   /* ---------- connectors (remote MCP servers) ---------- */
@@ -796,6 +862,7 @@
       };
     });
     cxLabel();
+    cxQuickRender();
   }
   async function cxLoad() {
     const r = await api('/api/mcp');
@@ -827,6 +894,35 @@
     flash(e.data.message, e.data.status !== 'ok', 'cxFlash');
     cxLoad();
   });
+  // Well-known remote servers: one click fills the form.
+  const CX_QUICK = [
+    ['deepwiki', 'https://mcp.deepwiki.com/mcp', 'none', 'DeepWiki', 'Docs for any GitHub repo'],
+    ['context7', 'https://mcp.context7.com/mcp', 'none', 'Context7', 'Up-to-date library docs'],
+    ['huggingface', 'https://huggingface.co/mcp', 'none', 'Hugging Face', 'Models, datasets, Spaces'],
+    ['cloudflare-docs', 'https://docs.mcp.cloudflare.com/mcp', 'none', 'Cloudflare Docs', 'Cloudflare documentation'],
+    ['notion', 'https://mcp.notion.com/mcp', 'oauth', 'Notion', 'Sign in'],
+    ['linear', 'https://mcp.linear.app/mcp', 'oauth', 'Linear', 'Sign in'],
+    ['sentry', 'https://mcp.sentry.dev/mcp', 'oauth', 'Sentry', 'Sign in'],
+    ['atlassian', 'https://mcp.atlassian.com/v1/sse', 'oauth', 'Atlassian', 'Jira & Confluence; sign in'],
+    ['github', 'https://api.githubcopilot.com/mcp/', 'header', 'GitHub', 'Personal access token'],
+    ['stripe', 'https://mcp.stripe.com', 'header', 'Stripe', 'Secret or restricted key'],
+  ];
+  function cxQuickRender() {
+    const box = document.getElementById('cxQuick');
+    if (!box) return;
+    const have = new Set(cxServers.map(v => v.url));
+    box.innerHTML = '<span class="muted">Quick add:</span>' + CX_QUICK.filter(q => !have.has(q[1])).map((q, i) =>
+      '<button type="button" class="cx-chip" data-q="' + CX_QUICK.indexOf(q) + '" title="' + escAttr(q[4] + ' · ' + q[1]) + '">' + esc(q[3]) + '</button>').join('');
+    box.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      const [name, url, auth] = CX_QUICK[+b.dataset.q];
+      document.getElementById('cxName').value = name;
+      document.getElementById('cxURL').value = url;
+      const sel = document.getElementById('cxAuth');
+      sel.value = auth; sel.onchange();
+      document.getElementById('cxHVal').value = '';
+      (auth === 'header' ? document.getElementById('cxHVal') : document.querySelector('#cxForm button[type=submit]')).focus();
+    });
+  }
   if (cx) {
     document.getElementById('connectorsBtn').onclick = () => { cxLoad(); cx.showModal(); };
     document.getElementById('cxClose').onclick = () => cx.close();
@@ -866,6 +962,7 @@
   promptEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!busy) send(); }
   });
-  newBtn.addEventListener('click', () => { newSession(); render(); promptEl.focus(); });
+  newBtn.addEventListener('click', newChat);
+  modelEl.addEventListener('change', () => { const a = active(); if (!a || !a.messages.length) render(); });
   init();
 })();

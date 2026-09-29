@@ -301,7 +301,7 @@ func TestChatSyncInBrowser(t *testing.T) {
 	if slices.Contains(missing, "PUT /api/chats/remote1") {
 		t.Errorf("unloaded remote chat was uploaded (would overwrite it with nothing)")
 	}
-	if !strings.Contains(out, "Remote chat") || !strings.Contains(out, "Local chat") || !strings.Contains(out, "3 msg") {
+	if !strings.Contains(out, "Remote chat") || !strings.Contains(out, "Local chat") || !strings.Contains(out, "3 messages") {
 		t.Errorf("conversation list missing entries:\n%s", visibleText(out))
 	}
 }

@@ -4,14 +4,26 @@
 <script src="/static/chat.js?v={{$.StaticVer}}"></script>
 {{end}}
 {{define "content"}}
+<div class="chat-shell">
+<aside class="convos" id="convos" aria-label="Your chats">
+  <div class="convos-head">
+    <button class="btn primary convos-new" id="convosNew">{{Icon "plus"}}<span>New chat</span></button>
+    <button class="btn sm convos-close" id="convosClose" aria-label="Close chats">✕</button>
+  </div>
+  <input type="search" id="convoSearch" class="convo-search" placeholder="Search chats" aria-label="Search chats">
+  <nav class="convo-list" id="convoList"></nav>
+  <p class="convos-foot muted">Chats are saved to your account and sync across your devices.</p>
+</aside>
+<div class="convos-backdrop" id="convosBackdrop"></div>
 <div class="chat-main">
   <div class="chat-head">
     <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
-    <h1>{{if .Title}}{{.Title}}{{else}}Chat{{end}}</h1>
+    <button class="btn convos-btn" id="convosBtn" aria-label="Your chats" title="Your chats">{{Icon "message-square"}}<span class="btn-label"> Chats</span></button>
+    <h1 id="chatTitle">New chat</h1>
     <span style="flex:1"></span>
     <select id="model"></select>
     <a class="btn" id="modelinfo" href="/models" title="Model card: weights, quantization, context, hardware">ⓘ<span class="btn-label"> Model</span></a>
-    <button class="btn primary" id="newchat">{{Icon "plus"}}<span class="btn-label"> New</span></button>
+    <button class="btn" id="newchat" title="New chat">{{Icon "plus"}}<span class="btn-label"> New</span></button>
   </div>
   <div id="msgs">
     <div id="landing"></div>
@@ -32,6 +44,7 @@
     <p class="composer-hint">LLMs can make mistakes. Web results are cited when used.</p>
   </div>
 </div>
+</div>
 <dialog id="connectors" class="connectors">
   <div class="cx-head"><h2>Connectors</h2><button class="btn sm" id="cxClose" aria-label="Close">✕</button></div>
   <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>🌐 Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
@@ -39,6 +52,7 @@
   <div id="cxList"></div>
   <form id="cxForm" class="cx-form" autocomplete="off">
     <div class="cx-sub">Add a server</div>
+    <div class="cx-quick" id="cxQuick" aria-label="Quick add"></div>
     <div class="cx-row">
       <label>Name<input id="cxName" placeholder="github" maxlength="24" required></label>
       <label class="cx-grow">URL<input id="cxURL" type="url" placeholder="https://example.com/mcp" required></label>
@@ -58,5 +72,16 @@
     <div class="cx-actions"><button type="button" class="btn sm" id="cxTest">Test</button><button type="submit" class="btn sm primary">Add</button></div>
     <div id="cxTestOut"></div>
   </form>
+  <div class="cx-find">
+    <div class="cx-sub">Find more servers</div>
+    <p class="muted">Pick servers marked <strong>remote</strong> or <strong>hosted</strong> (an <code>https://…/mcp</code> or <code>…/sse</code> URL). Servers you run yourself with <code>npx</code> or <code>uvx</code> can’t be added here.</p>
+    <ul class="cx-dirs">
+      <li><a href="https://registry.modelcontextprotocol.io" target="_blank" rel="noopener">Official MCP Registry</a> <span class="muted">— the protocol’s own catalog</span></li>
+      <li><a href="https://smithery.ai" target="_blank" rel="noopener">Smithery</a> <span class="muted">— many hosted servers, with remote URLs</span></li>
+      <li><a href="https://glama.ai/mcp/servers" target="_blank" rel="noopener">Glama</a> <span class="muted">— large directory, filter by hosting</span></li>
+      <li><a href="https://mcp.so" target="_blank" rel="noopener">mcp.so</a> <span class="muted">— community directory</span></li>
+      <li><a href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener">modelcontextprotocol/servers</a> <span class="muted">— reference servers and a long list of official integrations</span></li>
+    </ul>
+  </div>
 </dialog>
 {{end}}

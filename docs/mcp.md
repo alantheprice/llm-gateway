@@ -20,6 +20,28 @@ Turn on **🌐 Web** in the composer to use connectors. The toggle reads **Web +
 
 In a reply, each tool call shows as a chip, e.g. `🔌 github · list_issues ✓`. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.
 
+## Finding servers
+
+**Quick add** in the Connectors dialog fills in a few well-known remote servers:
+
+| Server | What it does | Sign-in |
+|---|---|---|
+| DeepWiki | Docs and Q&A for any public GitHub repo | none |
+| Context7 | Up-to-date documentation for libraries | none |
+| Hugging Face | Search models, datasets and Spaces | none |
+| Cloudflare Docs | Cloudflare's documentation | none |
+| Notion, Linear, Sentry, Atlassian (Jira & Confluence) | Work with your own workspace | sign in with the service |
+| GitHub | Repos, issues, pull requests | a personal access token |
+| Stripe | Your Stripe account | a secret or restricted key |
+
+For more, browse a directory and pick servers marked **remote** or **hosted** (their address is an `https://…/mcp` or `…/sse` URL):
+
+- [Official MCP Registry](https://registry.modelcontextprotocol.io): the protocol's own catalog
+- [Smithery](https://smithery.ai): many hosted servers, each with a remote URL
+- [Glama](https://glama.ai/mcp/servers): a large directory you can filter by hosting
+- [mcp.so](https://mcp.so): a community directory
+- [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers): reference servers and a long list of official integrations
+
 ## What works
 
 | | |

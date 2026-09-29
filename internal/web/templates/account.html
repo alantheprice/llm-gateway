@@ -35,11 +35,24 @@ document.getElementById('chpw').addEventListener('click', async () => {
   if (r.ok) { document.getElementById('opw').value=''; document.getElementById('npw').value=''; document.getElementById('npw2').value=''; }
 });
 
-document.getElementById('wipe').addEventListener('click', () => {
-  if (!confirm('Delete ALL chat history stored in this browser? This cannot be undone.')) return;
-  localStorage.removeItem('llmgw_sessions');
-  localStorage.removeItem('llmgw_active');
-  flash('Local chat history deleted.');
+// Delete every chat: on the server (so other devices drop them too) and
+// the copy in this browser.
+document.getElementById('wipe').addEventListener('click', async () => {
+  if (!confirm('Delete ALL your chats, on every device? This cannot be undone.')) return;
+  const btn = document.getElementById('wipe');
+  btn.disabled = true;
+  let failed = 0;
+  const r = await api('/api/chats');
+  if (r.ok) {
+    const now = Date.now();
+    for (const c of (r.data.chats || []).filter(c => !c.deleted)) {
+      const d = await fetch('/api/chats/' + encodeURIComponent(c.id) + '?at=' + now, { method: 'DELETE' }).catch(() => null);
+      if (!d || !d.ok) failed++;
+    }
+  } else if (r.status !== 503) failed++;
+  ['llmgw_sessions', 'llmgw_active', 'llmgw_synced'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  btn.disabled = false;
+  flash(failed ? 'Some chats couldn’t be deleted; try again.' : 'All your chats were deleted.', !!failed);
 });
 
 (async function load() {
@@ -88,9 +101,9 @@ document.getElementById('wipe').addEventListener('click', () => {
   </div>
 
   <div class="card">
-    <h2>Local chat storage</h2>
-    <p class="muted" style="margin:0 0 10px">Chat history lives only in this browser (localStorage). Signing out keeps it; clearing browser data removes it permanently.</p>
-    <button class="btn danger" id="wipe">Delete all local chat history</button>
+    <h2>Chat history</h2>
+    <p class="muted" style="margin:0 0 10px">Your chats are saved to your account and sync across your devices. Delete single chats from the list in Chat, or everything here.</p>
+    <button class="btn danger" id="wipe">Delete all my chats</button>
   </div>
 </div>
 {{end}}
