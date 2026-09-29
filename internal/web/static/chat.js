@@ -270,11 +270,12 @@
             // A connector's tool: <server>__<tool>.
             const i = t.name.indexOf('__');
             chip.textContent = '🔌 ' + t.name.slice(0, i) + ' · ' + t.name.slice(i + 2) + (arg && arg !== '{}' ? ': ' + arg : '');
-            if (t.status !== 'running') chip.textContent += /^tool error/.test(t.summary || '') ? ' ✗' : ' ✓';
+            if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
             if (t.summary) chip.title = t.summary;
           } else {
             chip.textContent = (t.name === 'web_search' ? '🌐 searching: ' : '📄 reading: ') + arg;
-            if (t.status !== 'running') chip.textContent += ' ✓';
+            if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
+            if (t.status === 'error' && t.summary) chip.title = t.summary;
           }
           div.appendChild(chip);
         }
@@ -497,10 +498,14 @@
               a.tools.push({ name: 'notice', status: 'done', summary: d.message || '' });
             } else if (ev === 'content') {
               a.content += d.content || '';
+            } else if (ev === 'reasoning') {
+              a.thinking += d.content || '';
             } else if (ev === 'error') {
               a.content += '⚠ ' + (d.error || 'agent error');
             } else if (ev === 'done') {
-              if (d.content && !a.content) a.content = d.content;
+              // The final answer; replaces text streamed on the way (e.g.
+              // "let me search…" before a tool call).
+              if (d.content) a.content = d.content;
             }
             s.updated = Date.now();
             render();
