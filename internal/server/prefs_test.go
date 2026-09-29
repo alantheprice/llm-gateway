@@ -12,7 +12,7 @@ import (
 )
 
 // Preferences save per user, apply partially, and the theme reaches the
-// page before it paints; /account now lands on Settings.
+// page before it paints; moved pages redirect to their new homes.
 func TestPrefsAndSettings(t *testing.T) {
 	if err := InitUI(); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,10 @@ func TestPrefsAndSettings(t *testing.T) {
 	if w := do("pat", "GET", "/settings", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `data-theme="light"`) {
 		t.Fatalf("settings page: %d, theme applied: %v", w.Code, strings.Contains(w.Body.String(), `data-theme="light"`))
 	}
-	if w := do("pat", "GET", "/account", ""); w.Code != 301 || w.Header().Get("Location") != "/settings#account" {
-		t.Fatalf("/account = %d %s", w.Code, w.Header().Get("Location"))
+	for old, dst := range map[string]string{"/account": "/settings#account", "/admin/system": "/admin/overview",
+		"/admin/analytics/page": "/admin/performance"} {
+		if w := do("pat", "GET", old, ""); w.Code != 301 || w.Header().Get("Location") != dst {
+			t.Fatalf("%s = %d %s", old, w.Code, w.Header().Get("Location"))
+		}
 	}
 }

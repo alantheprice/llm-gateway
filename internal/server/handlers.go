@@ -171,9 +171,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/guide/", s.guideHandler)
 	mux.HandleFunc("/admin/users/page", s.handleAdminUsersPage)
 	mux.HandleFunc("/admin/users", s.handleAdminUsers)
-	mux.HandleFunc("/admin/system", s.handleAdminSystemPage)
+	mux.HandleFunc("/admin/overview", s.handleAdminSystemPage)
+	mux.HandleFunc("/admin/system", redirectTo("/admin/overview"))
 	mux.HandleFunc("/admin/costs", s.handleAdminCostsPage)
-	mux.HandleFunc("/admin/analytics/page", s.handleAnalyticsPage)
+	mux.HandleFunc("/admin/performance", s.handleAnalyticsPage)
+	mux.HandleFunc("/admin/analytics/page", redirectTo("/admin/performance"))
 	mux.HandleFunc("/api/analytics", s.handleAnalytics)
 	mux.HandleFunc("/admin/costs/backfill", s.handleCostsBackfill)
 	mux.HandleFunc("/usage/costs", s.handleUsageCosts)
@@ -829,4 +831,11 @@ func coldPrefillMs(estTokens int) float64 {
 		return 0
 	}
 	return float64(estTokens) / coldPrefillAssumedTokS * 1000
+}
+
+// redirectTo: a permanent redirect for a page that moved.
+func redirectTo(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, path, http.StatusMovedPermanently)
+	}
 }

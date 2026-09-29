@@ -82,10 +82,10 @@
       <a href="/guide" class="nav-item {{if eq .Nav "help"}}active{{end}}">{{Icon "book-open"}}<span>Help</span></a>
       {{if eq .Role "admin"}}
       <div class="nav-section">Admin</div>
-      <a href="/admin/system" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "layout-dashboard"}}<span>Overview</span></a>
+      <a href="/admin/overview" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "layout-dashboard"}}<span>Overview</span></a>
       <a href="/admin/users/page" class="nav-item {{if eq .Nav "admin_users"}}active{{end}}">{{Icon "users"}}<span>Users</span></a>
       <a href="/admin/costs" class="nav-item {{if eq .Nav "admin_costs"}}active{{end}}">{{Icon "wallet"}}<span>Usage &amp; costs</span></a>
-      <a href="/admin/analytics/page" class="nav-item {{if eq .Nav "analytics"}}active{{end}}">{{Icon "gauge"}}<span>Performance</span></a>
+      <a href="/admin/performance" class="nav-item {{if eq .Nav "analytics"}}active{{end}}">{{Icon "gauge"}}<span>Performance</span></a>
       <a href="/admin/routing" class="nav-item {{if eq .Nav "admin_routing"}}active{{end}}">{{Icon "route"}}<span>Routing</span></a>
       <a href="/admin/config/page" class="nav-item {{if eq .Nav "admin_config"}}active{{end}}">{{Icon "sliders"}}<span>Config</span></a>
       {{end}}

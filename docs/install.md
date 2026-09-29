@@ -45,7 +45,7 @@ What it does:
 ## First login
 
 1. `http://<host>:8033/` → log in as `admin`
-2. Change the password (**Account** page)
+2. Change the password (**Settings → Account**)
 3. Follow [Start Here §First 5 minutes](/guide/start)
 
 ## Upgrade

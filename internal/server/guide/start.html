@@ -27,7 +27,7 @@ sessions, admin UI. One process, one database.</li>
 <h2 id="first-5-minutes">First 5 minutes</h2>
 <ol>
 <li>Open <code>http://&lt;host&gt;:8033/</code> and log in as <code>admin</code> (password from the<br>
-installer — change it under <strong>Account</strong>).</li>
+installer — change it under <strong>Settings → Account</strong>).</li>
 <li><strong>Point it at an engine.</strong> No backends yet? Run the NInfer engine<br>
 installer on your GPU box (see <a href="/guide/ninfer-engine">NInfer Engine Runbook</a>)<br>
 or set <code>model_pools</code> in <code>/opt/llm-gateway/llm_gateway.conf</code> to any<br>
@@ -42,7 +42,7 @@ OpenAI-compatible server, then:
   -d '{&quot;model&quot;:&quot;qwen3.8-27b&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;hello&quot;}]}'
 </code></pre>
 </li>
-<li><strong>Watch it work</strong>: <code>/admin/costs</code> (cost + energy), <code>/usage/me</code><br>
+<li><strong>Watch it work</strong>: <strong>Usage &amp; costs</strong> (<code>/admin/costs</code>: cost, energy, who used what), <strong>Usage</strong> (<code>/usage/me</code>)<br>
 (your tokens), <code>/backends</code> (live per-engine load).</li>
 </ol>
 <h2 id="where-to-go-next">Where to go next</h2>

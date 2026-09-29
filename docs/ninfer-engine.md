@@ -13,7 +13,7 @@ of [`alantheprice/ninfer-4090`](https://github.com/alantheprice/ninfer-4090)):
 | Endpoint | Gateway feature it feeds |
 |---|---|
 | `GET /slots` | lane capacity + running/waiting → load score (0.75·lanes + 0.15·queue + 0.10·KV-pressure) |
-| `GET /usage` | tok/s, cache-hit %, KV spills/evictions, **energy kWh + $** (NVML, `--electricity-rate`) → admin Costs page, price book |
+| `GET /usage` | tok/s, cache-hit %, KV spills/evictions, **energy kWh + $** (NVML, `--electricity-rate`) → admin **Usage & costs** page, price book |
 | `GET /metrics` | Prometheus text (vLLM-compatible parser) |
 
 Counters persist across engine restarts via `--metrics-state` — daily/30-day
@@ -107,7 +107,7 @@ Add the member to the pool (`/admin/config/page` → pools, or conf):
 `sudo systemctl restart llm-gateway`, then verify at `/backends`:
 
 - `engine=ninfer`, `lanes=8`, `load_score` moving with load
-- energy columns on `/admin/costs` start filling (needs `--electricity-rate`)
+- energy columns on **Usage & costs** (`/admin/costs`) start filling (needs `--electricity-rate`)
 
 ## Expected performance (validated)
 

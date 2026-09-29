@@ -20,7 +20,7 @@ of <a href="https://github.com/alantheprice/ninfer-4090"><code>alantheprice/ninf
 </tr>
 <tr>
 <td><code>GET /usage</code></td>
-<td>tok/s, cache-hit %, KV spills/evictions, <strong>energy kWh + $</strong> (NVML, <code>--electricity-rate</code>) → admin Costs page, price book</td>
+<td>tok/s, cache-hit %, KV spills/evictions, <strong>energy kWh + $</strong> (NVML, <code>--electricity-rate</code>) → admin <strong>Usage &amp; costs</strong> page, price book</td>
 </tr>
 <tr>
 <td><code>GET /metrics</code></td>
@@ -126,7 +126,7 @@ the log says otherwise.</p>
 <p><code>sudo systemctl restart llm-gateway</code>, then verify at <code>/backends</code>:</p>
 <ul>
 <li><code>engine=ninfer</code>, <code>lanes=8</code>, <code>load_score</code> moving with load</li>
-<li>energy columns on <code>/admin/costs</code> start filling (needs <code>--electricity-rate</code>)</li>
+<li>energy columns on <strong>Usage &amp; costs</strong> (<code>/admin/costs</code>) start filling (needs <code>--electricity-rate</code>)</li>
 </ul>
 <h2 id="expected-performance-validated">Expected performance (validated)</h2>
 <table>

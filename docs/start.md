@@ -37,7 +37,7 @@ The script installs a `llmgateway` systemd service and prints the
 ## First 5 minutes
 
 1. Open `http://<host>:8033/` and log in as `admin` (password from the
-   installer — change it under **Account**).
+   installer — change it under **Settings → Account**).
 2. **Point it at an engine.** No backends yet? Run the NInfer engine
    installer on your GPU box (see [NInfer Engine Runbook](/guide/ninfer-engine))
    or set `model_pools` in `/opt/llm-gateway/llm_gateway.conf` to any
@@ -52,7 +52,7 @@ The script installs a `llmgateway` systemd service and prints the
      -H "Authorization: Bearer sk-..." \
      -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"hello"}]}'
    ```
-5. **Watch it work**: `/admin/costs` (cost + energy), `/usage/me`
+5. **Watch it work**: **Usage & costs** (`/admin/costs`: cost, energy, who used what), **Usage** (`/usage/me`)
    (your tokens), `/backends` (live per-engine load).
 
 ## Where to go next

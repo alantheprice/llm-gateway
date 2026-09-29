@@ -7,10 +7,10 @@
 <li><strong>Config → Costs &amp; hosts</strong>: declare each physical box (IPs, overhead<br>
 watts, hardware cost, purchase date, amortization years) and your<br>
 electricity rate.</li>
-<li><strong>Set your price book</strong>: <code>price_book</code> — prompt / cached / generated<br>
+<li><strong>Set your price book</strong> on <strong>Usage &amp; costs → Your price book → Edit prices</strong> (<code>price_book</code>): prompt / cached / generated<br>
 $/1M. These are the numbers the &quot;value&quot; line uses. There is no<br>
 recommended pricing; pricing is policy, and policy is yours.</li>
-<li><strong><code>/admin/costs</code></strong> shows the value-vs-cost daily chart: green (value at<br>
+<li><strong>Usage &amp; costs</strong> (<code>/admin/costs</code>) shows the value-vs-cost daily chart: green (value at<br>
 your prices) above red (actual cost = GPU energy + overhead + capex<br>
 accrual) means the system pays for itself. History persists in SQLite<br>
 (<code>cost_history</code> table) and survives restarts.</li>
@@ -29,7 +29,7 @@ RTX 4090 = 8001, 8009
 spans both. The gateway then counts each card (or group of cards joined<br>
 by a spanning service) once, and splits its energy between the services<br>
 on it by tokens served. Without a gpus list, each service is assumed to<br>
-have its own card, and the Costs page warns when a box has several<br>
+have its own card, and the Usage &amp; costs page warns when a box has several<br>
 services reporting energy.</p>
 <h2 id="alerts">Alerts</h2>
 <p>The gateway checks every 30 seconds and notifies you when something breaks. Each problem is sent once when it starts and once when it clears.</p>
@@ -81,7 +81,7 @@ services reporting energy.</p>
 <li><strong>Anything else:</strong> format <em>JSON</em> posts <code>{kind, severity, title, message, resolved, at}</code>.</li>
 </ul>
 <p>Each webhook chooses what it gets: everything, warnings and up (default), or critical only. You can switch individual alert kinds off.</p>
-<p>Active alerts and the last notifications are on the <strong>System</strong> page. When a service is gone for good, <strong>Stop watching</strong> it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (<code>journalctl -u llm-gateway | grep ALERT</code>).</p>
+<p>Active alerts and the last notifications are on <strong>Overview</strong> (<code>/admin/overview</code>). When a service is gone for good, <strong>Stop watching</strong> it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (<code>journalctl -u llm-gateway | grep ALERT</code>).</p>
 <h2 id="per-user-quotas">Per-user quotas</h2>
 <p>Admins → Users → set a daily token limit per user. Exceeding it returns<br>
 <code>429</code> with a retry hint until midnight UTC — the same UTC-day boundary<br>

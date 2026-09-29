@@ -10,10 +10,10 @@ The gateway tracks what your fleet **costs** and what its traffic is
 1. **Config → Costs & hosts**: declare each physical box (IPs, overhead
    watts, hardware cost, purchase date, amortization years) and your
    electricity rate.
-2. **Set your price book**: `price_book` — prompt / cached / generated
+2. **Set your price book** on **Usage & costs → Your price book → Edit prices** (`price_book`): prompt / cached / generated
    $/1M. These are the numbers the "value" line uses. There is no
    recommended pricing; pricing is policy, and policy is yours.
-3. **`/admin/costs`** shows the value-vs-cost daily chart: green (value at
+3. **Usage & costs** (`/admin/costs`) shows the value-vs-cost daily chart: green (value at
    your prices) above red (actual cost = GPU energy + overhead + capex
    accrual) means the system pays for itself. History persists in SQLite
    (`cost_history` table) and survives restarts.
@@ -36,7 +36,7 @@ A card with no ports runs every service on the box; a port on two cards
 spans both. The gateway then counts each card (or group of cards joined
 by a spanning service) once, and splits its energy between the services
 on it by tokens served. Without a gpus list, each service is assumed to
-have its own card, and the Costs page warns when a box has several
+have its own card, and the Usage & costs page warns when a box has several
 services reporting energy.
 
 ## Alerts
@@ -60,7 +60,7 @@ Set it up in **Config → Alerts**: add a webhook, **Save**, then **Send a test 
 
 Each webhook chooses what it gets: everything, warnings and up (default), or critical only. You can switch individual alert kinds off.
 
-Active alerts and the last notifications are on the **System** page. When a service is gone for good, **Stop watching** it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (`journalctl -u llm-gateway | grep ALERT`).
+Active alerts and the last notifications are on **Overview** (`/admin/overview`). When a service is gone for good, **Stop watching** it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (`journalctl -u llm-gateway | grep ALERT`).
 
 ## Per-user quotas
 

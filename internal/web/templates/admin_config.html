@@ -78,16 +78,9 @@ function render(c) {
     field('remote_ports (comma-separated)', txt('d_rports', (d.remote_ports||[]).join(', ')));
 
   // Costs & hosts.
-  const pbook = c.price_book || {};
   document.getElementById('rategrid').innerHTML =
     field('electricity_rate_usd_per_kwh', num('e_rate', c.electricity_rate_usd_per_kwh ?? 0.125, 0.005),
-      'Used for overhead energy; engines carry their own rate for GPU energy.') +
-    field('price_book.prompt_usd_per_m', num('e_pb_pp', pbook.prompt_usd_per_m ?? 0, 0.05),
-      'Your price for non-cached prompt tokens ($/1M) — for the value-vs-cost chart.') +
-    field('price_book.cached_usd_per_m', num('e_pb_cached', pbook.cached_usd_per_m ?? 0, 0.05),
-      'Your price for cached prompt tokens ($/1M).') +
-    field('price_book.output_usd_per_m', num('e_pb_tg', pbook.output_usd_per_m ?? 0, 0.05),
-      'Your price for generated tokens ($/1M).');
+      'Used for overhead energy; engines carry their own rate for GPU energy.');
   document.getElementById('hostsbox').innerHTML = (c.hosts||[]).map(hostRow).join('') ||
     '<p class="muted">No hosts configured — the Costs page shows GPU energy only.</p>';
   wireHostDels();
@@ -147,11 +140,6 @@ function collect() {
       backend_max_seqs: bms,
     },
     electricity_rate_usd_per_kwh: parseFloat(val('e_rate')) || 0.125,
-    price_book: {
-      prompt_usd_per_m: parseFloat(val('e_pb_pp')) || 0,
-      cached_usd_per_m: parseFloat(val('e_pb_cached')) || 0,
-      output_usd_per_m: parseFloat(val('e_pb_tg')) || 0,
-    },
     hosts,
     image_prompting: { model: val('ip_model'), system_prompt: val('ip_sys').trim() },
     alerts: {
@@ -262,6 +250,7 @@ load();
     <h1>Gateway Config</h1>
     <span id="confpath" class="muted" style="font-size:12px"></span>
   </div>
+  <p class="muted" style="margin:-8px 0 14px;font-size:13px">Gateway-wide settings. Shared models, aliases and load scoring are on <a href="/admin/routing">Routing</a>; prices on <a href="/admin/costs">Usage &amp; costs</a>.</p>
   <div class="flash" id="flash"></div>
 
   <div class="card">
@@ -287,7 +276,7 @@ load();
     <div class="cfggrid" id="rategrid"></div>
     <div id="hostsbox"></div>
     <button type="button" class="btn small" id="addhost">+ host</button>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">One entry per physical box. GPU energy comes from the engines' NVML; overhead watts and capex drive the full-cost view at /admin/costs.</p>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">One entry per physical box. GPU energy comes from the engines' NVML; overhead watts and capex drive the full-cost view on <a href="/admin/costs">Usage &amp; costs</a>, where the price book is set.</p>
   </div>
 
   <div class="card">
@@ -297,18 +286,13 @@ load();
 
   <div class="card">
     <h2>Alerts</h2>
-    <p class="muted" style="font-size:12px;margin:0 0 8px">Get told when something breaks: a problem is sent once when it starts and once when it clears. Active and recent alerts are on the <a href="/admin/system">System</a> page. For phone notifications, install the <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> app and subscribe to your topic.</p>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Get told when something breaks: a problem is sent once when it starts and once when it clears. Active and recent alerts are on <a href="/admin/overview">Overview</a>. For phone notifications, install the <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> app and subscribe to your topic.</p>
     <div id="whbox"></div>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
       <button type="button" class="btn small" id="addwh">+ webhook</button>
       <button type="button" class="btn small" id="testwh" title="Sends a test alert to the saved webhooks (save first)">Send a test alert</button>
     </div>
     <div class="cfggrid" id="alertgrid"></div>
-  </div>
-
-  <div class="card">
-    <h2>Shared models &amp; routing</h2>
-    <p class="muted" style="margin:0">Shared models, their GPUs, aliases and load scoring are edited on the <a href="/admin/routing">Routing</a> page, which also shows live load and lets you test where a request would go.</p>
   </div>
 
   <div style="display:flex;gap:8px;margin-top:4px">
