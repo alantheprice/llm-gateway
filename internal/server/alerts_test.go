@@ -108,6 +108,18 @@ func TestAlertsServiceDownAndRestarts(t *testing.T) {
 	}
 }
 
+// A link agent the alerter remembers is not mistaken for a service.
+func TestAlertsLinkNotAService(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	log := &alertLog{}
+	s.alerts.send = log.add
+	s.alerts.seen["link:ws6000"] = time.Now()
+	s.CheckAlerts()
+	if strings.Contains(log.kinds(), "service_down") {
+		t.Fatalf("link agent reported as a down service: %s", log.kinds())
+	}
+}
+
 // The first refused request of the day notifies, once.
 func TestAlertsQuotaReached(t *testing.T) {
 	s := testServer(t, `{"gateway":{"port":0}}`, nil)

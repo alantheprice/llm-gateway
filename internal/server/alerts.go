@@ -259,6 +259,9 @@ func (s *Server) checkServices() {
 		subjects[u] = true
 	}
 	for u, at := range s.alerts.seen {
+		if strings.HasPrefix(u, "link:") {
+			continue // link agents are checkLinks' subjects
+		}
 		if now.Sub(at) > alertForgetAfter {
 			delete(s.alerts.seen, u)
 			continue
