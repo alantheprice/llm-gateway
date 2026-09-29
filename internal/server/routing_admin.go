@@ -45,12 +45,13 @@ type engineView struct {
 
 type routeMember struct {
 	engineView
-	ModelID        string  `json:"model_id"`
-	CapacityWeight int     `json:"capacity_weight"`
-	MaxContextCfg  int     `json:"max_context_override"`
-	Consent        string  `json:"consent"` // n/a | admin-owned | consented | not-consented | paused
-	Serving        bool    `json:"serving"` // eligible for this pool right now
-	SharePct       float64 `json:"share_pct"`
+	ModelID        string       `json:"model_id"`
+	CapacityWeight int          `json:"capacity_weight"`
+	MaxContextCfg  int          `json:"max_context_override"`
+	Consent        string       `json:"consent"` // n/a | admin-owned | consented | not-consented | paused
+	Capabilities   Capabilities `json:"capabilities"`
+	Serving        bool         `json:"serving"` // eligible for this pool right now
+	SharePct       float64      `json:"share_pct"`
 }
 
 type routeEntry struct {
@@ -62,6 +63,10 @@ type routeEntry struct {
 	Members   []routeMember  `json:"members,omitempty"`
 	Engine    *engineView    `json:"engine,omitempty"`
 	Requests  int64          `json:"requests_today"`
+	// Capabilities: what the name can do (detected, or the admin override);
+	// Detected: before the override, so the editor can show both.
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	Detected     *Capabilities `json:"detected,omitempty"`
 }
 
 type routeProblem struct {
@@ -239,7 +244,8 @@ func (s *Server) routeMap() map[string]any {
 			memberIDs[m.ModelID] = name
 			ev := s.engineInfoView(m.Backend, reqs)
 			rm := routeMember{engineView: ev, ModelID: m.ModelID, CapacityWeight: m.CapacityWeight,
-				MaxContextCfg: m.MaxContext, Consent: s.linkConsent(m.Backend, name)}
+				MaxContextCfg: m.MaxContext, Consent: s.linkConsent(m.Backend, name),
+				Capabilities: s.engineCaps(m.Backend, m.ModelID)}
 			rm.Serving = ev.Known && ev.Up && s.linkServesPool(m.Backend, name)
 			if total > 0 {
 				rm.SharePct = math.Round(float64(reqs[m.Backend])/float64(total)*1000) / 10
@@ -321,6 +327,13 @@ func (s *Server) routeMap() map[string]any {
 		}
 	}
 	sort.Slice(private, func(i, j int) bool { return private[i]["name"].(string) < private[j]["name"].(string) })
+
+	for i := range entries {
+		if c, ok := s.capsFor(entries[i].Name, ""); ok {
+			entries[i].Capabilities = &c
+		}
+		entries[i].Detected = s.detectedCaps(entries[i].Name)
+	}
 
 	sevRank := map[string]int{"error": 0, "warning": 1, "info": 2}
 	sort.SliceStable(problems, func(i, j int) bool { return sevRank[problems[i].Severity] < sevRank[problems[j].Severity] })

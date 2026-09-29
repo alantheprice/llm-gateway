@@ -139,3 +139,22 @@ function cardLine(sum) {
     ? '<br><span class="muted" style="font-size:12px" title="' + escAttr(sum.name || '') + '">' + esc(parts.join(' · ')) + '</span>'
     : '';
 }
+
+// capBadges: a model's capabilities as small badges (Chat, Vision, Tools…).
+// The title says where they came from: the engine, an admin, or a guess.
+function capBadges(c) {
+  if (!c) return '';
+  const out = [];
+  const add = (label, cls) => out.push('<span class="capb' + (cls ? ' ' + cls : '') + '">' + label + '</span>');
+  const has = (l, v) => (l || []).includes(v);
+  if (has(c.endpoints, 'chat')) add('Chat');
+  if (has(c.endpoints, 'completions') && !has(c.endpoints, 'chat')) add('Completions');
+  if (has(c.endpoints, 'embeddings')) add('Embeddings');
+  if (has(c.input_modalities, 'image')) add('Vision', 'strong');
+  if (has(c.input_modalities, 'audio')) add('Audio in', 'strong');
+  if (has(c.input_modalities, 'video')) add('Video in', 'strong');
+  if (has(c.features, 'tools')) add('Tools');
+  if (has(c.features, 'thinking')) add('Thinking');
+  const src = { engine: 'Reported by the engine', config: 'Set by an admin', name: 'Guessed from the model name' }[c.source] || '';
+  return out.length ? '<span class="capbs" title="' + src + '">' + out.join('') + (c.source === 'name' ? '<span class="capb guess">guessed</span>' : '') + '</span>' : '';
+}

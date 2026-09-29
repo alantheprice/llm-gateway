@@ -489,3 +489,9 @@ body.chatpage .main { height: 100dvh; }
 @media (min-width: 721px) {
   .hamburger, .backdrop { display: none !important; }
 }
+
+/* capability badges (Models, Routing) */
+.capbs { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }
+.capb { font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: var(--card2); white-space: nowrap; }
+.capb.strong { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, transparent); }
+.capb.guess { border-style: dashed; }

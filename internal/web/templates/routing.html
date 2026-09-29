@@ -28,7 +28,7 @@ function kindLabel(e) {
 
 /* ---------- route map ---------- */
 function memberRow(m, entry) {
-  return '<tr><td data-label="GPU"><div class="cv"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span><br>' +
+  return '<tr><td data-label="GPU"><div class="cv"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span> ' + capBadges(m.capabilities) + '<br>' +
     '<span class="muted mono">' + esc(m.model_id) + '</span> ' + consentBadge(m.consent) + '</div></td>' +
     '<td data-label="Load"><div class="cv">' + loadBar(m) + '</div></td>' +
     '<td data-label="Today" class="tn"><div class="cv">' + (m.requests_today || 0).toLocaleString() + (m.share_pct ? ' <span class="muted">(' + m.share_pct + '%)</span>' : '') + '</div></td>' +
@@ -39,7 +39,7 @@ function memberRow(m, entry) {
 function entryCard(e) {
   let h = '<article class="route" id="r-' + escAttr(e.name) + '"><header class="route-head">' +
     '<div><span class="eyebrow">' + esc(kindLabel(e)) + (e.model_kind !== 'chat' ? ' · ' + esc(e.model_kind) : '') + '</span>' +
-    '<h2 class="mono">' + esc(e.name) + '</h2><div class="muted">' + esc(e.summary || '') + ' · ' + (e.requests_today || 0).toLocaleString() + ' requests today</div></div>' +
+    '<h2 class="mono">' + esc(e.name) + '</h2>' + capBadges(e.capabilities) + '<div class="muted">' + esc(e.summary || '') + ' · ' + (e.requests_today || 0).toLocaleString() + ' requests today</div></div>' +
     '<div class="route-actions">' +
       '<button class="btn sm" data-test="' + escAttr(e.name) + '">Test a route</button>' +
       (e.kind === 'pool' ? '<button class="btn sm" data-edit="pool" data-name="' + escAttr(e.name) + '">Edit</button>' : '') +
@@ -138,7 +138,10 @@ function startEdit(kind, name, isNew) {
   const draft = JSON.parse(JSON.stringify((CFG.model_pools || {})[name] || {}));
   draft.members = draft.members || [];
   if (isNew) Object.assign(draft, { cache_affinity: true, overflow_threshold: 0.9, sticky_bias: 0.05, capacity_bias: 0.5, max_pool_share: 0 });
-  EDIT = { kind, name, isNew, draft, newName: isNew ? '' : name };
+  const entry = (MAP.entries || []).find(e => e.name === name);
+  const ov = (CFG.model_capabilities || {})[name];
+  EDIT = { kind, name, isNew, draft, newName: isNew ? '' : name,
+    capOv: ov ? JSON.parse(JSON.stringify(ov)) : null, detected: entry && entry.detected };
   render();
   document.getElementById('editor').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -163,10 +166,25 @@ function renderEditor() {
     '<div class="mrow" data-i="' + i + '">' +
       field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
       field('Model id it serves', '<input data-f="model_id" class="mono" list="ml-' + i + '" value="' + escAttr(m.model_id || '') + '"><datalist id="ml-' + i + '">' + modelsFor(m.backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>') +
-      field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', '0 = use its lane count. Higher gets more new conversations.') +
-      field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = what the engine reports.') +
+      field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', 'Share of new work; 0 = by lanes.') +
+      field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = engine’s own.') +
       '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
     '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
+  const det = EDIT.detected;
+  const ov = EDIT.capOv;
+  const box2 = (id, label, on) => '<label class="consent"><input type="checkbox" data-cap="' + id + '"' + (on ? ' checked' : '') + '> ' + label + '</label>';
+  const inL = (l, v) => (l || []).includes(v);
+  h += '<div class="sub">Capabilities</div>' +
+    '<div class="hint">Detected: ' + (det ? capBadges(det) : 'nothing yet (engines not inspected)') + '</div>' +
+    field('<input type="checkbox" id="ed-capov"' + (ov ? ' checked' : '') + '> Set capabilities manually', '',
+      'Leave off to use what the engines report. Turn on to correct a wrong detection; it applies to this name and its aliases.');
+  if (ov) {
+    h += '<div class="capgrid">' +
+      '<div><div class="hint">Endpoints</div>' + box2('ep:chat', 'Chat', inL(ov.endpoints, 'chat')) + box2('ep:completions', 'Completions', inL(ov.endpoints, 'completions')) + box2('ep:embeddings', 'Embeddings', inL(ov.endpoints, 'embeddings')) + '</div>' +
+      '<div><div class="hint">Accepts</div>' + box2('in:image', 'Images', inL(ov.input_modalities, 'image')) + box2('in:audio', 'Audio', inL(ov.input_modalities, 'audio')) + box2('in:video', 'Video', inL(ov.input_modalities, 'video')) + '</div>' +
+      '<div><div class="hint">Features</div>' + box2('ft:tools', 'Tool calls', inL(ov.features, 'tools')) + box2('ft:thinking', 'Thinking', inL(ov.features, 'thinking')) + '</div>' +
+      '</div>';
+  }
   h += '<div class="sub">Behaviour</div><div class="grid2">' +
   field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
   field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets new conversations when every GPU is. A GPU with requests queued counts as 100%.') +
@@ -195,6 +213,19 @@ function readEditor(box) {
     if (mc) m.max_context = mc; else delete m.max_context;
   });
   d.cache_affinity = box.querySelector('#ed-aff').checked;
+  const capOn = box.querySelector('#ed-capov').checked;
+  if (!capOn) EDIT.capOv = null;
+  else if (!EDIT.capOv) {
+    const dd = EDIT.detected || {};
+    EDIT.capOv = { endpoints: [...(dd.endpoints || ['chat'])], input_modalities: [...(dd.input_modalities || ['text'])],
+      output_modalities: [...(dd.output_modalities || ['text'])], features: [...(dd.features || [])] };
+  } else {
+    const pick = pre => [...box.querySelectorAll('[data-cap^="' + pre + ':"]')].filter(x => x.checked).map(x => x.dataset.cap.slice(pre.length + 1));
+    const eps = pick('ep');
+    EDIT.capOv = { endpoints: eps, input_modalities: ['text', ...pick('in')],
+      output_modalities: eps.includes('embeddings') ? (eps.length === 1 ? ['embeddings'] : ['text', 'embeddings']) : ['text'],
+      features: pick('ft') };
+  }
   const al = box.querySelector('#ed-aliases').value.split(',').map(x => x.trim()).filter(Boolean);
   if (al.length) d.aliases = al; else delete d.aliases;
   d.max_pool_share = (+box.querySelector('#ed-share').value || 0) / 100;
@@ -210,6 +241,8 @@ function bindEditor(box) {
     if (ms.length && !inp.value) inp.value = ms[0];
     rerender();
   });
+  const capov = box.querySelector('#ed-capov');
+  if (capov) capov.onchange = rerender;
   box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { readEditor(box); EDIT.draft.members.splice(+b.dataset.rm, 1); renderEditor(); });
   const add = box.querySelector('#ed-add');
   if (add) add.onclick = () => { readEditor(box); EDIT.draft.members.push({ backend: '', model_id: '', capacity_weight: 0 }); renderEditor(); };
@@ -231,8 +264,11 @@ async function save(remove) {
     if (EDIT.draft.members.some(m => !m.backend || !m.model_id)) { flash('Every GPU needs an engine and the model id it serves.', true); return; }
   }
   if (remove) delete pools[name]; else pools[name] = EDIT.draft;
+  const caps = JSON.parse(JSON.stringify(CFG.model_capabilities || {}));
+  if (remove || !EDIT.capOv) delete caps[name]; else caps[name] = EDIT.capOv;
+  if (!remove && EDIT.capOv && !EDIT.capOv.endpoints.length) { flash('Pick at least one endpoint, or turn manual capabilities off.', true); return; }
   const r = await api('/admin/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model_pools: pools }) });
+    body: JSON.stringify({ model_pools: pools, model_capabilities: caps }) });
   if (!r.ok) { flash(r.data.error || 'Save failed', true); return; }
   flash(remove ? 'Deleted ' + name + '.' : 'Saved ' + name + '. It applies to the next request.');
   EDIT = null;
@@ -311,6 +347,10 @@ tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); 
 .field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; min-width: 0; }
 .field > label { font-size: 12.5px; font-weight: 600; }
 .field input, .field select { width: 100%; min-width: 0; }
+.field input[type="checkbox"] { width: auto; margin: 0 6px 0 0; vertical-align: -1px; }
+.field > label:has(input[type="checkbox"]) { display: flex; align-items: center; font-size: 13.5px; }
+.capgrid label { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 13px; }
+.capgrid label input { width: auto; margin: 0; }
 .mrow .field { margin: 0; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
@@ -327,6 +367,9 @@ tr.picked td { background: color-mix(in srgb, var(--primary) 10%, transparent); 
   .flow .arrow { display: none; }
 }
 .hint { font-size: 12px; color: var(--muted); }
+.capgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 18px; margin: 6px 0 4px; }
+@media (max-width: 720px) { .capgrid { grid-template-columns: 1fr; } }
+.route-head h2 + .capbs { margin: 2px 0 4px; }
 details.more { margin-top: 8px; }
 details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .ed-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }

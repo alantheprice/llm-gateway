@@ -124,7 +124,7 @@ async function init() {
   const want = decodeURIComponent(location.hash.slice(1));
   const root = document.getElementById('models');
   root.innerHTML = list.map(m => '<details class="model card" data-id="' + escAttr(m.id) + '" id="' + escAttr(m.id) + '"' + (m.id === want ? ' open' : '') + '>' +
-    '<summary><span class="mname">' + esc(m.id) + '</span> <span class="kind">' + modelKind(m, null) + '</span></summary>' +
+    '<summary><span class="mname">' + esc(m.id) + '</span> <span class="kind">' + modelKind(m, null) + '</span> ' + capBadges(m.capabilities) + '</summary>' +
     '<div class="mbody"></div></details>').join('') || '<div class="muted">No models available.</div>';
   root.querySelectorAll('details.model').forEach((d, i) => {
     const entry = list[i];

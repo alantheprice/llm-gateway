@@ -406,3 +406,21 @@ func (s *Server) describe(e ModelEntry, user string) ModelEntry {
 	}
 	return e
 }
+
+// detectedCaps: capabilities of a name before any admin override (for the
+// Routing editor to show what was detected next to what is set).
+func (s *Server) detectedCaps(name string) *Capabilities {
+	if _, pool, ok := s.poolFor(name); ok {
+		var cs []Capabilities
+		for _, m := range pool.Members {
+			cs = append(cs, s.engineCaps(m.Backend, m.ModelID))
+		}
+		c := unionCaps(cs)
+		return &c
+	}
+	if url, _ := s.resolve(name); url != "" {
+		c := s.engineCaps(url, name)
+		return &c
+	}
+	return nil
+}
