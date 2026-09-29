@@ -261,11 +261,14 @@ func (s *Server) energyByDay() map[string]map[string]float64 {
 	}
 	s.mu.Unlock()
 	urls = append(urls, s.poolLinkURLs()...)
+	payloads := map[string]map[string]any{}
 	for _, u := range urls {
-		payload, ok := s.backendJSON(u, "/usage", 3*time.Second)
-		if !ok {
-			continue
+		if payload, ok := s.backendJSON(u, "/usage", 3*time.Second); ok {
+			payloads[u] = payload
 		}
+	}
+	_, reporters, _ := s.countedEnergy(payloads)
+	for u, payload := range payloads {
 		en, _ := payload["energy"].(map[string]any)
 		daily, _ := en["daily"].(map[string]any)
 		for day, vals := range daily {
@@ -275,10 +278,10 @@ func (s *Server) energyByDay() map[string]map[string]float64 {
 				e = map[string]float64{"kwh": 0, "cost_usd": 0, "tokens": 0}
 				merged[day] = e
 			}
-			if f, ok := vm["kwh"].(float64); ok {
+			if f, ok := vm["kwh"].(float64); ok && reporters[u] {
 				e["kwh"] += f
 			}
-			if f, ok := vm["cost_usd"].(float64); ok {
+			if f, ok := vm["cost_usd"].(float64); ok && reporters[u] {
 				e["cost_usd"] += f
 			}
 			if f, ok := vm["tokens"].(float64); ok {

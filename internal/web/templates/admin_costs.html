@@ -39,22 +39,34 @@ async function load() {
       '</tr>';
   }).join('') || '<tr><td colspan="7" class="muted">No hosts configured — add a "hosts" section to the gateway config.</td></tr>';
 
-  // Per-GPU throughput today (tokens + kWh + share)
+  // Physical cards: each group of cards once, with the services on it.
+  const gl = d.gpus || [];
+  document.getElementById('cardrows').innerHTML = gl.length ? gl.map(g => {
+    const cards = g.mapped ? (g.gpus || []).map(esc).join(' + ') : '<span class="muted">card not listed</span>';
+    const svcs = (g.services || []).map(v => esc(v.label) + (v.models && v.models.length ? ' <span class="muted">(' + esc(v.models.join(', ')) + ')</span>' : '') +
+      (g.services.length > 1 && g.reporter ? ' — ' + (v.kwh_share || 0).toFixed(2) + ' kWh' : '') +
+      (v.reports_energy && g.services.length > 1 ? ' <span class="muted">· reports the card’s energy</span>' : '')).join('<br>');
+    return '<tr><td data-label="Host">' + esc(g.host || 'not in cost config') + '</td><td data-label="Card">' + cards + '</td>' +
+      '<td data-label="Energy today">' + (g.reporter ? (g.kwh_today || 0).toFixed(2) + ' kWh<br>' + usd(g.cost_usd_today, 4) : '<span class="muted">not reported</span>') + '</td>' +
+      '<td data-label="Services">' + svcs + '</td></tr>';
+  }).join('') : '<tr><td colspan="4" class="muted">No services found.</td></tr>';
+
+  // Per-service throughput today (tokens + kWh + share)
   const gpuRows = d.gpu_today || [];
   const gpuTotal = gpuRows.reduce((a, r) => a + (r.tokens || 0), 0);
   const gsel = document.getElementById('gpuchart');
   if (!gpuRows.length || !gpuTotal) {
-    gsel.innerHTML = '<p class="muted">No per-GPU telemetry yet (needs NInfer-fork engines).</p>';
+    gsel.innerHTML = '<p class="muted">No per-service telemetry yet (needs NInfer engines).</p>';
   } else {
     const colors = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149'];
     const maxT = Math.max(...gpuRows.map(r => r.tokens || 0));
     gsel.innerHTML = '<div class="chart-legend">' + gpuRows.map((r, i) => {
       const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit' : '';
       return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
-      gpuName(r) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
+      gpuName(r) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh' + (r.kwh_shared ? ' (its share of the card)' : '') + ' · ' +
       (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of routed' + (rate ? ' · ' + rate : '') + '</span>';
     }).join('') + '</div>' +
-    '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = per-day delta of engine prefix-reuse counters (day-start snapshots). "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
+    '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = per-day delta of engine prefix-reuse counters (day-start snapshots). "% of routed" = this service\'s share of gateway-routed tokens today. Services sharing a card split its energy by tokens served. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
       gpuRows.map((r, i) => {
         const w = maxT ? Math.max(4, 100 * (r.tokens || 0) / maxT) : 0;
         return '<div style="margin:6px 0"><div style="height:14px;background:var(--border,#30363d);border-radius:7px;overflow:hidden">' +
@@ -64,9 +76,9 @@ async function load() {
 
   const un = document.getElementById('unmatched');
   const um = d.unmatched_gpus || (d.unmatched_backends || []).map(u => ({url: u}));
-  un.innerHTML = um.length
-    ? 'Uncounted GPUs (no host in the cost config claims them by ip or link): ' + um.map(g => gpuName(g, g.url)).join(', ')
-    : '';
+  un.innerHTML = (um.length
+    ? 'Uncounted services (no host in the cost config claims them by ip or link): ' + um.map(g => gpuName(g, g.url)).join(', ')
+    : '') + (d.energy_warnings || []).map(w => '<div class="hint warn">' + esc(w) + '</div>').join('');
 
   // Price book + value-vs-cost chart + user value.
   const pb = d.price_book || {};
@@ -146,7 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <button class="btn" id="refresh">Refresh</button>
   </div>
   <div class="flash" id="flash"></div>
-  <p class="muted" id="unmatched"></p>
+  <div class="muted" id="unmatched"></div>
 
   <div class="statgrid" id="fleetstats"></div>
 
@@ -180,7 +192,16 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
   <div class="card">
-    <h2>Per GPU — today</h2>
+    <h2>GPUs — today</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Each physical card once. Services on the same card each report its whole draw, so the card is counted once and its energy split between them by tokens served. List a host’s cards in Config → Costs &amp; hosts.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Host</th><th>Card</th><th>Energy today</th><th>Services</th></tr></thead>
+      <tbody id="cardrows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Per service — today</h2>
     <div id="gpuchart"><p class="muted">Loading…</p></div>
   </div>
 

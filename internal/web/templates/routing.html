@@ -23,12 +23,12 @@ function consentBadge(c) {
     'paused': badge('grace', 'paused by owner') })[c] || '';
 }
 function kindLabel(e) {
-  return ({ pool: 'Shared model', direct: 'Single engine', 'gpu-direct': 'One GPU, called directly' })[e.kind] || e.kind;
+  return ({ pool: 'Shared model', direct: 'Single engine', 'gpu-direct': 'One service, called directly' })[e.kind] || e.kind;
 }
 
 /* ---------- route map ---------- */
 function memberRow(m, entry) {
-  return '<tr><td data-label="GPU"><div class="cv"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span> ' + capBadges(m.capabilities) + '<br>' +
+  return '<tr><td data-label="Service"><div class="cv"><strong>' + esc(m.gpu_label) + '</strong> <span class="muted">via ' + esc(m.via) + '</span> ' + capBadges(m.capabilities) + '<br>' +
     '<span class="muted mono">' + esc(m.model_id) + '</span> ' + consentBadge(m.consent) + '</div></td>' +
     '<td data-label="Load"><div class="cv">' + loadBar(m) + '</div></td>' +
     '<td data-label="Today" class="tn"><div class="cv">' + (m.requests_today || 0).toLocaleString() + (m.share_pct ? ' <span class="muted">(' + m.share_pct + '%)</span>' : '') + '</div></td>' +
@@ -48,10 +48,10 @@ function entryCard(e) {
     const p = e.pool || {};
     h += '<div class="facts">' +
       '<span>Cache affinity <strong>' + (p.cache_affinity ? 'on' : 'off') + '</strong></span>' +
-      '<span>Fairness cap <strong>' + (p.max_pool_share ? pct(p.max_pool_share) + ' per GPU' : 'off') + '</strong></span>' +
+      '<span>Fairness cap <strong>' + (p.max_pool_share ? pct(p.max_pool_share) + ' per service' : 'off') + '</strong></span>' +
       '<span>Busy at <strong>' + pct(p.overflow_threshold) + '</strong></span>' +
       ((p.aliases || []).length ? '<span>Also answers to <strong class="mono">' + p.aliases.map(esc).join(', ') + '</strong></span>' : '') + '</div>';
-    h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load</th><th>Requests today</th><th>Context</th><th>Weight</th></tr></thead><tbody>' +
+    h += '<div class="tablewrap"><table><thead><tr><th>Service</th><th>Load</th><th>Requests today</th><th>Context</th><th>Weight</th></tr></thead><tbody>' +
       (e.members || []).map(m => memberRow(m, e)).join('') + '</tbody></table></div>';
   } else if (e.engine) {
     h += '<div class="flow"><div class="node"><strong>' + esc(e.engine.gpu_label) + '</strong> <span class="muted">via ' + esc(e.engine.via) + '</span><div>' + loadBar(e.engine) + '</div></div></div>';
@@ -61,7 +61,7 @@ function entryCard(e) {
 }
 
 function problemsBlock(ps) {
-  if (!ps.length) return '<div class="allgood">' + badge('ok', 'no problems') + ' Every listed GPU is reachable and serving.</div>';
+  if (!ps.length) return '<div class="allgood">' + badge('ok', 'no problems') + ' Every listed service is reachable and serving.</div>';
   return '<ul class="problems">' + ps.map(p => '<li class="sev-' + p.severity + '"><span class="sev">' + esc(p.severity) + '</span>' +
     (p.name ? '<a class="mono" href="#r-' + escAttr(p.name) + '">' + esc(p.name) + '</a> ' : '') + esc(p.text) + '</li>').join('') + '</ul>';
 }
@@ -115,10 +115,10 @@ async function runTest() {
     ? 'Goes to <strong>' + esc(d.pick) + '</strong>' + (d.pick_model_id && d.pick_model_id !== d.model ? ' <span class="muted mono">as ' + esc(d.pick_model_id) + '</span>' : '')
     : '<strong>' + esc(d.result) + '</strong>') + '</div>';
   h += '<ol class="steps">' + (d.steps || []).map(s => '<li>' + esc(s) + '</li>').join('') + '</ol>';
-  if (d.candidates) h += '<div class="tablewrap"><table><thead><tr><th>GPU</th><th>Load score</th><th>Status</th></tr></thead><tbody>' +
-    d.candidates.map(c => '<tr' + (c.backend === d.pick_backend ? ' class="picked"' : '') + '><td data-label="GPU"><div class="cv">' + esc(c.gpu_label) + (c.backend === d.pick_backend ? ' ' + badge('ok', 'picked') : '') + '</div></td>' +
+  if (d.candidates) h += '<div class="tablewrap"><table><thead><tr><th>Service</th><th>Load score</th><th>Status</th></tr></thead><tbody>' +
+    d.candidates.map(c => '<tr' + (c.backend === d.pick_backend ? ' class="picked"' : '') + '><td data-label="Service"><div class="cv">' + esc(c.gpu_label) + (c.backend === d.pick_backend ? ' ' + badge('ok', 'picked') : '') + '</div></td>' +
       '<td data-label="Load score" class="tn"><div class="cv">' + pct(c.score) + '</div></td><td data-label="Status"><div class="cv">' + esc(c.status) + '</div></td></tr>').join('') + '</tbody></table></div>';
-  out.innerHTML = h + '<p class="hint">A dry run: nothing is sent to any GPU, and routing state isn’t changed.</p>';
+  out.innerHTML = h + '<p class="hint">A dry run: nothing is sent to any service, and routing state isn’t changed.</p>';
 }
 
 /* ---------- editor ---------- */
@@ -130,7 +130,7 @@ function engineOptions(selected) {
     return '<option value="' + escAttr(e.url) + '"' + (sel ? ' selected' : '') + '>' + esc(e.gpu_label + ' — ' + (e.models || []).join(', ') + (e.up ? '' : ' (down)')) + '</option>';
   });
   if (selected && !found) opts.unshift('<option value="' + escAttr(selected) + '" selected>' + esc(selected) + ' (not found now)</option>');
-  return '<option value="">Choose a GPU…</option>' + opts.join('');
+  return '<option value="">Choose a service…</option>' + opts.join('');
 }
 function modelsFor(url) { const e = (MAP.engines || []).find(x => x.url === url); return (e && e.models) || []; }
 
@@ -162,14 +162,14 @@ function renderEditor() {
     'The model name clients put in their requests.');
   h += field('Also answers to', '<input id="ed-aliases" class="mono" value="' + escAttr((d.aliases || []).join(', ')) + '" placeholder="other-name, another-name">',
     'Other model names that route exactly like this one (same balancing and conversation affinity). Separate with commas.');
-  h += '<div class="sub">GPUs</div><div class="members">' + d.members.map((m, i) =>
+  h += '<div class="sub">Services</div><div class="members">' + d.members.map((m, i) =>
     '<div class="mrow" data-i="' + i + '">' +
-      field('GPU', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
+      field('Service', '<select data-f="backend">' + engineOptions(m.backend) + '</select>') +
       field('Model id it serves', '<input data-f="model_id" class="mono" list="ml-' + i + '" value="' + escAttr(m.model_id || '') + '"><datalist id="ml-' + i + '">' + modelsFor(m.backend).map(x => '<option value="' + escAttr(x) + '">').join('') + '</datalist>') +
       field('Weight', '<input data-f="capacity_weight" type="number" min="0" step="1" value="' + escAttr(m.capacity_weight || 0) + '">', 'Share of new work; 0 = by lanes.') +
       field('Context cap', '<input data-f="max_context" type="number" min="0" step="1024" value="' + escAttr(m.max_context || 0) + '">', '0 = engine’s own.') +
-      '<button class="btn sm danger" data-rm="' + i + '" title="Remove this GPU">Remove</button></div>').join('') +
-    '</div><button class="btn sm" id="ed-add">Add a GPU</button>';
+      '<button class="btn sm danger" data-rm="' + i + '" title="Remove this service">Remove</button></div>').join('') +
+    '</div><button class="btn sm" id="ed-add">Add a service</button>';
   const det = EDIT.detected;
   const ov = EDIT.capOv;
   const box2 = (id, label, on) => '<label class="consent"><input type="checkbox" data-cap="' + id + '"' + (on ? ' checked' : '') + '> ' + label + '</label>';
@@ -186,17 +186,17 @@ function renderEditor() {
       '</div>';
   }
   h += '<div class="sub">Behaviour</div><div class="grid2">' +
-  field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the GPU that already holds the conversation, so its prompt is served from cache.') +
-  field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A GPU at or above this load only gets new conversations when every GPU is. A GPU with requests queued counts as 100%.') +
-  field('Fairness cap (% of new conversations per GPU)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another GPU. Ongoing ones never move.') +
+  field('<input type="checkbox" id="ed-aff"' + (d.cache_affinity ? ' checked' : '') + '> Cache affinity', '', 'Send each follow-up message to the service that already holds the conversation, so its prompt is served from cache.') +
+  field('Busy at (% load)', num('ed-thr', Math.round((d.overflow_threshold || 0) * 100), 1, 1, 100), 'A service at or above this load only gets new conversations when every service is. A service with requests queued counts as 100%.') +
+  field('Fairness cap (% of new conversations per service)', num('ed-share', Math.round((d.max_pool_share || 0) * 100), 1, 0, 100), '0 = off. Above this share today, new conversations prefer another service. Ongoing ones never move.') +
   '</div>' +
   '<details class="more"><summary>More settings</summary><div class="grid2">' +
-  field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the GPU that took the last request (0–1). Small values avoid flip-flopping. Default 0.05.') +
-  field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger GPUs are preferred when loads are similar (0 = ignore size). Default 0.5.') +
+  field('Stickiness', num('ed-sticky', d.sticky_bias ?? 0, 0.01, 0, 1), 'Head start for the service that took the last request (0–1). Small values avoid flip-flopping. Default 0.05.') +
+  field('Capacity bias', num('ed-cap', d.capacity_bias ?? 0, 0.05, 0, 2), 'How strongly bigger services (more lanes, longer context) are preferred when loads are similar (0 = ignore size). Default 0.5.') +
   '</div></details>';
   h += '<div class="ed-actions"><button class="btn primary" id="ed-save">Save</button><button class="btn" id="ed-cancel">Cancel</button>' +
     (EDIT.isNew ? '' : '<span style="flex:1"></span><button class="btn danger" id="ed-del">Delete ' + esc(EDIT.name) + '</button>') + '</div>' +
-    '<p class="hint">Saving updates the gateway config file and takes effect for the next request. GPUs keep their live load state.</p>';
+    '<p class="hint">Saving updates the gateway config file and takes effect for the next request. Services keep their live load state.</p>';
   box.innerHTML = h;
   bindEditor(box);
 }
@@ -263,8 +263,8 @@ async function save(remove) {
   if (!name) { flash('Give it a name clients will call.', true); return; }
   if (EDIT.isNew && pools[name]) { flash(name + ' already exists.', true); return; }
   if (!remove) {
-    if (!EDIT.draft.members.length) { flash('Add at least one GPU.', true); return; }
-    if (EDIT.draft.members.some(m => !m.backend || !m.model_id)) { flash('Every GPU needs an engine and the model id it serves.', true); return; }
+    if (!EDIT.draft.members.length) { flash('Add at least one service.', true); return; }
+    if (EDIT.draft.members.some(m => !m.backend || !m.model_id)) { flash('Every service needs an engine and the model id it serves.', true); return; }
   }
   if (remove) delete pools[name]; else pools[name] = EDIT.draft;
   const caps = JSON.parse(JSON.stringify(CFG.model_capabilities || {}));
@@ -284,11 +284,11 @@ function renderScoring() {
   const box = document.getElementById('scoring');
   if (box.dataset.bound) return; // keep what the admin is typing
   box.dataset.bound = '1';
-  box.innerHTML = '<p class="muted" style="margin-top:0">How a GPU’s load score is computed from what its engine reports. The three weights should add up to about 1.</p><div class="grid2">' +
+  box.innerHTML = '<p class="muted" style="margin-top:0">How a service’s load score is computed from what its engine reports. The three weights should add up to about 1.</p><div class="grid2">' +
     field('Lane weight', num('sc-lane', s.ninfer_lane_weight, 0.05, 0, 1), 'Share of the score from busy lanes (requests being generated).') +
     field('Queue weight', num('sc-queue', s.ninfer_queue_weight, 0.05, 0, 1), 'Share from requests waiting for a lane.') +
     field('Pressure weight', num('sc-press', s.ninfer_pressure_weight, 0.05, 0, 1), 'Share from KV-cache memory pressure.') +
-    field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A GPU whose last load report is older than this is scored as idle.') +
+    field('Stale after (seconds)', num('sc-stale', s.stale_threshold, 1, 1), 'A service whose last load report is older than this is scored as idle.') +
     '</div><div class="ed-actions"><button class="btn" id="sc-save">Save scoring</button></div>';
   box.querySelector('#sc-save').onclick = async () => {
     const v = id => +box.querySelector(id).value;
@@ -392,13 +392,13 @@ details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); 
   <div class="card">
     <div class="headrow"><h2 style="margin:0">Route map</h2>
       <div class="route-actions"><button class="btn sm" id="newpool">New shared model</button></div></div>
-    <p class="muted">Every name clients can call, in the order the gateway checks them: a <strong>shared model</strong> (or one of its aliases) spreads requests across its GPUs and keeps each conversation on one GPU; anything else goes straight to the <strong>single engine</strong> serving that name.</p>
+    <p class="muted">Every name clients can call, in the order the gateway checks them: a <strong>shared model</strong> (or one of its aliases) spreads requests across its services (engines, each on one or more GPUs) and keeps each conversation on one service; anything else goes straight to the <strong>single engine</strong> serving that name.</p>
     <div class="routes" id="routes"></div>
   </div>
 
   <div class="card" id="tester">
     <h2>Test a route</h2>
-    <p class="muted" style="margin-top:0">Where would a new conversation go right now, and why? This uses the live routing code and current GPU load, without sending anything.</p>
+    <p class="muted" style="margin-top:0">Where would a new conversation go right now, and why? This uses the live routing code and current load, without sending anything.</p>
     <div class="tester-row">
       <div class="field"><label for="testmodel">Model</label><select id="testmodel"></select></div>
       <div class="field"><label for="testprompt">Prompt tokens</label><input id="testprompt" type="number" min="0" step="1000" value="4000"></div>

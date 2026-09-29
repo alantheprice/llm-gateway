@@ -299,7 +299,7 @@ func (s *Server) routeMap() map[string]any {
 		e.Summary = "one engine, " + ev.GPULabel
 		if pool, ok := memberIDs[id]; ok {
 			e.Kind = "gpu-direct"
-			e.Summary = "one GPU of " + pool + ", called directly: skips the pool's load balancing"
+			e.Summary = "one service of " + pool + ", called directly: skips the pool's load balancing"
 		}
 		entries = append(entries, e)
 	}

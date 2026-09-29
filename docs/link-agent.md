@@ -67,7 +67,7 @@ Run it under systemd (`Restart=always`); a systemd template ships in
 - **Polled like LAN backends.** The gateway polls every connected engine's
   `/slots` and `/usage` *through the agent socket*. Link engines get the
   same load score, down detection and energy metrics, and appear in
-  per-GPU analytics under their virtual URL.
+  per-service analytics under their virtual URL.
 - **Pools only.** A link engine is reachable only through the pools that
   list it. It is never matched by its raw model id, so a linked engine
   cannot shadow another model's name.

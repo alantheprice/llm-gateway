@@ -289,12 +289,17 @@ func (s *Server) usageCostsPayload() map[string]any {
 	gpuKwh30d := make([]float64, len(hosts))
 
 	usage := s.gatherUsage(backends)
+	groups, reporters, kwhBy := s.countedEnergy(usage)
 
 	for u, payload := range usage {
 		ip := backendHostIP(u)
 		idx, ok := backendHost[ip]
 		if !ok {
 			continue // unconfigured host: GPU-only view lives in /usage
+		}
+		tokensToday[idx] += usageNum(payload, "energy", "today", "tokens")
+		if !reporters[u] {
+			continue // shares a card with a service whose report counts
 		}
 		gpuKwhToday[idx] += usageNum(payload, "energy", "today", "kwh")
 		gpuCostToday[idx] += usageNum(payload, "energy", "today", "cost_usd")
@@ -307,7 +312,6 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 		gpuKwh30d[idx] += usageNum(payload, "energy", "rolling_30d", "kwh")
 		gpuCost30d[idx] += usageNum(payload, "energy", "rolling_30d", "cost_usd")
-		tokensToday[idx] += usageNum(payload, "energy", "today", "tokens")
 	}
 
 	// Engine-restart guard: NInfer resets energy.today.tokens on restart
@@ -324,6 +328,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 	}
 
+	routedBy := map[string]float64{}
 	// Tokens: prefer the gateway's own request log (every routed request,
 	// per backend, this UTC day). It survives engine restarts, so the
 	// restart guard above only matters when analytics is unavailable.
@@ -332,6 +337,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		if err := ops.QueryBackendTokensDay(time.Now().UTC().Format("2006-01-02"), &rows); err == nil && len(rows) > 0 {
 			gw := make([]float64, len(hosts))
 			for _, r := range rows {
+				routedBy[r.Backend] += float64(r.Tokens)
 				if idx, ok := backendHost[backendHostIP(r.Backend)]; ok {
 					gw[idx] += float64(r.Tokens)
 				}
@@ -412,6 +418,8 @@ func (s *Server) usageCostsPayload() map[string]any {
 			"projected_monthly_usd":     math.Round(projMonth(totalToday)*100) / 100,
 			"gpu_only_usd_per_m_tokens": gpuOnlyPerM(hostCosts, tokens),
 		},
+		"gpus":             s.gpuEnergyRows(groups, reporters, kwhBy, usage, routedBy),
+		"energy_warnings":  energyWarnings(s.hostsSnapshot(), groups, kwhBy),
 		"price_book":       book,
 		"user_value_today": userValue,
 		"value_today":      math.Round(valueToday*100) / 100,
@@ -447,7 +455,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 			}
 			hosts := s.cfg.Hosts
 			s.mu.Unlock()
-			out["gpu_today"] = mergeGPURowsByIdentity(hosts, rows)
+			out["gpu_today"] = attributeServiceEnergy(hosts, mergeGPURowsByIdentity(hosts, rows), groups, kwhBy, routedBy)
 		}
 	}
 	return out

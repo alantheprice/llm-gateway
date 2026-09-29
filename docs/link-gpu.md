@@ -156,7 +156,7 @@ Until you tick it, no platform traffic reaches your GPU, even if an admin has li
 
 GPUs linked by admins are platform infrastructure: they serve the models that list them without the extra step. **My GPUs** shows this as "no opt-in is needed" on each of those models.
 
-Once serving, the GPU's requests appear in **Analytics → Per GPU**, and NInfer model cards appear in `GET /v1/models/<platform-model>` and in **Stats for nerds**.
+Once serving, the GPU's requests appear in **Analytics → Per service** (one row per engine), and NInfer model cards appear in `GET /v1/models/<platform-model>` and in **Stats for nerds**.
 
 ## Managing a link
 

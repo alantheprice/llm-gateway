@@ -49,8 +49,16 @@ func (s *Server) handleCostsBackfill(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	hosts := s.cfg.Hosts
+	// Count each card group's energy once (see gpu_groups.go).
+	kwhBy := map[string]float64{}
+	var urls []string
+	for u, raw := range s.lastMetrics {
+		urls = append(urls, u)
+		kwhBy[u] = usageNum(raw, "energy", "today", "kwh")
+	}
+	reporters := energyReporters(groupServices(hosts, urls), kwhBy)
 	for backendURL, raw := range s.lastMetrics {
-		if _, ok := s.hostByIP(backendHostIP(backendURL)); !ok {
+		if _, ok := s.hostByIP(backendHostIP(backendURL)); !ok || !reporters[backendURL] {
 			continue
 		}
 		gpu := identifyGPU(hosts, backendURL).Key

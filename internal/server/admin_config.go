@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,6 +145,15 @@ func validateConfig(c *config.Config) error {
 	for _, p := range c.Discovery.RemotePorts {
 		if p < 1 || p > 65535 {
 			return fmt.Errorf("discovery.remote_ports: %d out of range", p)
+		}
+	}
+	for _, h := range c.Hosts {
+		for gi, g := range h.GPUs {
+			for _, sv := range g.Services {
+				if p, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(sv), ":")); err != nil || p < 1 || p > 65535 {
+					return fmt.Errorf("hosts %q gpu %d: service %q is not a port", h.Label, gi+1, sv)
+				}
+			}
 		}
 	}
 	if c.Metrics.PollInterval < 1 {

@@ -67,7 +67,7 @@ function cardView(card, heading) {
 }
 function memberView(m) {
   const state = m.up === false ? '<span class="badge off">down</span>' : '<span class="badge ok">up</span>';
-  return '<div class="member"><div class="mem-head"><strong>' + esc(m.gpu_label || 'GPU') + '</strong> ' + state +
+  return '<div class="member"><div class="mem-head"><strong>' + esc(m.gpu_label || 'Service') + '</strong> ' + state +
     ' <span class="muted">via ' + esc(m.via || 'direct') + (m.max_model_len ? ' · ' + Math.round(m.max_model_len / 1000) + 'K context' : '') + '</span></div>' +
     cardView(m.model_card, m.model_card && m.model_card.name) + '</div>';
 }
@@ -101,7 +101,7 @@ async function loadModel(entry, box) {
       const ms = info.members || [];
       h += '<p class="muted" style="margin-top:0">Requests to <code>' + esc(entry.id) + '</code> are routed across ' + ms.length +
         ' GPU' + (ms.length === 1 ? '' : 's') + ' by load, cache affinity and context window. Each GPU’s card is below.</p>';
-      h += ms.map(memberView).join('') || '<div class="muted">No GPUs configured.</div>';
+      h += ms.map(memberView).join('') || '<div class="muted">No services configured.</div>';
     } else {
       if (info.gpu_label) h += '<p class="muted" style="margin-top:0">Served by ' + esc(info.gpu_label) + ' via ' + esc(info.via || 'direct') + '.</p>';
       h += cardView(info.model_card);
@@ -172,7 +172,7 @@ pre.raw { background: var(--card2); border: 1px solid var(--border2); border-rad
     <h1>Models</h1></div>
   <div class="flash" id="flash"></div>
   <p class="muted" style="margin-top:0">Every model you can call, and what's behind it: the source weights, quantization, context window, how it's served and on what hardware.
-    <strong>Shared models</strong> route across several GPUs, and each GPU's card is listed. <a href="/gpus">Your own GPUs</a> appear here too, visible only to you and anyone you share them with.</p>
+    <strong>Shared models</strong> route across several services (engines), and each one's model card is listed. <a href="/gpus">Your own GPUs</a> appear here too, visible only to you and anyone you share them with.</p>
   <div id="models"><div class="muted">Loading…</div></div>
 </div>
 {{end}}

@@ -22,6 +22,23 @@ Engine energy comes from the NInfer fork's NVML accounting — see the
 [NInfer runbook](/guide/ninfer-engine). Hosts without fork telemetry show
 overhead + capex only.
 
+**Services and GPUs.** A *service* is one engine (host + port); a *GPU* is
+a physical card. Several services can share a card, and one service can
+span several. Every engine on a card reports that card's whole draw, so
+list each box's cards under **gpus** (one per line, `name = ports`):
+
+```
+RTX PRO 6000 = 8006
+RTX 4090 = 8001, 8009
+```
+
+A card with no ports runs every service on the box; a port on two cards
+spans both. The gateway then counts each card (or group of cards joined
+by a spanning service) once, and splits its energy between the services
+on it by tokens served. Without a gpus list, each service is assumed to
+have its own card, and the Costs page warns when a box has several
+services reporting energy.
+
 ## Per-user quotas
 
 Admins → Users → set a daily token limit per user. Exceeding it returns

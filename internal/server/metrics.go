@@ -194,9 +194,13 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pool-wide blended rate (Python: sum today's cost / tokens).
+	// Energy is counted once per card group (see gpu_groups.go).
+	_, reporters, _ := s.countedEnergy(usageByBackend)
 	var totalCost, totalTokens float64
-	for _, u := range usageByBackend {
-		totalCost += usageNum(u, "energy", "today", "cost_usd")
+	for b, u := range usageByBackend {
+		if reporters[b] {
+			totalCost += usageNum(u, "energy", "today", "cost_usd")
+		}
 		totalTokens += usageNum(u, "energy", "today", "tokens")
 	}
 	var poolRate any
@@ -205,14 +209,16 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var ti, tc, to, kwhT, costT, kwh30, cost30, dec, pre float64
-	for _, u := range usageByBackend {
+	for b, u := range usageByBackend {
 		ti += usageNum(u, "tokens", "input", "total")
 		tc += usageNum(u, "tokens", "input", "cache_hits")
 		to += usageNum(u, "tokens", "output", "total")
-		kwhT += usageNum(u, "energy", "today", "kwh")
-		costT += usageNum(u, "energy", "today", "cost_usd")
-		kwh30 += usageNum(u, "energy", "rolling_30d", "kwh")
-		cost30 += usageNum(u, "energy", "rolling_30d", "cost_usd")
+		if reporters[b] {
+			kwhT += usageNum(u, "energy", "today", "kwh")
+			costT += usageNum(u, "energy", "today", "cost_usd")
+			kwh30 += usageNum(u, "energy", "rolling_30d", "kwh")
+			cost30 += usageNum(u, "energy", "rolling_30d", "cost_usd")
+		}
 		dec += usageNum(u, "throughput", "decode_tok_per_s")
 		pre += usageNum(u, "throughput", "prefill_tok_per_s")
 	}

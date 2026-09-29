@@ -41,11 +41,11 @@ async function load() {
     document.getElementById('latchart').innerHTML = '<p class="muted">No latency telemetry yet.</p>';
   }
 
-  // --- Per-GPU table
+  // --- Per-service table
   const gr = document.getElementById('gpurows');
   gr.innerHTML = (d.per_gpu || []).map(g =>
     '<tr>' +
-    '<td data-label="GPU"><strong>' + gpuName(g) + '</strong></td>' +
+    '<td data-label="Service"><strong>' + gpuName(g) + '</strong></td>' +
     '<td data-label="Share">' + pct(g.share_pct) + '</td>' +
     '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
     '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
@@ -120,9 +120,9 @@ load(); setInterval(load, 60000);
   </div>
 
   <div class="card">
-    <h2>Per GPU</h2>
+    <h2>Per service</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>GPU</th><th>Share</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th title="Time to first token: average / 95th percentile (hover a cell for the max)">TTFT avg / p95</th><th title="Engine-reported wait before the request was scheduled on the GPU">Queue avg</th><th>Draft accept</th></tr></thead>
+      <thead><tr><th>Service</th><th>Share</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th title="Time to first token: average / 95th percentile (hover a cell for the max)">TTFT avg / p95</th><th title="Engine-reported wait before the request was scheduled">Queue avg</th><th>Draft accept</th></tr></thead>
       <tbody id="gpurows"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
     </table></div>
     <p class="muted" id="gpunote" style="margin:8px 0 0"></p>

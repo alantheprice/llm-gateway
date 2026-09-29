@@ -112,6 +112,36 @@ type HostCfg struct {
 	Purchased       string   `json:"purchased"`         // ISO date
 	AmortizeYears   float64  `json:"amortize_years"`    // straight-line term
 	GPUIdleWatts    float64  `json:"gpu_idle_watts"`    // per-GPU idle draw; 0 → 40 (fixed-cost layer)
+	// GPUs: the physical cards in the box and which services (engine
+	// ports) run on each. Optional; without it every service that reports
+	// energy is assumed to have a card of its own.
+	GPUs []GPUCfg `json:"gpus,omitempty"`
+}
+
+// GPUCfg is one physical card. A service (engine port) listed on several
+// cards spans them; a card with no services listed runs every service on
+// the host.
+type GPUCfg struct {
+	Name     string   `json:"name"`
+	Services []string `json:"services,omitempty"` // engine ports, e.g. "8006"
+}
+
+// GPUsFor: indexes of the host's cards that run the service on port.
+func (h HostCfg) GPUsFor(port string) []int {
+	var out []int
+	for i, g := range h.GPUs {
+		if len(g.Services) == 0 {
+			out = append(out, i)
+			continue
+		}
+		for _, sv := range g.Services {
+			if strings.TrimPrefix(strings.TrimSpace(sv), ":") == port {
+				out = append(out, i)
+				break
+			}
+		}
+	}
+	return out
 }
 
 type Config struct {

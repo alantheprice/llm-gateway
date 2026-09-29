@@ -7,15 +7,18 @@ import (
 	"llmgateway/internal/config"
 )
 
-// gpuIdentity is the one name every page and API uses for a GPU engine.
+// gpuIdentity is the one name every page and API uses for a service (one
+// engine: host + port). Several services can share a card and one can span
+// several; GPUs names the cards when the host config lists them.
 // The same engine can be reached several ways over time (direct LAN URL,
 // then a link virtual URL after a cutover); all of them resolve to the
 // same Key, so history, costs and analytics stay on one row.
 type gpuIdentity struct {
-	Key   string `json:"gpu_key"`   // stable: "<host label>:<port>", or the URL when no host claims it
-	Label string `json:"gpu_label"` // display: "gpu-b (6000 Pro) :8006"
-	Host  string `json:"host"`      // cost-config host label ("" if no host claims the backend)
-	Via   string `json:"via"`       // "link" or "direct"
+	Key   string   `json:"gpu_key"`        // stable: "<host label>:<port>", or the URL when no host claims it
+	Label string   `json:"gpu_label"`      // display: "gpu-b (6000 Pro) :8006"
+	Host  string   `json:"host"`           // cost-config host label ("" if no host claims the backend)
+	Via   string   `json:"via"`            // "link" or "direct"
+	GPUs  []string `json:"gpus,omitempty"` // the cards it runs on (hosts[].gpus)
 }
 
 // backendPort: the engine port of a backend URL ("" if none).
@@ -48,6 +51,10 @@ func identifyGPU(hosts []config.HostCfg, backend string) gpuIdentity {
 				id := gpuIdentity{Key: h.Label + ":" + port, Label: h.Label, Host: h.Label, Via: via}
 				if port != "" {
 					id.Label += " :" + port
+				}
+				if idx := h.GPUsFor(port); len(idx) > 0 {
+					id.GPUs = gpuNames(h, idx)
+					id.Label += " · " + strings.Join(id.GPUs, " + ")
 				}
 				return id
 			}

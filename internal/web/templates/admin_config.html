@@ -34,6 +34,10 @@ function hostRow(h) {
     field('amortize_years', num('amortize_years', h.amortize_years ?? 3, 0.5), 'Straight-line term.') +
     field('gpu_idle_watts', num('gpu_idle_watts', h.gpu_idle_watts ?? 40, 10),
       'Idle draw per GPU — the part of GPU energy that runs whether or not tokens flow (fixed layer).') +
+    field('gpus (one card per line: "name = ports")',
+      '<textarea name="gpus" rows="3" placeholder="RTX PRO 6000 = 8006&#10;RTX 4090 = 8001, 8009">' +
+        esc((h.gpus||[]).map(g => (g.name || '') + ((g.services||[]).length ? ' = ' + g.services.join(', ') : '')).join('\n')) + '</textarea>',
+      'The cards in this box and the services (engine ports) on each. A card with no ports runs every service on the box; a port on two cards spans both. Services sharing a card have its energy counted once and split by tokens. Leave empty if each service has its own card.') +
     '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('host') + '</div>' +
     '</div></div>';
 }
@@ -108,6 +112,12 @@ function collect() {
       purchased: g('purchased') || '',
       amortize_years: parseFloat(g('amortize_years')) || 0,
       gpu_idle_watts: parseFloat(g('gpu_idle_watts')) || 0,
+      gpus: g('gpus').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+        const i = l.indexOf('=');
+        const name = (i >= 0 ? l.slice(0, i) : l).trim();
+        const services = i >= 0 ? l.slice(i + 1).split(',').map(x => x.trim().replace(/^:/, '')).filter(Boolean) : [];
+        return services.length ? {name, services} : {name};
+      }),
     };
   }).filter(h => h.ips.length || h.links.length);
 
