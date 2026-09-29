@@ -1,0 +1,159 @@
+{{define "title"}}Images — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+// Text to image through the gateway's /v1/images/generations, with the
+// user's own key (so usage, quotas and routing apply like any request).
+let KEY = '', PROMPT_MODEL = '', busy = false;
+const results = []; // newest first: {model, prompt, revised, images:[src], ms, at}
+
+function sizeLabel(v) { return ({ '1024x1024': 'Square', '1024x1536': 'Portrait', '1536x1024': 'Landscape', '512x512': 'Small square' })[v] || v; }
+
+async function init() {
+  const r = await api('/chat/config');
+  if (!r.ok) { location = '/'; return; }
+  KEY = r.data.api_key;
+  PROMPT_MODEL = r.data.image_prompt_model || '';
+  const models = r.data.image_models || [];
+  const sel = document.getElementById('imodel');
+  sel.innerHTML = models.map(m => '<option value="' + escAttr(m) + '">' + esc(m) + '</option>').join('');
+  let saved = '';
+  try { saved = localStorage.getItem('images.model') || ''; } catch (e) {}
+  if (models.includes(saved)) sel.value = saved;
+  document.getElementById('nomodels').hidden = models.length > 0;
+  document.getElementById('form').hidden = models.length === 0;
+  const imp = document.getElementById('improvewrap');
+  imp.hidden = !PROMPT_MODEL;
+  document.getElementById('improvemodel').textContent = PROMPT_MODEL;
+  render();
+}
+
+function render() {
+  const box = document.getElementById('results');
+  if (!results.length) {
+    box.innerHTML = '<p class="muted">Images you generate appear here. They stay until you leave the page, so download the ones you want to keep.</p>';
+    return;
+  }
+  box.innerHTML = results.map((r, i) => '<article class="result">' +
+    '<div class="imgs">' + r.images.map((src, j) =>
+      '<figure><img src="' + escAttr(src) + '" alt="' + escAttr(r.revised || r.prompt) + '" loading="lazy">' +
+      '<figcaption><a class="btn sm" href="' + escAttr(src) + '" download="image-' + r.at + '-' + (j + 1) + '.png">Download</a></figcaption></figure>').join('') + '</div>' +
+    '<div class="meta">' +
+      '<div class="muted">' + esc(r.model) + ' · ' + (r.ms / 1000).toFixed(1) + ' s · ' + esc(new Date(r.at).toLocaleTimeString()) + '</div>' +
+      '<div><span class="lbl">Your prompt</span> ' + esc(r.prompt) + '</div>' +
+      (r.revised && r.revised !== r.prompt ? '<div><span class="lbl">Improved prompt</span> ' + esc(r.revised) + '</div>' : '') +
+      '<div class="acts"><button class="btn sm" data-reuse="' + i + '">Use ' + (r.revised && r.revised !== r.prompt ? 'improved ' : '') + 'prompt</button></div>' +
+    '</div></article>').join('');
+  box.querySelectorAll('[data-reuse]').forEach(b => b.onclick = () => {
+    const r = results[+b.dataset.reuse];
+    document.getElementById('prompt').value = r.revised || r.prompt;
+    if (r.revised && r.revised !== r.prompt) document.getElementById('improve').checked = false;
+    document.getElementById('prompt').focus();
+  });
+}
+
+async function generate() {
+  if (busy) return;
+  const model = document.getElementById('imodel').value;
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) { flash('Describe the image you want.', true); return; }
+  try { localStorage.setItem('images.model', model); } catch (e) {}
+  const improve = !!PROMPT_MODEL && document.getElementById('improve').checked;
+  const body = { model, prompt, n: +document.getElementById('count').value, size: document.getElementById('size').value,
+    response_format: 'b64_json', enhance_prompt: improve };
+  busy = true;
+  const btn = document.getElementById('go'), status = document.getElementById('status');
+  btn.disabled = true;
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    status.textContent = (improve && s < 8 ? 'Improving the prompt… ' : 'Generating… ') + s + ' s';
+  }, 500);
+  try {
+    const resp = await fetch('/v1/images/generations', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEY }, body: JSON.stringify(body) });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) { flash((j.error && (j.error.message || j.error)) || ('Generation failed (' + resp.status + ')'), true); return; }
+    const images = (j.data || []).map(d => d.b64_json ? 'data:image/png;base64,' + d.b64_json : d.url).filter(Boolean);
+    if (!images.length) { flash('The model answered without an image.', true); return; }
+    const revised = (j.data || []).map(d => d.revised_prompt).find(Boolean) || '';
+    results.unshift({ model, prompt, revised, images, ms: Date.now() - t0, at: Date.now() });
+    render();
+  } catch (e) {
+    flash('Couldn’t reach the gateway: ' + e.message, true);
+  } finally {
+    clearInterval(tick);
+    status.textContent = '';
+    busy = false;
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('go').onclick = generate;
+document.getElementById('prompt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generate();
+});
+init();
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.imgform { display: flex; flex-direction: column; gap: 12px; }
+.imgform textarea { width: 100%; min-height: 96px; resize: vertical; font: inherit; }
+.imgrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.imgrow .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.imgrow .f label { font-size: 12.5px; font-weight: 600; }
+.imgrow .grow { flex: 1; min-width: 180px; }
+.improve { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.improve input { margin: 0; }
+#status { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.results { display: flex; flex-direction: column; gap: 16px; }
+.result { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start;
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--card); }
+@media (max-width: 720px) { .result { grid-template-columns: 1fr; } }
+.imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.imgs figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.imgs img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--border2); background: var(--card2); }
+.meta { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; overflow-wrap: anywhere; }
+.lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 2px; }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; }
+</style>
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Images</h1></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <div id="nomodels" hidden>
+      <p style="margin-top:0"><strong>No image models are available to you yet.</strong></p>
+      <p class="muted">An image model shows up here when a shared model or one of your GPUs can generate images. To serve one from your own machine, link it on <a href="/gpus">My GPUs</a>. The engine needs to speak OpenAI's images API (<a href="/guide/link-gpu#step-1-prepare-your-engine">details</a>).</p>
+    </div>
+    <div class="imgform" id="form" hidden>
+      <div class="f">
+        <label for="prompt" style="font-size:12.5px;font-weight:600">Describe the image</label>
+        <textarea id="prompt" placeholder="A lighthouse on a cliff at dusk, waves crashing below"></textarea>
+      </div>
+      <label class="improve" id="improvewrap" hidden><input type="checkbox" id="improve" checked>
+        <span>Improve my prompt with <strong id="improvemodel"></strong> first</span></label>
+      <div class="imgrow">
+        <div class="f grow"><label for="imodel">Model</label><select id="imodel"></select></div>
+        <div class="f"><label for="size">Size</label>
+          <select id="size">
+            <option value="1024x1024">Square (1024×1024)</option>
+            <option value="1024x1536">Portrait (1024×1536)</option>
+            <option value="1536x1024">Landscape (1536×1024)</option>
+            <option value="512x512">Small square (512×512)</option>
+          </select></div>
+        <div class="f"><label for="count">Images</label>
+          <select id="count"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+        <button class="btn primary" id="go">Generate</button>
+        <span id="status"></span>
+      </div>
+      <p class="hint muted" style="margin:0;font-size:12px">Ctrl+Enter to generate. Not every model supports every size; if one is refused, try the square.</p>
+    </div>
+  </div>
+
+  <div class="results" id="results"></div>
+</div>
+{{end}}

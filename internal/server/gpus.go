@@ -48,6 +48,14 @@ func (s *Server) handleModelsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, "models.html", "models", "Models")
 }
 
+// handleImagesPage: /images — text-to-image with the user's own key.
+func (s *Server) handleImagesPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSessionPage(w, r); !ok {
+		return
+	}
+	s.renderPage(w, r, "images.html", "images", "Images")
+}
+
 // agentEngineView: one engine behind a live agent, as shown on the page.
 type agentEngineView struct {
 	URL         string         `json:"url"`

@@ -435,3 +435,26 @@ func (s *Server) detectedCaps(name string) *Capabilities {
 	}
 	return nil
 }
+
+// imageModels: names the user can generate images with (shared models and
+// engines, then their own and shared GPUs), for the Images page.
+func (s *Server) imageModels(user string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		if c, ok := s.capsFor(name, user); ok && c.has(c.Endpoints, "images") {
+			out = append(out, name)
+		}
+	}
+	for _, e := range s.catalog() {
+		add(e.ID)
+	}
+	for _, pm := range s.privateModels(user) {
+		add(pm.Name)
+	}
+	return out
+}

@@ -247,6 +247,10 @@ type ChatConfigOutput struct {
 		// ModelGroups: the picker's sections (Models, your & shared GPUs,
 		// and for admins the individual engines behind pools).
 		ModelGroups []chatModelGroup `json:"model_groups"`
+		// ImageModels: names the caller can generate images with;
+		// ImagePromptModel: the text model that improves image prompts ("" = off).
+		ImageModels      []string `json:"image_models"`
+		ImagePromptModel string   `json:"image_prompt_model"`
 	}
 }
 

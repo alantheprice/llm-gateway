@@ -139,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
 	mux.HandleFunc("/models", s.handleModelsPage)
+	mux.HandleFunc("/images", s.handleImagesPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{

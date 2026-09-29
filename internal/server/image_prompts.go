@@ -189,3 +189,9 @@ func (s *Server) prepareImageRequest(r *http.Request, body []byte) (*http.Reques
 	}
 	return r, body
 }
+
+// imagePromptModelName: the configured prompt model ("" = off).
+func (s *Server) imagePromptModelName() string {
+	m, _ := s.imagePromptModel()
+	return m
+}

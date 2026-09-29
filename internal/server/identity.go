@@ -196,11 +196,13 @@ func (s *Server) handleChatConfig(w http.ResponseWriter, r *http.Request) {
 	s.store.SetKeyRoleIfDiffers(sess.U, apiKey, sess.Role)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"username":     sess.U,
-		"role":         sess.Role,
-		"api_key":      apiKey,
-		"models":       flatModels(groups),
-		"model_groups": groups,
+		"username":           sess.U,
+		"role":               sess.Role,
+		"api_key":            apiKey,
+		"models":             flatModels(groups),
+		"model_groups":       groups,
+		"image_models":       s.imageModels(sess.U),
+		"image_prompt_model": s.imagePromptModelName(),
 	})
 }
 

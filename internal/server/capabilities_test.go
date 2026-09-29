@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"llmgateway/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeEngine serves one model id with a chosen metadata style and records
@@ -306,5 +308,39 @@ func TestImagePromptImprovement(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 2 || got[0] != want+"|<nil>" || got[1] != "a fox|<nil>" {
 		t.Fatalf("engine got prompts %q", got)
+	}
+}
+
+// The Images page renders, and chat config tells it which models can
+// generate images for this user and which model improves prompts.
+func TestImagesPageAndConfig(t *testing.T) {
+	if err := InitUI(); err != nil {
+		t.Fatal(err)
+	}
+	img := newFakeEngine(t, "flux-schnell", "basic")
+	s := testServer(t, `{"gateway":{"port":0},"image_prompting":{"model":"qwen3.8-27b"}}`, nil)
+	s.mu.Lock()
+	s.backends[img.URL] = &BackendInfo{Models: []string{"flux-schnell"}, Chat: true}
+	s.mu.Unlock()
+	get := func(path string) (int, string) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", path, nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: s.store.SignSession(auth.Claims{U: "carol", Role: "user"}, time.Hour)})
+		s.Handler().ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := get("/images"); code != 200 || !strings.Contains(body, `id="imodel"`) {
+		t.Fatalf("/images: %d", code)
+	}
+	code, body := get("/chat/config")
+	var cfg struct {
+		ImageModels      []string `json:"image_models"`
+		ImagePromptModel string   `json:"image_prompt_model"`
+		Models           []string `json:"models"`
+	}
+	json.Unmarshal([]byte(body), &cfg)
+	if code != 200 || !slices.Contains(cfg.ImageModels, "flux-schnell") || cfg.ImagePromptModel != "qwen3.8-27b" ||
+		slices.Contains(cfg.Models, "flux-schnell") {
+		t.Fatalf("chat config = %d %+v", code, cfg)
 	}
 }
