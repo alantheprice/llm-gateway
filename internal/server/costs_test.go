@@ -150,3 +150,19 @@ func TestBackendHostKeyForLinks(t *testing.T) {
 		t.Fatalf("HostKeys = %v", keys)
 	}
 }
+
+// Lifetime $/M: full hardware price plus recorded energy and overhead,
+// over every token served.
+func TestLifetimeCost(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	s.usage.Record("a", "", "m", 600_000, 400_000)
+	s.usage.Record("b", "", "m", 1_000_000, 0)
+	history := map[string]any{"days": []map[string]any{
+		{"day": "2026-09-23", "energy_usd": 1.0, "overhead_usd": 0.5},
+		{"day": "2026-09-22", "energy_usd": 2.0, "overhead_usd": 0.5},
+	}}
+	got := s.lifetimeCost([]HostConfig{{HardwareUSD: 1000}, {HardwareUSD: 2000}}, history)
+	if got["spent_usd"] != 3004.0 || got["tokens"] != 2e6 || got["usd_per_m_tokens"] != 1502.0 || got["energy_since"] != "2026-09-22" {
+		t.Fatalf("lifetime = %v", got)
+	}
+}

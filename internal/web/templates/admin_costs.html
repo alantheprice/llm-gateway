@@ -7,6 +7,17 @@ function usd(v, digits = 4) {
 }
 function pct(v) { return (v == null ? '—' : Number(v).toFixed(1) + '%'); }
 
+// Lifetime cost per use: hardware at full price + all energy so far, over
+// every token served. Falls as usage accumulates.
+function lifetimeStat(l) {
+  if (!l || l.usd_per_m_tokens == null) return '';
+  const tip = 'Hardware ' + usd(l.hardware_usd, 0) + ' (full price, not amortized) + GPU energy ' + usd(l.energy_usd, 2) +
+    ' + system overhead ' + usd(l.overhead_usd, 2) + (l.energy_since ? ' (recorded since ' + l.energy_since + ')' : '') +
+    ' = ' + usd(l.spent_usd, 2) + ', over ' + Charts.fmtShort(l.tokens) + ' tokens served.';
+  return '<div class="stat" title="' + escAttr(tip) + '"><div class="v">' + usd(l.usd_per_m_tokens, 2) + '</div>' +
+    '<div class="l">lifetime all-in $ / 1M — hardware at full price over ' + Charts.fmtShort(l.tokens) + ' tokens so far</div></div>';
+}
+
 async function load() {
   const r = await api('/usage/costs');
   if (!r.ok) { location = '/'; return; }
@@ -18,7 +29,8 @@ async function load() {
     '<div class="stat"><div class="v">' + usd(t.projected_monthly_usd, 0) + '</div><div class="l">projected / month (today ×30)</div></div>' +
     '<div class="stat"><div class="v">' + (t.all_in_usd_per_m_tokens != null ? usd(t.all_in_usd_per_m_tokens) : '—') + '</div><div class="l">all-in $ / 1M tokens</div></div>' +
     '<div class="stat"><div class="v">' + (t.gpu_only_usd_per_m_tokens != null ? usd(t.gpu_only_usd_per_m_tokens) : '—') + '</div><div class="l">GPU-energy-only $ / 1M (no capex)</div></div>' +
-    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_30d, 2) + '</div><div class="l">all-in 30-day</div></div>';
+    '<div class="stat"><div class="v">' + usd(t.total_cost_usd_30d, 2) + '</div><div class="l">all-in 30-day</div></div>' +
+    lifetimeStat(d.lifetime);
 
   const hr = document.getElementById('hostrows');
   hr.innerHTML = (d.hosts || []).map(h => {

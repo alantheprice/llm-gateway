@@ -405,7 +405,9 @@ func (s *Server) usageCostsPayload() map[string]any {
 	}
 	sort.Strings(unmatched)
 
+	history := s.costHistorySeries()
 	out := map[string]any{
+		"lifetime":                     s.lifetimeCost(hosts, history),
 		"electricity_rate_usd_per_kwh": rate,
 		"hosts":                        hostCosts,
 		"unmatched_backends":           unmatched,
@@ -423,7 +425,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 		"price_book":       book,
 		"user_value_today": userValue,
 		"value_today":      math.Round(valueToday*100) / 100,
-		"cost_history":     s.costHistorySeries(),
+		"cost_history":     history,
 		"peaks":            s.peaks.Snapshot(),
 		"gateway_port":     port,
 	}
@@ -459,6 +461,42 @@ func (s *Server) usageCostsPayload() map[string]any {
 		}
 	}
 	return out
+}
+
+// lifetimeCost: every dollar spent so far over every token served — the
+// full hardware price up front (not amortized) plus all recorded energy
+// and overhead. Falls as usage accumulates.
+func (s *Server) lifetimeCost(hosts []HostConfig, history map[string]any) map[string]any {
+	var hardware, energy, overhead float64
+	for _, h := range hosts {
+		hardware += h.HardwareUSD
+	}
+	since := ""
+	if days, ok := history["days"].([]map[string]any); ok {
+		for _, d := range days {
+			e, _ := d["energy_usd"].(float64)
+			o, _ := d["overhead_usd"].(float64)
+			energy += e
+			overhead += o
+			if day, _ := d["day"].(string); since == "" || (day != "" && day < since) {
+				since = day
+			}
+		}
+	}
+	users, _ := s.usage.UsersSnapshot()
+	var tokens float64
+	for _, u := range users {
+		tokens += float64(u.PromptTokens + u.OutputTokens)
+	}
+	spent := hardware + energy + overhead
+	var perM any
+	if tokens > 0 {
+		perM = round4(spent / tokens * 1e6)
+	}
+	return map[string]any{
+		"hardware_usd": round2(hardware), "energy_usd": round2(energy), "overhead_usd": round2(overhead),
+		"spent_usd": round2(spent), "tokens": tokens, "usd_per_m_tokens": perM, "energy_since": since,
+	}
 }
 
 // costHistorySeries: ordered days with cost + value for the chart.
