@@ -52,7 +52,7 @@ async function load() {
       const rate = (r.engine_input > 0 && r.cache_hits != null) ? (100 * r.cache_hits / r.engine_input).toFixed(1) + '% cache-hit' : '';
       return '<span class="legend-item"><span class="legend-swatch" style="background:' + colors[i % colors.length] + '"></span>' +
       gpuName(r) + ' — ' + Charts.fmtShort(r.engine_input || 0) + ' tok in · ' + (r.kwh||0).toFixed(1) + ' kWh · ' +
-      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of input' + (rate ? ' · ' + rate : '') + '</span>';
+      (100 * (r.tokens||0) / gpuTotal).toFixed(1) + '% of routed' + (rate ? ' · ' + rate : '') + '</span>';
     }).join('') + '</div>' +
     '<p class="muted" style="font-size:12px;margin:0 0 6px">tok in = engine-reported input tokens (all clients). cache-hit % = per-day delta of engine prefix-reuse counters (day-start snapshots). "% of routed" = this GPU\'s share of gateway-routed tokens today. The per-request cached_tokens field reads 0 on the current NInfer build — engine aggregates are the source of truth.</p>' +
       gpuRows.map((r, i) => {
@@ -130,7 +130,10 @@ async function load() {
       '<td data-label="Cumulative">' + usd(row.capital_cumulative_usd, 2) + '</td></tr>').join('') +
     '</tbody></table></div></div>').join('');
 }
-document.addEventListener('DOMContentLoaded', load);
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh').onclick = load;
+});
 </script>
 {{end}}
 {{define "content"}}
@@ -174,6 +177,11 @@ document.addEventListener('DOMContentLoaded', load);
       <thead><tr><th>Host</th><th>GPU energy</th><th>System overhead</th><th>Capex</th><th>Total today</th><th>All-in $ / 1M tok</th><th>Amortization</th></tr></thead>
       <tbody id="hostrows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
     </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Per GPU — today</h2>
+    <div id="gpuchart"><p class="muted">Loading…</p></div>
   </div>
 
   <div class="card">

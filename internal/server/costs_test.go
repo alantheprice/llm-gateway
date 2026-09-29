@@ -81,7 +81,7 @@ func TestComputeCostsAllIn(t *testing.T) {
 		t.Fatalf("total = %v", h.TotalToday)
 	}
 	// all-in $/M = total / 200M × 1e6 = total/200
-	wantPerM := math.Round((0.75+0.15+wantCapital)/200*100) / 100
+	wantPerM := round4((0.75 + 0.15 + wantCapital) / 200)
 	got, ok := h.AllInPerM.(float64)
 	if !ok || math.Abs(got-wantPerM) > 1e-9 {
 		t.Fatalf("all-in per M = %v want %v", h.AllInPerM, wantPerM)

@@ -184,7 +184,7 @@ func ComputeCosts(p CostsParams) []HostCost {
 		// honest estimate (no per-host token history yet).
 		h.AllIn30dPerM = h.AllInPerM
 		if h.TokensToday > 0 {
-			h.AllInPerM = math.Round(h.TotalToday/h.TokensToday*1e6*100) / 100
+			h.AllInPerM = round4(h.TotalToday / h.TokensToday * 1e6)
 			// 30d projection uses today's token run-rate (no per-day history
 			// per host yet): conservative = today's $/M.
 			h.AllIn30dPerM = h.AllInPerM
@@ -355,7 +355,7 @@ func (s *Server) usageCostsPayload() map[string]any {
 	}
 	var fleetPerM any
 	if tokens > 0 {
-		fleetPerM = math.Round(totalToday/tokens*1e6*100) / 100
+		fleetPerM = round4(totalToday / tokens * 1e6)
 	}
 
 	// Value at the operator's book prices vs actual cost today.
@@ -512,7 +512,7 @@ func gpuOnlyPerM(hosts []HostCost, tokens float64) any {
 	if gpu == 0 {
 		return nil
 	}
-	return math.Round(gpu/tokens*1e6*100) / 100
+	return round4(gpu / tokens * 1e6)
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
