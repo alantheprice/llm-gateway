@@ -56,7 +56,7 @@ type PoolMemberCfg struct {
 // CapabilityOverride: operator-set capabilities for a model name (pool,
 // alias or engine model id). A non-empty list replaces what was detected.
 type CapabilityOverride struct {
-	Endpoints []string `json:"endpoints,omitempty"`         // chat, completions, embeddings
+	Endpoints []string `json:"endpoints,omitempty"`         // chat, completions, embeddings, images
 	Input     []string `json:"input_modalities,omitempty"`  // text, image, audio, video
 	Output    []string `json:"output_modalities,omitempty"` // text, embeddings
 	Features  []string `json:"features,omitempty"`          // tools, thinking

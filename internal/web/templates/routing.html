@@ -180,7 +180,7 @@ function renderEditor() {
       'Leave off to use what the engines report. Turn on to correct a wrong detection; it applies to this name and its aliases.');
   if (ov) {
     h += '<div class="capgrid">' +
-      '<div><div class="hint">Endpoints</div>' + box2('ep:chat', 'Chat', inL(ov.endpoints, 'chat')) + box2('ep:completions', 'Completions', inL(ov.endpoints, 'completions')) + box2('ep:embeddings', 'Embeddings', inL(ov.endpoints, 'embeddings')) + '</div>' +
+      '<div><div class="hint">Endpoints</div>' + box2('ep:chat', 'Chat', inL(ov.endpoints, 'chat')) + box2('ep:completions', 'Completions', inL(ov.endpoints, 'completions')) + box2('ep:embeddings', 'Embeddings', inL(ov.endpoints, 'embeddings')) + box2('ep:images', 'Image generation', inL(ov.endpoints, 'images')) + '</div>' +
       '<div><div class="hint">Accepts</div>' + box2('in:image', 'Images', inL(ov.input_modalities, 'image')) + box2('in:audio', 'Audio', inL(ov.input_modalities, 'audio')) + box2('in:video', 'Video', inL(ov.input_modalities, 'video')) + '</div>' +
       '<div><div class="hint">Features</div>' + box2('ft:tools', 'Tool calls', inL(ov.features, 'tools')) + box2('ft:thinking', 'Thinking', inL(ov.features, 'thinking')) + '</div>' +
       '</div>';
@@ -223,7 +223,10 @@ function readEditor(box) {
     const pick = pre => [...box.querySelectorAll('[data-cap^="' + pre + ':"]')].filter(x => x.checked).map(x => x.dataset.cap.slice(pre.length + 1));
     const eps = pick('ep');
     EDIT.capOv = { endpoints: eps, input_modalities: ['text', ...pick('in')],
-      output_modalities: eps.includes('embeddings') ? (eps.length === 1 ? ['embeddings'] : ['text', 'embeddings']) : ['text'],
+      output_modalities: [
+        ...(eps.some(e => e === 'chat' || e === 'completions') ? ['text'] : []),
+        ...(eps.includes('images') ? ['image'] : []),
+        ...(eps.includes('embeddings') ? ['embeddings'] : [])],
       features: pick('ft') };
   }
   const al = box.querySelector('#ed-aliases').value.split(',').map(x => x.trim()).filter(Boolean);

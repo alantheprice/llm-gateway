@@ -74,9 +74,22 @@ func kindFor(model string) string {
 			return "embeddings"
 		case part == "fim" || strings.HasPrefix(part, "fim"):
 			return "fim"
+		case imageModelWords[part]:
+			return "images"
 		}
 	}
+	if strings.Contains(m, "stable-diffusion") || strings.Contains(m, "dall-e") {
+		return "images"
+	}
 	return "chat"
+}
+
+// imageModelWords: name parts that mark a text-to-image model (a fallback
+// guess; engines or admins state capabilities properly).
+var imageModelWords = map[string]bool{
+	"flux": true, "sdxl": true, "sd3": true, "sd15": true, "dalle": true, "imagen": true,
+	"kandinsky": true, "pixart": true, "hidream": true, "auraflow": true, "playground": true,
+	"diffusion": true, "txt2img": true,
 }
 
 func (u *UsageStore) Record(user, keyID, model string, prompt, output int) {

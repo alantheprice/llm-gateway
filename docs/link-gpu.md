@@ -50,6 +50,8 @@ Start your engine bound to `127.0.0.1`, so only the agent (on the same machine) 
 
 llama.cpp runs on a Mac too (Metal). On a Mac, MLX is usually the fastest choice for Apple Silicon.
 
+**Image models (text to image)** work the same way, as long as the engine speaks OpenAI's images API: `POST /v1/images/generations` with a `prompt`, answering with `data[].b64_json` or `data[].url`. Clients then call the gateway's `/v1/images/generations` with your GPU's name. Names such as FLUX, SDXL or Stable Diffusion are recognized as image models automatically. For anything else, an admin ticks **Image generation** under the model's capabilities on the **Routing** page. Generating an image can take a while on a laptop GPU; the gateway waits for it.
+
 To confirm the model id your engine serves:
 
 ```bash

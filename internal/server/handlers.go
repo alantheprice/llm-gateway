@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/chat/completions", s.handleChat)
 	mux.HandleFunc("/v1/agent/chat", s.handleAgentChat)
 	mux.HandleFunc("/v1/completions", s.handlePassthrough)
+	mux.HandleFunc("/v1/images/generations", s.handleImages)
 	mux.HandleFunc("/v1/embeddings", s.handleEmbeddings)
 	mux.HandleFunc("/v1/", s.handleV1Other)
 	mux.HandleFunc("/usage", s.handleUsageRich)
@@ -438,6 +439,58 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.proxy(w, r, url, body, user, "", req.Model, mid)
+}
+
+// handleImages: POST /v1/images/generations (OpenAI images API) — text to
+// image, routed like chat: shared model or alias, then a single engine,
+// then a private link the caller can use. Image generation can take a
+// while; like other non-streamed requests it has no overall timeout.
+func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errBody(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	user, keyID, ok := s.checkAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.enforceDailyLimit(w, user) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
+	if err != nil {
+		http.Error(w, `{"error":{"message":"body too large"}}`, http.StatusRequestEntityTooLarge)
+		return
+	}
+	var req chatReq
+	if json.Unmarshal(body, &req) != nil || req.Model == "" {
+		errBody(w, http.StatusBadRequest, "JSON body with a model and a prompt required")
+		return
+	}
+	r = withClientModel(r, req.Model)
+	noteAccess(r, user, req.Model, false)
+	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
+		s.routePool(w, r, &pool, poolName, body, user, keyID)
+		return
+	}
+	if url, mid := s.resolve(req.Model); url != "" {
+		if !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(url, req.Model)), body) {
+			return
+		}
+		s.proxy(w, r, url, body, user, keyID, req.Model, mid)
+		return
+	}
+	if pm, ok := s.resolvePrivate(privateCaller(user, keyID), req.Model); ok {
+		if !checkCaps(w, r, req.Model, s.withOverride(req.Model, s.engineCaps(pm.URL, pm.ModelID)), body) {
+			return
+		}
+		s.proxy(w, r, pm.URL, rewriteModel(body, pm.ModelID), user, keyID, req.Model, pm.ModelID)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
+		"message": fmt.Sprintf("model %q not found", req.Model), "type": "invalid_request_error"}})
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {

@@ -150,6 +150,7 @@ function capBadges(c) {
   if (has(c.endpoints, 'chat')) add('Chat');
   if (has(c.endpoints, 'completions') && !has(c.endpoints, 'chat')) add('Completions');
   if (has(c.endpoints, 'embeddings')) add('Embeddings');
+  if (has(c.endpoints, 'images')) add('Image gen', 'strong');
   if (has(c.input_modalities, 'image')) add('Vision', 'strong');
   if (has(c.input_modalities, 'audio')) add('Audio in', 'strong');
   if (has(c.input_modalities, 'video')) add('Video in', 'strong');

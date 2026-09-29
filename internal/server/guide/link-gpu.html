@@ -77,6 +77,7 @@
 </tbody>
 </table>
 <p>llama.cpp runs on a Mac too (Metal). On a Mac, MLX is usually the fastest choice for Apple Silicon.</p>
+<p><strong>Image models (text to image)</strong> work the same way, as long as the engine speaks OpenAI's images API: <code>POST /v1/images/generations</code> with a <code>prompt</code>, answering with <code>data[].b64_json</code> or <code>data[].url</code>. Clients then call the gateway's <code>/v1/images/generations</code> with your GPU's name. Names such as FLUX, SDXL or Stable Diffusion are recognized as image models automatically. For anything else, an admin ticks <strong>Image generation</strong> under the model's capabilities on the <strong>Routing</strong> page. Generating an image can take a while on a laptop GPU; the gateway waits for it.</p>
 <p>To confirm the model id your engine serves:</p>
 <pre><code class="language-bash">curl -s http://127.0.0.1:&lt;port&gt;/v1/models
 </code></pre>

@@ -194,3 +194,59 @@ func TestAgentDownloadReleaseFallback(t *testing.T) {
 		t.Fatalf("fallback = %d %s", w.Code, w.Header().Get("Location"))
 	}
 }
+
+// Text-to-image: /v1/images/generations reaches an image engine; chatting
+// with an image model points at the right endpoint; a model whose engine
+// says it can't generate images is refused; an unknown name isn't blocked
+// by a guess.
+func TestImageGeneration(t *testing.T) {
+	var hits int
+	var mu sync.Mutex
+	img := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"flux-schnell"},{"id":"mystery-model"}]}`)
+		case "/v1/images/generations":
+			mu.Lock()
+			hits++
+			mu.Unlock()
+			fmt.Fprint(w, `{"created":1,"data":[{"b64_json":"iVBORw0KGgo="}]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer img.Close()
+	ol := newFakeEngine(t, "llama3.1:8b", "ollama") // reports completion/tools/thinking only
+	s := testServer(t, `{"gateway":{"port":0,"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
+	s.mu.Lock()
+	s.backends[img.URL] = &BackendInfo{Models: []string{"flux-schnell", "mystery-model"}, Chat: true}
+	s.backends[ol.URL] = &BackendInfo{Models: []string{"llama3.1:8b"}, Chat: true}
+	s.mu.Unlock()
+	s.PollOnce()
+	post := func(path, body string) (int, string) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		r.RemoteAddr = "192.168.1.50:5555"
+		s.Handler().ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := post("/v1/images/generations", `{"model":"flux-schnell","prompt":"a red fox"}`); code != 200 || !strings.Contains(body, "b64_json") {
+		t.Fatalf("image gen: %d %s", code, body)
+	}
+	if code, body := post("/v1/images/generations", `{"model":"mystery-model","prompt":"a red fox"}`); code != 200 {
+		t.Fatalf("unknown-name engine blocked by a guess: %d %s", code, body)
+	}
+	if code, body := post("/v1/chat/completions", `{"model":"flux-schnell","messages":[{"role":"user","content":"hi"}]}`); code != 400 || !strings.Contains(body, "/v1/images/generations") {
+		t.Fatalf("chat to image model: %d %s", code, body)
+	}
+	if code, body := post("/v1/images/generations", `{"model":"llama3.1:8b","prompt":"a red fox"}`); code != 400 || !strings.Contains(body, "image generation") {
+		t.Fatalf("images to a chat-only model: %d %s", code, body)
+	}
+	if hits != 2 {
+		t.Fatalf("image engine hits = %d, want 2", hits)
+	}
+	if c, _ := s.capsFor("flux-schnell", ""); !slices.Contains(c.Output, "image") {
+		t.Fatalf("flux caps = %+v", c)
+	}
+}

@@ -64,7 +64,8 @@ Rules:
 | GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized, the caller's private GPUs added |
 | POST | `/v1/chat/completions` | key or LAN-trust | route (pool or direct); stream-aware proxy |
 | POST | `/v1/completions` | key or LAN-trust | direct to resolved backend |
-| POST | `/v1/embeddings` | key or LAN-trust | direct to embedding backend |
+| POST | `/v1/embeddings` | key or LAN-trust | shared model, else the embedding backend |
+| POST | `/v1/images/generations` | key or LAN-trust | text to image (OpenAI images API): shared model or alias, then a single engine, then a private link the caller can use |
 | GET | `/usage` | key or LAN-trust | engine aggregate usage JSON |
 | GET | `/metrics` | key or LAN-trust | Prometheus text |
 | GET | `/slots` | key or LAN-trust | engine slots JSON |

@@ -27,7 +27,7 @@ import (
 
 // Capabilities of one model.
 type Capabilities struct {
-	Endpoints []string `json:"endpoints"`          // chat, completions, embeddings
+	Endpoints []string `json:"endpoints"`          // chat, completions, embeddings, images
 	Input     []string `json:"input_modalities"`   // text, image, audio, video
 	Output    []string `json:"output_modalities"`  // text, embeddings
 	Features  []string `json:"features,omitempty"` // tools, thinking
@@ -38,6 +38,10 @@ func (c Capabilities) has(list []string, v string) bool { return slices.Contains
 
 // nameCaps: the fallback guess from a model id.
 func nameCaps(id string) Capabilities {
+	if kindFor(id) == "images" {
+		return Capabilities{Endpoints: []string{"images"}, Input: []string{"text"},
+			Output: []string{"image"}, Source: "name"}
+	}
 	if kindFor(id) == "embeddings" {
 		return Capabilities{Endpoints: []string{"embeddings"}, Input: []string{"text"},
 			Output: []string{"embeddings"}, Source: "name"}
@@ -223,6 +227,7 @@ func unionCaps(cs []Capabilities) Capabilities {
 // sortModalities: conventional order (text first), as clients print them.
 func sortModalities(l []string) {
 	rank := map[string]int{"text": 0, "image": 1, "audio": 2, "video": 3, "embeddings": 4}
+	// (output "image" = generated images; ranks like the input modality)
 	sort.SliceStable(l, func(i, j int) bool {
 		ri, ok := rank[l[i]]
 		if !ok {
@@ -274,6 +279,9 @@ func requestNeeds(path string, body []byte) capNeeds {
 	case strings.HasSuffix(path, "/embeddings"):
 		n.Endpoint = "embeddings"
 		return n
+	case strings.HasSuffix(path, "/images/generations"):
+		n.Endpoint = "images"
+		return n
 	case strings.HasSuffix(path, "/chat/completions"):
 	case strings.HasSuffix(path, "/completions"):
 		n.Endpoint = "completions"
@@ -323,12 +331,14 @@ func requestNeeds(path string, body []byte) capNeeds {
 func (c Capabilities) supports(n capNeeds) (bool, string) {
 	missingEndpoint := map[string]string{
 		"chat": "chat", "completions": "text completions", "embeddings": "embeddings",
+		"images": "image generation",
 	}[n.Endpoint]
 	if c.Source == "name" {
 		// A guess is only trusted in its one confident case: a name that
-		// looks like an embedding model can't generate text. Anything else
-		// goes to the engine, which knows.
-		if n.Endpoint != "embeddings" && !c.has(c.Endpoints, n.Endpoint) && c.has(c.Endpoints, "embeddings") {
+		// looks like an embedding or image model can't generate text.
+		// Anything else goes to the engine, which knows.
+		textGen := n.Endpoint == "chat" || n.Endpoint == "completions"
+		if textGen && !c.has(c.Endpoints, n.Endpoint) && (c.has(c.Endpoints, "embeddings") || c.has(c.Endpoints, "images")) {
 			return false, missingEndpoint
 		}
 		return true, ""
@@ -369,6 +379,7 @@ func capabilityErrorHint(w http.ResponseWriter, model, missing, hint string) {
 // endpointPath: where a capability's requests go.
 var endpointPath = map[string]string{
 	"chat": "/v1/chat/completions", "completions": "/v1/completions", "embeddings": "/v1/embeddings",
+	"images": "/v1/images/generations",
 }
 
 // checkCaps writes a 400 and returns false when c can't serve this request
@@ -381,7 +392,7 @@ func checkCaps(w http.ResponseWriter, r *http.Request, name string, c Capabiliti
 	}
 	hint := ""
 	if !c.has(c.Endpoints, needs.Endpoint) {
-		for _, e := range []string{"chat", "embeddings", "completions"} {
+		for _, e := range []string{"chat", "embeddings", "images", "completions"} {
 			if c.has(c.Endpoints, e) {
 				hint = "call it at " + endpointPath[e]
 				break
