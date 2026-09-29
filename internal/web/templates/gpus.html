@@ -77,8 +77,8 @@ function usageBlock(row) {
   if (!row.agent) return '';
   if (!u.length) return '<div class="sub">Usage, last 7 days</div><div class="muted">No requests yet.</div>';
   return '<div class="sub">Usage, last 7 days</div><div class="tablewrap"><table class="mini"><thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>TTFT avg</th><th>Errors</th><th>Last</th></tr></thead><tbody>' +
-    u.map(r => '<tr><td>' + esc(r.user || 'anonymous') + '</td><td>' + r.requests + '</td><td>' + fmtN(r.prompt) + '</td><td>' + fmtN(r.output) +
-      '</td><td>' + (r.ttft_avg ? Math.round(r.ttft_avg) + ' ms' : '—') + '</td><td>' + r.errors + '</td><td>' + esc(r.last_day) + '</td></tr>').join('') +
+    u.map(r => '<tr><td data-label="User">' + esc(r.user || 'anonymous') + '</td><td data-label="Requests">' + r.requests + '</td><td data-label="Prompt">' + fmtN(r.prompt) + '</td><td data-label="Output">' + fmtN(r.output) +
+      '</td><td data-label="TTFT avg">' + (r.ttft_avg ? Math.round(r.ttft_avg) + ' ms' : '—') + '</td><td data-label="Errors">' + r.errors + '</td><td data-label="Last">' + esc(r.last_day) + '</td></tr>').join('') +
     '</tbody></table></div>';
 }
 

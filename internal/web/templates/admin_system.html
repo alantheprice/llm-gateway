@@ -23,12 +23,12 @@ async function load() {
     const cost = ((b.energy || {}).today || {}).cost_usd || 0;
     const thr = b.throughput || {};
     const lanes = b.lanes || {};
-    return '<tr><td>' + gpuName(b, url) + cardLine(b.card_summary) + '</td>' +
-      '<td>' + (lanes.capacity || '—') + '</td><td>' + (lanes.processing || 0) + '</td>' +
-      '<td>' + Math.round(thr.decode_tok_per_s || 0) + '</td>' +
-      '<td>' + Math.round(thr.prefill_tok_per_s || 0) + '</td>' +
-      '<td>' + kwh.toFixed(3) + ' kWh</td><td>$' + cost.toFixed(4) + '</td>' +
-      '<td>' + rate + '</td></tr>';
+    return '<tr><td data-label="Backend">' + gpuName(b, url) + cardLine(b.card_summary) + '</td>' +
+      '<td data-label="Lanes">' + (lanes.capacity || '—') + '</td><td data-label="Busy">' + (lanes.processing || 0) + '</td>' +
+      '<td data-label="Decode tok/s">' + Math.round(thr.decode_tok_per_s || 0) + '</td>' +
+      '<td data-label="Prefill tok/s">' + Math.round(thr.prefill_tok_per_s || 0) + '</td>' +
+      '<td data-label="Energy today">' + kwh.toFixed(3) + ' kWh</td><td data-label="Cost today">$' + cost.toFixed(4) + '</td>' +
+      '<td data-label="$ / 1M tok">' + rate + '</td></tr>';
   }).join('') || '<tr><td colspan="8" class="muted">No reachable NInfer backends.</td></tr>';
 
   const tk = usageR.data.totals;

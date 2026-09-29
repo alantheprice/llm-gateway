@@ -59,7 +59,7 @@ function cardView(card, heading) {
     .concat(Object.keys(card).filter(k => !SECTION_ORDER.includes(k) && !SKIP.has(k) && card[k] && typeof card[k] === 'object'));
   h += '<div class="sections">' + keys.map(k =>
     '<details class="sec"' + (['quantization', 'serving', 'performance_measured'].includes(k) ? ' open' : '') + '><summary>' + esc(SECTION_TITLE[k] || title(k)) + '</summary>' +
-    '<div class="tablewrap"><table class="kv">' + kvRows(card[k], 0) + '</table></div></details>').join('') + '</div>';
+    '<div class="kvwrap"><table class="kv">' + kvRows(card[k], 0) + '</table></div></details>').join('') + '</div>';
   if (Array.isArray(card.notes) && card.notes.length)
     h += '<details class="sec"><summary>Notes</summary><ul class="notes">' + card.notes.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></details>';
   h += '<details class="sec"><summary>Raw JSON</summary><pre class="raw">' + esc(JSON.stringify(card, null, 2)) + '</pre></details>';
@@ -157,6 +157,7 @@ details.model[open] > summary::before { transform: rotate(90deg); }
 .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12.5px; background: var(--card2); }
 details.sec { margin: 6px 0; }
 details.sec > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.kvwrap { overflow-x: auto; max-width: 100%; }
 table.kv { font-size: 12.5px; border-collapse: collapse; width: 100%; }
 table.kv th { text-align: left; font-weight: normal; color: var(--muted); padding: 3px 14px 3px 0; white-space: nowrap; vertical-align: top; width: 1%; }
 table.kv td { padding: 3px 0; overflow-wrap: anywhere; }

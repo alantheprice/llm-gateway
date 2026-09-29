@@ -177,22 +177,28 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
     padding: 10px 12px;
     margin-bottom: 10px;
   }
-  .tablewrap table td {
-    display: flex; justify-content: space-between; align-items: center;
-    gap: 12px;
-    border-bottom: 0; padding: 4px 0;
-    white-space: normal;
-    min-width: 0;
+  /* Label in a fixed left column, value flows as normal text on the right.
+     (A flex row here spread every inline piece of a cell across the line.) */
+  .tablewrap table tbody td {
+    display: block; position: relative;
+    border-bottom: 0; padding: 5px 0 5px 84px; min-height: 1.7em;
+    text-align: right; white-space: normal;
+    min-width: 0; overflow-wrap: anywhere;
+    background: none !important;
   }
-  .tablewrap table td::before {
+  .tablewrap table tbody td::before {
     content: attr(data-label);
-    color: var(--muted); font-size: 12px; font-weight: 500;
-    flex-shrink: 0; width: 72px;
+    position: absolute; left: 0; top: 6px; width: 76px;
+    text-align: left; color: var(--muted); font-size: 12px; font-weight: 500;
+    white-space: normal; overflow-wrap: normal;
   }
-  .tablewrap table td > * { max-width: 100%; min-width: 0; }
-  .tablewrap table td { overflow-wrap: anywhere; }
-  .tablewrap table td[style] { white-space: normal !important; }
-  .tablewrap table td code { overflow: hidden; text-overflow: ellipsis; }
+  /* Placeholder rows ("No data yet") and unlabelled cells use the full width. */
+  .tablewrap table tbody td:not([data-label]) { padding-left: 0; text-align: left; }
+  .tablewrap table tbody td:not([data-label])::before { content: none; }
+  .tablewrap table tbody td > * { max-width: 100%; }
+  .tablewrap table tbody td .btn { margin-top: 2px; }
+  .tablewrap table tbody td[style] { white-space: normal !important; }
+  .tablewrap table tbody td code { overflow: hidden; text-overflow: ellipsis; }
 }
 th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px; border-bottom: 1px solid var(--border); }
 td { padding: 9px 8px; border-bottom: 1px solid var(--border2); }
