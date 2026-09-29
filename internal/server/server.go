@@ -672,6 +672,7 @@ func (s *Server) PollOnce() {
 				return
 			}
 			if l := s.pollLlamaCpp(u); l != nil {
+				s.keepNinferUsage(u, l)
 				s.tracker.Set(u, l)
 				s.refreshMaxContext(u)
 				return
@@ -699,6 +700,7 @@ func (s *Server) PollOnce() {
 				return
 			}
 			if l := s.pollLlamaCpp(u); l != nil {
+				s.keepNinferUsage(u, l)
 				s.tracker.Set(u, l)
 				return
 			}
@@ -926,6 +928,29 @@ func (s *Server) pollLlamaCpp(backend string) *routing.Load {
 		l.Waiting = int(vals["llamacpp:requests_deferred"])
 	}
 	return l
+}
+
+// keepNinferUsage: NInfer builds with a llama.cpp-style /slots (older
+// ports) still serve NInfer's /usage. Label them NInfer and keep their
+// energy and token counters, as for any NInfer engine.
+func (s *Server) keepNinferUsage(backend string, l *routing.Load) {
+	usage, ok := s.backendJSON(backend, "/usage", 3*time.Second)
+	if !ok {
+		return
+	}
+	if _, ok := usage["energy"].(map[string]any); !ok {
+		return
+	}
+	l.Engine = "ninfer"
+	if en, ok := usage["energy"].(map[string]any); ok {
+		if today, ok := en["today"].(map[string]any); ok {
+			l.EnergyKWH, _ = toF(today["kwh"])
+		}
+	}
+	s.mu.Lock()
+	s.lastMetrics[backend] = usage
+	s.mu.Unlock()
+	s.recordGPUDaily(backend, usage)
 }
 
 func (s *Server) pollVLLM(backend string) *routing.Load {

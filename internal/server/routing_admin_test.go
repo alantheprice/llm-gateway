@@ -377,3 +377,36 @@ func TestPollLlamaCppAndVLLMLanes(t *testing.T) {
 		t.Fatalf("vLLM lanes = %+v, want 4 from default_max_seqs", v)
 	}
 }
+
+// An NInfer build with llama.cpp-style /slots is labelled NInfer, and its
+// /usage (energy, tokens) is kept like any NInfer engine's.
+func TestPollNinferWithLlamaCppSlots(t *testing.T) {
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slots":
+			fmt.Fprint(w, `[{"id":0,"is_processing":false},{"id":1,"is_processing":true}]`)
+		case "/usage":
+			fmt.Fprint(w, `{"energy":{"today":{"kwh":0.4,"tokens":1000}},"uptime":{"seconds":5}}`)
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"fim"}]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer eng.Close()
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	s.mu.Lock()
+	s.backends[eng.URL] = &BackendInfo{Models: []string{"fim"}, Chat: true}
+	s.mu.Unlock()
+	s.PollOnce()
+	l := s.tracker.Get(eng.URL)
+	if l == nil || l.Engine != "ninfer" || l.Lanes != 2 || l.Running != 1 || l.EnergyKWH != 0.4 {
+		t.Fatalf("load = %+v", l)
+	}
+	s.mu.Lock()
+	raw := s.lastMetrics[eng.URL]
+	s.mu.Unlock()
+	if usageNum(raw, "energy", "today", "kwh") != 0.4 {
+		t.Fatalf("usage not kept: %v", raw)
+	}
+}
