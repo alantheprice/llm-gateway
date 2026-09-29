@@ -146,7 +146,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/mcp/oauth/callback", s.handleMCPOAuthCallback)
 	mux.HandleFunc("/api/chats", s.handleAPIChats)
 	mux.HandleFunc("/api/alerts", s.handleAPIAlerts)
-	mux.HandleFunc("/admin/analytics/import", s.handleRequestLogImport)
 	mux.HandleFunc("/api/chats/", s.handleAPIChats)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{

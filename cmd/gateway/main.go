@@ -161,7 +161,7 @@ func main() {
 
 	go func() {
 		for {
-			if n, err := pbApp.PruneRequests(server.AnalyticsRetentionDays); err != nil && n == 0 {
+			if n, err := pbApp.PruneRequests(14); err != nil && n == 0 {
 				log.Printf("analytics prune: %v", err)
 			} else if n > 0 {
 				log.Printf("analytics: pruned %d old request rows", n)

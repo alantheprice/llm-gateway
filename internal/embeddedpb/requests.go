@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // InitRequestsSchema: create the table + indexes (idempotent).
@@ -422,81 +420,4 @@ func (a *App) QueryTTFTPercentile(days int, backends []string, q float64) (float
 	err := a.pb.DB().NewQuery("SELECT ttft_ms AS t FROM requests WHERE " + where +
 		" ORDER BY ttft_ms LIMIT 1 OFFSET {:off}").Bind(params).One(&v)
 	return v.T, err
-}
-
-// InsertRequestsTx inserts a batch in one transaction (bulk imports).
-func (a *App) InsertRequestsTx(recs []RequestRecord) error {
-	if a.pb.DB() == nil {
-		return fmt.Errorf("analytics: DB not open")
-	}
-	return a.pb.RunInTransaction(func(tx core.App) error {
-		for _, r := range recs {
-			if _, err := tx.DB().NewQuery(`
-				INSERT INTO requests (ts, ts_hour, day, user, key_id, model, backend,
-					kind, status, prompt, cached, output,
-					ttft_ms, prefill_ms, decode_ms, total_ms, tok_per_s, reuse_path,
-					draft_n, draft_accepted, queue_ms, requested_model)
-				VALUES ({:ts}, {:ts_hour}, {:day}, {:user}, {:key_id}, {:model},
-					{:backend}, {:kind}, {:status}, {:prompt}, {:cached}, {:output},
-					{:ttft}, {:prefill}, {:decode}, {:total}, {:tps}, {:reuse},
-					{:draft_n}, {:draft_acc}, {:queue}, {:requested})`).Bind(map[string]any{
-				"ts":      r.TS.UTC().Format(time.RFC3339Nano),
-				"ts_hour": r.TS.UTC().Format("2006-01-02T15"),
-				"day":     r.TS.UTC().Format("2006-01-02"),
-				"user":    r.User, "key_id": r.KeyID, "model": r.Model,
-				"backend": r.Backend, "kind": r.Kind, "status": r.Status,
-				"prompt": r.Prompt, "cached": r.Cached, "output": r.Output,
-				"ttft": r.TTFTms, "prefill": r.Prefillms, "decode": r.Decodems,
-				"total": r.Totalms, "tps": r.TokPerSec, "reuse": r.ReusePath,
-				"draft_n": r.DraftN, "draft_acc": r.DraftAccepted, "queue": r.QueueWaitms,
-				"requested": r.Requested,
-			}).Execute(); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-// EarliestRequestTS: the first logged request for any of backends
-// (zero time when there is none).
-func (a *App) EarliestRequestTS(backends []string) (time.Time, error) {
-	if a.pb.DB() == nil || len(backends) == 0 {
-		return time.Time{}, fmt.Errorf("analytics: DB not open")
-	}
-	ph := make([]string, len(backends))
-	params := map[string]any{}
-	for i, b := range backends {
-		k := fmt.Sprintf("b%d", i)
-		ph[i] = "{:" + k + "}"
-		params[k] = b
-	}
-	var r struct {
-		TS string `db:"ts"`
-	}
-	if err := a.pb.DB().NewQuery(`SELECT COALESCE(MIN(ts), '') AS ts FROM requests WHERE backend IN (` +
-		strings.Join(ph, ",") + `)`).Bind(params).One(&r); err != nil || r.TS == "" {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, r.TS)
-}
-
-// DeleteRequestsBy removes rows with user label for backends (re-imports).
-func (a *App) DeleteRequestsBy(user string, backends []string) (int64, error) {
-	if a.pb.DB() == nil || len(backends) == 0 {
-		return 0, fmt.Errorf("analytics: DB not open")
-	}
-	ph := make([]string, len(backends))
-	params := map[string]any{"user": user}
-	for i, b := range backends {
-		k := fmt.Sprintf("b%d", i)
-		ph[i] = "{:" + k + "}"
-		params[k] = b
-	}
-	res, err := a.pb.DB().NewQuery(`DELETE FROM requests WHERE user = {:user} AND backend IN (` +
-		strings.Join(ph, ",") + `)`).Bind(params).Execute()
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
 }
