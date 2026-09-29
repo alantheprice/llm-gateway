@@ -35,3 +35,9 @@ jobs:
 
       - name: test
         run: go test -race -count=1 ./...
+
+      - name: build link agents (every platform the installer serves)
+        run: |
+          for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build -o /dev/null ./cmd/link-agent
+          done

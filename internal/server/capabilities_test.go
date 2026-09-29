@@ -179,3 +179,18 @@ func TestAgentDownloadPlatforms(t *testing.T) {
 		t.Errorf("missing-build message = %s", w.Body)
 	}
 }
+
+// A tagged release without a local agent build redirects to its own
+// GitHub release asset.
+func TestAgentDownloadReleaseFallback(t *testing.T) {
+	old := Version
+	Version = "v9.9.9"
+	defer func() { Version = old }()
+	t.Setenv("LLM_GATEWAY_RELEASE_REPO", "owner/repo")
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/downloads/llm-link-agent-darwin-arm64", nil))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "https://github.com/owner/repo/releases/download/v9.9.9/llm-link-agent-darwin-arm64" {
+		t.Fatalf("fallback = %d %s", w.Code, w.Header().Get("Location"))
+	}
+}

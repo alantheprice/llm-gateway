@@ -271,6 +271,19 @@ func enginePort(addr string) int {
 	return n
 }
 
+// Version: the gateway's release (set by main from -ldflags); "dev" for
+// source builds. Tagged releases fall back to their own GitHub release for
+// agent downloads they don't have locally.
+var Version = "dev"
+
+// releaseRepo: where releases live (owner/name); overridable for forks.
+func releaseRepo() string {
+	if r := os.Getenv("LLM_GATEWAY_RELEASE_REPO"); r != "" {
+		return r
+	}
+	return "alantheprice/llm-gateway"
+}
+
 // agentPlatforms: platforms a link agent is built for (see deploy build).
 var agentPlatforms = map[string]bool{
 	"linux-amd64": true, "linux-arm64": true, "darwin-arm64": true, "darwin-amd64": true,
@@ -311,6 +324,12 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", `attachment; filename="llm-link-agent"`)
 		http.ServeContent(w, r, "llm-link-agent", st.ModTime(), f)
+		return
+	}
+	// Not installed next to the gateway: a tagged release fetches the agent
+	// from its own GitHub release (same version, so the protocol matches).
+	if strings.HasPrefix(Version, "v") {
+		http.Redirect(w, r, "https://github.com/"+releaseRepo()+"/releases/download/"+Version+"/llm-link-agent-"+platform, http.StatusFound)
 		return
 	}
 	errBody(w, http.StatusNotFound, "agent binary for "+platform+" not available on this gateway")

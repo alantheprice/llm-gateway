@@ -99,8 +99,14 @@ if [ "$BUILD" = "1" ]; then
   git clone --depth 1 "https://github.com/${REPO}.git" "$TMP/src"
   (cd "$TMP/src" \
     && (cd internal/server && DOCS_DIR=../../docs OUT_DIR=guide go run generate_guide.go) \
-    && go build -ldflags "-s -w -X main.version=$(git -C "$TMP/src" describe --tags --always)" -o "$TMP/llm-gateway" ./cmd/gateway)
+    && go build -ldflags "-s -w -X main.version=$(git -C "$TMP/src" describe --tags --always)" -o "$TMP/llm-gateway" ./cmd/gateway \
+    && for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+         CGO_ENABLED=0 GOOS=${p%/*} GOARCH=${p#*/} go build -ldflags "-s -w" -o "$TMP/llm-link-agent-${p%/*}-${p#*/}" ./cmd/link-agent
+       done)
   $SUDO install -m755 "$TMP/llm-gateway" "$OPT_DIR/llm-gateway"
+  # Link agents for every platform: the gateway serves them to machines
+  # users link (My GPUs → Link a GPU).
+  for f in "$TMP"/llm-link-agent-*; do $SUDO install -m755 "$f" "$OPT_DIR/"; done
   rm -rf "$TMP"
 else
   A=$(arch)
@@ -110,6 +116,11 @@ else
   if need curl; then curl -fsSL "$URL" -o "$TMP/pkg.tgz"; else wget -qO "$TMP/pkg.tgz" "$URL"; fi
   tar xzf "$TMP/pkg.tgz" -C "$TMP"
   $SUDO install -m755 "$TMP/llm-gateway-linux-${A}" "$OPT_DIR/llm-gateway"
+  # Link agents for every platform (packages from v0.3.0 on carry them; the
+  # gateway falls back to this release's GitHub assets otherwise).
+  if [ -d "$TMP/agents" ]; then
+    for f in "$TMP"/agents/llm-link-agent-*; do $SUDO install -m755 "$f" "$OPT_DIR/"; done
+  fi
   rm -rf "$TMP"
 fi
 
@@ -120,9 +131,7 @@ if [ ! -f "$OPT_DIR/llm_gateway.conf" ]; then
 {
   "gateway": {"port": PORT_PLACEHOLDER, "trust_local_networks": true, "models_require_auth": false},
   "local_networks": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
-  "public_models": ["*"],
   "model_pools": {},
-  "overflow_pairs": {},
   "discovery": {"local_ports": [8000,8001,8002,8003,8004,8005,8006,8007,8008,8009,8010]},
   "metrics": {"poll_interval": 10, "stale_threshold": 30, "default_max_seqs": 3},
   "cache": {"ttl": 60}

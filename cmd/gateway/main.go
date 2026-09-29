@@ -31,6 +31,7 @@ import (
 var version = "dev"
 
 func main() {
+	server.Version = version
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println("llm-gateway " + version)
 		return
