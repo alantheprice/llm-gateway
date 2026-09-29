@@ -1,6 +1,60 @@
 {{define "title"}}System — LLM Gateway{{end}}
 {{define "scripts"}}
 <script>
+// Users table: any time range, as a table or a chart.
+let userRange = null, userView = null, userData = null;
+async function loadUsers() {
+  const r = userRange.get();
+  const q = r.from ? '?from=' + r.from + '&to=' + r.to : '';
+  const res = await api('/api/usage/range' + q);
+  if (!res.ok) { document.getElementById('userbody').innerHTML = '<p class="muted">' + esc(res.data.error || 'unavailable') + '</p>'; return; }
+  userData = res.data;
+  drawUsers();
+}
+function drawUsers() {
+  const d = userData, r = userRange.get(), box = document.getElementById('userbody');
+  if (!d) return;
+  const users = d.users || [];
+  const total = users.reduce((a, u) => a + u.total_tokens, 0);
+  document.getElementById('usernote').textContent = r.label + ' · ' + users.length + ' user' + (users.length === 1 ? '' : 's') +
+    ' · ' + fmtNum(total) + ' tokens' + (r.preset === 'all' && d.first_day ? ' · daily records start ' + TZ.dayLabel(d.first_day) + '; totals include earlier usage' : '') +
+    (r.preset !== 'all' ? ' · days are UTC' : '');
+  if (!users.length) { box.innerHTML = '<p class="muted">No usage in this range.</p>'; return; }
+  if (userView.get() === 'table') {
+    box.innerHTML = '<div class="tablewrap"><table><thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Cached</th><th>Output</th><th>Total</th><th>Share</th></tr></thead><tbody>' +
+      users.map(u => '<tr><td data-label="User"><strong>' + esc(u.user) + '</strong></td>' +
+        '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
+        '<td data-label="Prompt">' + fmtNum(u.prompt_tokens) + '</td>' +
+        '<td data-label="Cached">' + fmtNum(u.cached_tokens) + '</td>' +
+        '<td data-label="Output">' + fmtNum(u.output_tokens) + '</td>' +
+        '<td data-label="Total">' + fmtNum(u.total_tokens) + '</td>' +
+        '<td data-label="Share">' + (total ? (100 * u.total_tokens / total).toFixed(1) + '%' : '—') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    return;
+  }
+  // Chart: each user's total, and (over several days) tokens per day for
+  // the top users, the rest grouped as Others.
+  const top = users.slice(0, 7), color = u => SERIES_COLORS[top.indexOf(u) % SERIES_COLORS.length];
+  let h = Charts.hbars({ items: users.slice(0, 15).map(u => ({ label: u.user, value: u.total_tokens,
+    color: top.includes(u) ? color(u) : '#8b949e', sub: total ? (100 * u.total_tokens / total).toFixed(1) + '%' : '' })) });
+  const days = d.days || [];
+  if (days.length > 1) {
+    const series = top.map(u => ({ name: u.user, color: color(u),
+      values: days.map((day, i) => ({ label: TZ.dayLabel(day), value: (d.series[u.user] || [])[i] || 0 })) }));
+    const rest = users.slice(top.length);
+    if (rest.length) series.push({ name: 'Others', color: '#8b949e',
+      values: days.map((day, i) => ({ label: TZ.dayLabel(day), value: rest.reduce((a, u) => a + ((d.series[u.user] || [])[i] || 0), 0) })) });
+    h += '<h3 style="font-size:13px;margin:16px 0 6px">Tokens per day</h3>' +
+      Charts.linesMulti({ series, height: 240, format: Charts.fmtShort, yLabel: 'tokens / day (UTC)' });
+  }
+  box.innerHTML = h;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  userRange = RangePicker.mount(document.getElementById('userrange'), { id: 'sys-users', value: { preset: 'all' }, onChange: loadUsers });
+  userView = ViewToggle.mount(document.getElementById('userview'), { id: 'sys-users', onChange: drawUsers });
+  loadUsers();
+});
+
 // Alerts: what's wrong now, and the last notifications.
 async function loadAlerts() {
   const r = await api('/api/alerts');
@@ -61,17 +115,7 @@ async function load() {
     '<div class="stat"><div class="v">' + fmtNum(tk.tokens_cached) + '</div><div class="l">cached (prefix hits)</div></div>' +
     '<div class="stat"><div class="v">' + fmtNum(tk.tokens_output) + '</div><div class="l">output tokens</div></div>';
 
-  const ur = document.getElementById('userrows');
   const users = Object.entries((usersR.data.all_time || {}));
-  ur.innerHTML = users.map(([name, u]) =>
-    '<tr>' +
-    '<td data-label="User"><strong>' + esc(name) + '</strong></td>' +
-    '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
-    '<td data-label="Prompt">' + fmtNum(u.prompt_tokens) + '</td>' +
-    '<td data-label="Output">' + fmtNum(u.output_tokens) + '</td>' +
-    '<td data-label="Total">' + fmtNum(u.total_tokens) + '</td></tr>'
-  ).join('') || '<tr><td colspan="5" class="muted">No usage recorded yet.</td></tr>';
-
   const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
   const kr = document.getElementById('kindrows');
   const kindRows = [];
@@ -127,7 +171,7 @@ async function loadCharts() {
   if (kn) kn.textContent = TZ.bucketNote(days[days.length - 1]);
 }
 
-document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); loadAlerts(); });
+document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); loadAlerts(); loadUsers(); });
 load(); setInterval(load, 30000);
 loadCharts(); setInterval(loadCharts, 60000);
 </script>
@@ -187,11 +231,10 @@ loadCharts(); setInterval(loadCharts, 60000);
   </div>
 
   <div class="card">
-    <h2>Users (token consumption)</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>Total</th></tr></thead>
-      <tbody id="userrows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
-    </table></div>
+    <div class="panel-head"><h2>Users (token consumption)</h2>
+      <div class="panel-tools"><div id="userrange"></div><div id="userview"></div></div></div>
+    <p class="muted" id="usernote" style="font-size:12px;margin:0 0 8px"></p>
+    <div id="userbody"><p class="muted">Loading…</p></div>
   </div>
 </div>
 {{end}}

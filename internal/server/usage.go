@@ -529,3 +529,108 @@ func (u *UsageStore) History(username string, isAdmin bool) ([]string, map[strin
 	}
 	return days, out
 }
+
+// UserRange: one user's usage over a range of UTC days.
+type UserRange struct {
+	User     string `json:"user"`
+	Requests int    `json:"requests"`
+	Prompt   int    `json:"prompt_tokens"`
+	Cached   int    `json:"cached_tokens"`
+	Output   int    `json:"output_tokens"`
+	Total    int    `json:"total_tokens"`
+	// Kinds: tokens by model type (chat / embeddings / fim).
+	Kinds map[string]int `json:"kinds,omitempty"`
+}
+
+// Range sums usage per user over the UTC days from..to (inclusive,
+// "YYYY-MM-DD"; from "" = since the first recorded day). only limits it to
+// those users (nil = everyone). It returns the totals and, for charts, each
+// user's tokens per day over the days that have data.
+func (u *UsageStore) Range(from, to string, only map[string]bool) ([]UserRange, []string, map[string][]int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var days []string
+	for d := range u.Data.Daily {
+		if (from == "" || d >= from) && (to == "" || d <= to) {
+			days = append(days, d)
+		}
+	}
+	sort.Strings(days)
+	byUser := map[string]*UserRange{}
+	series := map[string][]int{}
+	for i, d := range days {
+		for name, usr := range u.Data.Daily[d] {
+			if usr == nil || (only != nil && !only[name]) {
+				continue
+			}
+			r := byUser[name]
+			if r == nil {
+				r = &UserRange{User: name, Kinds: map[string]int{}}
+				byUser[name] = r
+				series[name] = make([]int, len(days))
+			}
+			r.Requests += usr.Requests
+			r.Prompt += usr.PromptTokens
+			r.Cached += usr.CachedTokens
+			r.Output += usr.OutputTokens
+			for k, kt := range usr.Kinds {
+				if kt != nil {
+					r.Kinds[k] += kt.PromptTokens + kt.OutputTokens
+				}
+			}
+			series[name][i] += usr.PromptTokens + usr.OutputTokens
+		}
+	}
+	out := make([]UserRange, 0, len(byUser))
+	for _, r := range byUser {
+		r.Total = r.Prompt + r.Output
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].User < out[j].User
+	})
+	return out, days, series
+}
+
+// LifetimeRange: all-time totals per user (including usage from before
+// per-day records began).
+func (u *UsageStore) LifetimeRange(only map[string]bool) []UserRange {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := []UserRange{}
+	for name, usr := range u.Data.Users {
+		if usr == nil || (only != nil && !only[name]) {
+			continue
+		}
+		r := UserRange{User: name, Requests: usr.Requests, Prompt: usr.PromptTokens, Cached: usr.CachedTokens,
+			Output: usr.OutputTokens, Total: usr.PromptTokens + usr.OutputTokens, Kinds: map[string]int{}}
+		for k, kt := range usr.Kinds {
+			if kt != nil {
+				r.Kinds[k] = kt.PromptTokens + kt.OutputTokens
+			}
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].User < out[j].User
+	})
+	return out
+}
+
+// Days: the recorded UTC days, oldest first.
+func (u *UsageStore) Days() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	days := make([]string, 0, len(u.Data.Daily))
+	for d := range u.Data.Daily {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	return days
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 // handleUsageUsers: GET /usage/users — per-user token accounting (admin only).
@@ -71,4 +72,47 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 // embedded SVG.
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/static/favicon.svg", http.StatusFound)
+}
+
+// handleUsageRange: GET /api/usage/range?from=YYYY-MM-DD&to=YYYY-MM-DD —
+// usage per user over a range of UTC days (both empty = all time), with a
+// per-day series for charts. Admins see every user; others only themselves.
+func (s *Server) handleUsageRange(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.sessionFrom(r)
+	if !ok {
+		errBody(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	var only map[string]bool
+	if sess.Role != "admin" {
+		only = map[string]bool{sess.U: true}
+	}
+	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	for _, d := range []string{from, to} {
+		if d != "" {
+			if _, err := time.Parse("2006-01-02", d); err != nil {
+				errBody(w, http.StatusBadRequest, "dates are YYYY-MM-DD")
+				return
+			}
+		}
+	}
+	if from != "" && to != "" && from > to {
+		from, to = to, from
+	}
+	s.usage.Flush()
+	users, days, series := s.usage.Range(from, to, only)
+	out := map[string]any{"from": from, "to": to, "days": days, "series": series, "users": users,
+		"today": time.Now().UTC().Format("2006-01-02")}
+	if from == "" && to == "" {
+		// All time: lifetime totals (they include usage from before daily
+		// records began); the series covers the recorded days.
+		out["users"] = s.usage.LifetimeRange(only)
+	}
+	var first string
+	if all := s.usage.Days(); len(all) > 0 {
+		first = all[0]
+	}
+	out["first_day"] = first
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }

@@ -137,5 +137,16 @@ const Charts = (() => {
       `</svg><div class="muted">max ${format(max)}</div></div>`;
   }
 
-  return { barsMulti, linesMulti, sparkline, fmtShort };
+  // Horizontal bars (HTML, reflows on narrow screens): each item's share
+  // of the largest. items: [{label, value, color?, sub?}]
+  function hbars({ items, format = fmtShort, color = '#58a6ff' }) {
+    if (!items.length) return '<p class="muted">No data for this range.</p>';
+    const max = Math.max(...items.map(i => i.value || 0)) || 1;
+    return '<div class="hbars">' + items.map(i =>
+      `<div class="hbar"><div class="hb-label" title="${esc(i.label)}">${esc(i.label)}${i.sub ? ` <span class="muted">${esc(i.sub)}</span>` : ''}</div>` +
+      `<div class="hb-track"><div class="hb-fill" style="width:${Math.max(0.5, 100 * (i.value || 0) / max)}%;background:${i.color || color}"></div></div>` +
+      `<div class="hb-val">${format(i.value || 0)}</div></div>`).join('') + '</div>';
+  }
+
+  return { barsMulti, linesMulti, sparkline, hbars, fmtShort };
 })();

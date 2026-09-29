@@ -233,6 +233,27 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
 
 /* ---------- charts (inline SVG) ---------- */
 .chart-wrap { width: 100%; overflow-x: auto; }
+/* Segmented control (RangePicker, ViewToggle). */
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { background: none; border: 0; border-right: 1px solid var(--border); color: var(--muted);
+  font: inherit; font-size: 12.5px; padding: 5px 10px; cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed="true"] { background: var(--card2); color: var(--text); font-weight: 600; }
+.rangepick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rp-custom { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rp-custom input { padding: 4px 6px; font-size: 13px; }
+.panel-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.panel-head h2 { margin: 0; }
+.panel-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; flex: 1 1 auto; min-width: 0; }
+.panel-tools > * { min-width: 0; max-width: 100%; }
+/* Horizontal bars (Charts.hbars). */
+.hbars { display: flex; flex-direction: column; gap: 6px; }
+.hbar { display: grid; grid-template-columns: minmax(80px, 180px) 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.hb-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb-track { height: 12px; background: var(--border2); border-radius: 6px; overflow: hidden; }
+.hb-fill { height: 100%; border-radius: 6px; }
+.hb-val { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 48px; text-align: right; }
 .chart-wrap svg { display: block; width: 100%; height: auto; }
 .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .chart-legend span { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
