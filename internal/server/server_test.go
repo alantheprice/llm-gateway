@@ -370,9 +370,9 @@ func TestModelsCatalogHidesPoolMembersSynthesizesVirtual(t *testing.T) {
 	}
 }
 
-// Chat offers chat models only: the shared pool, not embedding or
-// code-completion models, and not a pool GPU's own id (admins get those in
-// a separate group). The chat API refuses embedding models clearly.
+// Chat offers every model that can produce text — the shared pool and the
+// FIM model, not the embedding model — and not a pool GPU's own id (admins
+// get those in a separate group). The chat API refuses embedding models.
 func TestChatConfigModels(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{
@@ -400,11 +400,11 @@ func TestChatConfigModels(t *testing.T) {
 		}
 		return out.Models, out.Groups
 	}
-	if m, _ := get("bob", "user"); len(m) != 1 || m[0] != "qwen3.8-27b" {
-		t.Fatalf("user chat models = %v, want only the pool", m)
+	if m, _ := get("bob", "user"); len(m) != 2 || m[0] != "qwen3.5-9b-fim" || m[1] != "qwen3.8-27b" {
+		t.Fatalf("user chat models = %v, want the FIM model and the pool", m)
 	}
 	m, g := get("root", "admin")
-	if len(m) != 2 || len(g) != 2 || g[1].Models[0] != "qwen3.8-27b-5090" {
+	if len(m) != 3 || len(g) != 2 || g[1].Models[0] != "qwen3.8-27b-5090" {
 		t.Fatalf("admin chat models = %v groups %+v", m, g)
 	}
 

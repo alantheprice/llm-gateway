@@ -167,11 +167,11 @@ type chatModelGroup struct {
 	Models []string `json:"models"`
 }
 
-// isChatModel: false for embedding and fill-in-the-middle models, which
-// can't hold a conversation. Judged per model name (the same rule usage
-// accounting uses); the engine-level embeddings flag can't tell models on
-// one engine apart.
-func (s *Server) isChatModel(id string) bool { return kindFor(id) == "chat" }
+// isChatModel: false only for embedding models, which can't produce text.
+// FIM (code-completion) models answer chat requests too. Judged per model
+// name (the same rule usage accounting uses); the engine-level embeddings
+// flag can't tell models on one engine apart.
+func (s *Server) isChatModel(id string) bool { return kindFor(id) != "embeddings" }
 
 // chatModelGroups: what the chat UI offers — chat models from the public
 // catalog (shared pools, standalone models), the user's own and shared
