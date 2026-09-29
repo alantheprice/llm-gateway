@@ -87,6 +87,13 @@ type CacheCfg struct {
 
 // PriceBook: operator-set prices ($/1M tokens) for value-vs-cost
 // reporting. These are YOUR numbers — the gateway never derives them.
+// ImagePromptingCfg: improve text-to-image prompts with a text model before
+// generating (like DALL·E 3's prompt rewriting). Model "" = off.
+type ImagePromptingCfg struct {
+	Model        string `json:"model"`                   // text model that rewrites prompts
+	SystemPrompt string `json:"system_prompt,omitempty"` // "" = the built-in instructions
+}
+
 type PriceBook struct {
 	PromptUSDPerM float64 `json:"prompt_usd_per_m"` // non-cached prompt
 	CachedUSDPerM float64 `json:"cached_usd_per_m"` // cached prompt tokens
@@ -123,6 +130,8 @@ type Config struct {
 	// service is "worth" for value-vs-cost reporting. Not derived; you
 	// set these. 0 = unpriced (value chart reads zero until set).
 	PriceBook PriceBook `json:"price_book"`
+	// ImagePrompting: prompt improvement for /v1/images/generations.
+	ImagePrompting ImagePromptingCfg `json:"image_prompting"`
 
 	path     string
 	mtime    time.Time

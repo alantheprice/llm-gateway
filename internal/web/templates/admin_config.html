@@ -143,6 +143,7 @@ function collect() {
       output_usd_per_m: parseFloat(val('e_pb_tg')) || 0,
     },
     hosts,
+    image_prompting: { model: val('ip_model'), system_prompt: val('ip_sys').trim() },
   };
 }
 
@@ -164,11 +165,28 @@ document.getElementById('reloadbtn').addEventListener('click', async () => {
 });
 document.getElementById('resetbtn').addEventListener('click', load);
 
+// Image prompting: the text model that improves image prompts, chosen from
+// the chat models the gateway can reach.
+async function renderImagePrompting(c) {
+  const ip = c.image_prompting || {};
+  const cc = await api('/chat/config');
+  const models = (cc.ok && cc.data.models) || [];
+  const opts = ['<option value="">Off: send prompts as written</option>']
+    .concat(models.map(m => '<option value="' + escAttr(m) + '"' + (m === ip.model ? ' selected' : '') + '>' + esc(m) + '</option>'));
+  if (ip.model && !models.includes(ip.model)) opts.push('<option value="' + escAttr(ip.model) + '" selected>' + esc(ip.model) + ' (not available now)</option>');
+  document.getElementById('imggrid').innerHTML =
+    field('prompt model', '<select name="ip_model">' + opts.join('') + '</select>',
+      'Before an image is generated, this text model rewrites the prompt into a detailed description (returned as revised_prompt). Requests can opt out with "enhance_prompt": false.') +
+    field('instructions (optional)', '<textarea name="ip_sys" rows="4" placeholder="Leave empty for the built-in instructions">' + esc(ip.system_prompt || '') + '</textarea>',
+      'The system prompt given to the prompt model.');
+}
+
 async function load() {
   const r = await api('/admin/config');
   if (!r.ok) { if (r.status === 401) { location = '/'; return; }
     flash(r.data.error || 'failed to load config', true); return; }
   render(r.data.config);
+  renderImagePrompting(r.data.config);
   document.getElementById('confpath').textContent = 'file: ' + r.data.confPath;
 }
 load();
@@ -207,6 +225,11 @@ load();
     <div id="hostsbox"></div>
     <button type="button" class="btn small" id="addhost">+ host</button>
     <p class="muted" style="font-size:12px;margin:8px 0 0">One entry per physical box. GPU energy comes from the engines' NVML; overhead watts and capex drive the full-cost view at /admin/costs.</p>
+  </div>
+
+  <div class="card">
+    <h2>Image generation</h2>
+    <div class="cfggrid" id="imggrid"></div>
   </div>
 
   <div class="card">

@@ -469,6 +469,14 @@ func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 	}
 	r = withClientModel(r, req.Model)
 	noteAccess(r, user, req.Model, false)
+	// Only models that generate images get their prompt improved first.
+	if c, ok := s.capsFor(req.Model, privateCaller(user, keyID)); ok {
+		if !checkCaps(w, r, req.Model, c, body) {
+			return
+		}
+		r, body = s.prepareImageRequest(r, body)
+		noteAccess(r, user, req.Model, false)
+	}
 	if poolName, pool, isPool := s.poolFor(req.Model); isPool {
 		s.routePool(w, r, &pool, poolName, body, user, keyID)
 		return

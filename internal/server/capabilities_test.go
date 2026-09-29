@@ -250,3 +250,61 @@ func TestImageGeneration(t *testing.T) {
 		t.Fatalf("flux caps = %+v", c)
 	}
 }
+
+// Prompt improvement: the configured text model rewrites the prompt, the
+// image engine receives the rewrite, and the response carries it as
+// revised_prompt; enhance_prompt:false sends the original and the flag
+// never reaches the engine.
+func TestImagePromptImprovement(t *testing.T) {
+	var got []string
+	var mu sync.Mutex
+	eng := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		b, _ := io.ReadAll(r.Body)
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"flux-dev"},{"id":"writer"}]}`)
+		case "/v1/chat/completions":
+			fmt.Fprint(w, `{"id":"c","model":"writer","choices":[{"message":{"role":"assistant","content":"<think>plan</think>\"A red fox in fresh snow at dawn, soft golden light, 85mm photo\""}}],"usage":{"prompt_tokens":20,"completion_tokens":15}}`)
+		case "/v1/images/generations":
+			var m map[string]any
+			json.Unmarshal(b, &m)
+			mu.Lock()
+			got = append(got, fmt.Sprint(m["prompt"], "|", m["enhance_prompt"]))
+			mu.Unlock()
+			fmt.Fprint(w, `{"created":1,"data":[{"b64_json":"iVBORw0KGgo="}]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer eng.Close()
+	s := testServer(t, `{"gateway":{"port":0,"trust_local_networks":true},"local_networks":["192.168.1.0/24"],
+	 "image_prompting":{"model":"writer"}}`, nil)
+	s.mu.Lock()
+	s.backends[eng.URL] = &BackendInfo{Models: []string{"flux-dev", "writer"}, Chat: true}
+	s.mu.Unlock()
+	post := func(body string) map[string]any {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/v1/images/generations", strings.NewReader(body))
+		r.RemoteAddr = "192.168.1.50:5555"
+		s.Handler().ServeHTTP(w, r)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != 200 {
+			t.Fatalf("images: %d %s", w.Code, w.Body)
+		}
+		return out
+	}
+	out := post(`{"model":"flux-dev","prompt":"a fox"}`)
+	item := out["data"].([]any)[0].(map[string]any)
+	want := "A red fox in fresh snow at dawn, soft golden light, 85mm photo"
+	if item["revised_prompt"] != want {
+		t.Fatalf("revised_prompt = %v", item["revised_prompt"])
+	}
+	post(`{"model":"flux-dev","prompt":"a fox","enhance_prompt":false}`)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != want+"|<nil>" || got[1] != "a fox|<nil>" {
+		t.Fatalf("engine got prompts %q", got)
+	}
+}

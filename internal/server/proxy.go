@@ -202,6 +202,9 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request,
 	if cm := clientModelOf(r); cm != "" && status < 400 {
 		out = setModelField(out, cm)
 	}
+	if rp := revisedPromptOf(r); rp != "" && status < 400 {
+		out = withRevisedPrompt(out, rp)
+	}
 	w.Write(out)
 	pt, ot, cached, extras := usageFromJSON(buffered, est)
 	if extras.TTFTms == 0 {
