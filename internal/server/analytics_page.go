@@ -16,5 +16,5 @@ func (s *Server) handleAnalyticsPage(w http.ResponseWriter, r *http.Request) {
 		errBody(w, 403, "admin only")
 		return
 	}
-	s.renderPage(w, r, "analytics.html", "analytics", "Analytics")
+	s.renderPage(w, r, "analytics.html", "analytics", "Performance")
 }

@@ -155,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.HandleFunc("/api/keys", s.handleKeys) // UI JS calls /api/keys; same API handler
 	mux.HandleFunc("/account", s.handleAccountPage)
+	mux.HandleFunc("/settings", s.handleSettingsPage)
+	mux.HandleFunc("/api/prefs", s.handleAPIPrefs)
 	mux.HandleFunc("/account/update", s.handleAccountUpdate)
 	mux.HandleFunc("/me", s.handleMe)
 	mux.HandleFunc("/usage/me", s.handleMyUsagePage)

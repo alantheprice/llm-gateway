@@ -6,8 +6,11 @@ package server
 import (
 	"bytes"
 	"embed"
+	"html/template"
 	"net/http"
 	"strings"
+
+	"llmgateway/internal/web"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -18,31 +21,33 @@ import (
 //go:embed guide/*.html
 var guideFS embed.FS
 
-// GuidePages: slug → title, order matters for the index.
-var guidePages = []struct{ Slug, Title string }{
-	{"start", "Start Here"},
-	{"install", "Installation Runbook"},
-	{"ninfer-engine", "NInfer Engine Runbook"},
-	{"operations", "Operations Runbook"},
-	{"link-gpu", "Linking a GPU"},
-	{"mcp", "Connectors (MCP)"},
+// GuidePages: slug → title, order matters for the index. Admin pages are
+// operator runbooks: signed-in non-admins don't see them in the tabs (they
+// stay reachable by link; nothing in them is secret).
+var guidePages = []struct {
+	Slug, Title string
+	Admin       bool
+}{
+	{"start", "Start here", false},
+	{"link-gpu", "Linking a GPU", false},
+	{"mcp", "Connectors (MCP)", false},
+	{"install", "Installation", true},
+	{"ninfer-engine", "NInfer engine", true},
+	{"operations", "Operations", true},
 }
 
-// guideHandler: GET /guide and /guide/<slug>.
+// guideHandler: GET /guide and /guide/<slug> — inside the app (menu,
+// theme) when signed in, standalone otherwise.
 func (s *Server) guideHandler(w http.ResponseWriter, r *http.Request) {
-	sess, _ := s.sessionFrom(r)
-	slug := strings.TrimPrefix(r.URL.Path, "/guide")
-	slug = strings.Trim(slug, "/")
-	title := "Guide"
+	sess, signedIn := s.sessionFrom(r)
+	slug := strings.Trim(strings.TrimPrefix(r.URL.Path, "/guide"), "/")
 	if slug == "" {
 		slug = "start"
 	}
-	known := false
+	title, known := "", false
 	for _, p := range guidePages {
 		if p.Slug == slug {
-			title = p.Title
-			known = true
-			break
+			title, known = p.Title, true
 		}
 	}
 	if !known {
@@ -54,23 +59,36 @@ func (s *Server) guideHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	nav := make([]string, 0, len(guidePages))
+	showAdmin := !signedIn || sess.Role == "admin"
+	var tabs strings.Builder
+	adminHeader := false
 	for _, p := range guidePages {
+		if p.Admin && !showAdmin && p.Slug != slug {
+			continue
+		}
+		if p.Admin && !adminHeader {
+			tabs.WriteString(`<span class="grp">For operators</span>`)
+			adminHeader = true
+		}
 		cls := ""
 		if p.Slug == slug {
-			cls = ` style="font-weight:700"`
+			cls = ` class="on" aria-current="page"`
 		}
-		nav = append(nav, `<a href="/guide/`+p.Slug+`"`+cls+`>`+p.Title+`</a>`)
+		tabs.WriteString(`<a href="/guide/` + p.Slug + `"` + cls + `>` + template.HTMLEscapeString(p.Title) + `</a>`)
 	}
-	html2 := `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-		`<title>` + title + ` — llm-gateway guide</title>` +
-		`<style>body{font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:860px;margin:2rem auto;padding:0 1.2rem;color:#1f2328}nav{display:flex;gap:1rem;flex-wrap:wrap;padding-bottom:1rem;border-bottom:1px solid #d0d7de;margin-bottom:1.5rem;font-size:14px}nav a{color:#0969da;text-decoration:none}h1,h2{line-height:1.25}code,pre{background:#f6f8fa;border-radius:6px}code{padding:.15em .4em}pre{padding:1em;overflow-x:auto}pre code{padding:0;background:none}table{border-collapse:collapse;width:100%;margin:1rem 0;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .7rem;text-align:left}th{background:#f6f8fa}</style></head><body>` +
-		`<nav>` + strings.Join(nav, "") + `</nav>` +
-		string(body) +
-		`<p style="margin-top:3rem;font-size:13px;color:#656d76"><a href="/">← back to llm-gateway</a></p></body></html>`
+	data := web.PageData{Nav: "help", Title: title, StaticVer: staticVer, Chrome: signedIn,
+		Username: sess.U, Role: sess.Role, Extra: map[string]any{
+			"tabs": template.HTML(tabs.String()), "body": template.HTML(body)}}
+	if sess.U != "" {
+		data.Avatar = strings.ToUpper(sess.U[:1])
+	}
+	if data.Role == "" {
+		data.Role = "user"
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html2))
-	_ = sess
+	if err := web.Render(w, "guide.html", data); err != nil {
+		http.Error(w, "template error: "+err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // mdToHTML renders markdown bytes to HTML (used by go:generate).

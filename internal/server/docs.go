@@ -251,8 +251,10 @@ type ChatConfigOutput struct {
 		// ImagePromptModel: the text model that improves image prompts ("" = off).
 		ImageModels []string `json:"image_models"`
 		// EmbeddingModels: names the caller can embed text with.
-		EmbeddingModels  []string `json:"embedding_models"`
-		ImagePromptModel string   `json:"image_prompt_model"`
+		EmbeddingModels []string `json:"embedding_models"`
+		// Prefs: the user's saved preferences (theme, chat defaults).
+		Prefs            map[string]any `json:"prefs"`
+		ImagePromptModel string         `json:"image_prompt_model"`
 	}
 }
 

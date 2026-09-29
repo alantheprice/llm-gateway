@@ -1,0 +1,230 @@
+{{define "title"}}Settings — LLM Gateway{{end}}
+{{define "scripts"}}
+<script src="/static/connectors.js?v={{$.StaticVer}}"></script>
+<script>
+
+let currentEmail = '';
+
+document.getElementById('saveprofile').addEventListener('click', async () => {
+  const name = document.getElementById('pname').value.trim();
+  const email = document.getElementById('pemail').value.trim();
+  const pw = document.getElementById('ppw').value;
+  if (!pw) { flash('Enter your current password to confirm changes.', true); return; }
+  if (!name && !email) { flash('Nothing to change.', true); return; }
+  const r = await api('/account/update', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, email, password: pw})});
+  if (r.ok) {
+    flash('Profile updated.');
+    document.getElementById('profile-name').textContent = r.data.name || name;
+    document.getElementById('ppw').value = '';
+  } else {
+    const M = {wrong_password: 'Password incorrect.', bad_email: 'That email address looks invalid.',
+               email_taken: 'That email is already in use.'};
+    flash(M[r.data.code] || r.data.error || 'Update failed.', true);
+  }
+});
+
+document.getElementById('chpw').addEventListener('click', async () => {
+  const o = document.getElementById('opw').value;
+  const n = document.getElementById('npw').value;
+  const n2 = document.getElementById('npw2').value;
+  if (!o || !n || !n2) { flash('Fill all password fields.', true); return; }
+  if (n.length < 8) { flash('New password must be at least 8 characters.', true); return; }
+  if (n !== n2) { flash('New passwords do not match.', true); return; }
+  const r = await api('/chat/password', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({old_password:o, new_password:n})});
+  flash(r.ok ? 'Password updated.' : (r.data.error || 'failed'), !r.ok);
+  if (r.ok) { document.getElementById('opw').value=''; document.getElementById('npw').value=''; document.getElementById('npw2').value=''; }
+});
+
+// Delete every chat: on the server (so other devices drop them too) and
+// the copy in this browser.
+document.getElementById('wipe').addEventListener('click', async () => {
+  if (!confirm('Delete ALL your chats, on every device? This cannot be undone.')) return;
+  const btn = document.getElementById('wipe');
+  btn.disabled = true;
+  let failed = 0;
+  const r = await api('/api/chats');
+  if (r.ok) {
+    const now = Date.now();
+    for (const c of (r.data.chats || []).filter(c => !c.deleted)) {
+      const d = await fetch('/api/chats/' + encodeURIComponent(c.id) + '?at=' + now, { method: 'DELETE' }).catch(() => null);
+      if (!d || !d.ok) failed++;
+    }
+  } else if (r.status !== 503) failed++;
+  ['llmgw_sessions', 'llmgw_active', 'llmgw_synced'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  btn.disabled = false;
+  flash(failed ? 'Some chats couldn’t be deleted; try again.' : 'All your chats were deleted.', !!failed);
+});
+
+(async function load() {
+  const r = await api('/me');
+  if (!r.ok) return;
+  document.getElementById('pname').value = r.data.name || '';
+  document.getElementById('pemail').value = r.data.email || '';
+  currentEmail = r.data.email || '';
+})();
+
+// ---------- preferences (saved to your account) ----------
+async function savePref(p, msg) {
+  const r = await api('/api/prefs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(p)});
+  flash(r.ok ? msg : (r.data.error || 'Couldn’t save.'), !r.ok);
+  return r.ok;
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('llmgw_theme', t); } catch (e) {}
+  if (window.applyThemeChrome) window.applyThemeChrome(t);
+}
+(async function loadPrefs() {
+  const r = await api('/chat/config');
+  if (!r.ok) return;
+  const p = r.data.prefs || {};
+  // Theme
+  const cur = p.theme || document.documentElement.getAttribute('data-theme') || 'dark';
+  const seg = document.getElementById('themeseg');
+  const drawTheme = t => {
+    seg.innerHTML = '<div class="seg" role="group" aria-label="Theme">' + [['dark', 'Dark'], ['light', 'Light']].map(([k, l]) =>
+      '<button type="button" data-t="' + k + '" aria-pressed="' + (k === t) + '">' + l + '</button>').join('') + '</div>';
+    seg.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+      applyTheme(b.dataset.t); drawTheme(b.dataset.t); savePref({theme: b.dataset.t}, 'Theme saved.');
+    });
+  };
+  drawTheme(cur);
+  // Chat defaults
+  const sel = document.getElementById('defmodel');
+  const groups = r.data.model_groups || [{label: '', models: r.data.models || []}];
+  sel.innerHTML = '<option value="">Gateway default</option>' + groups.map(g =>
+    (g.label && groups.length > 1 ? '<optgroup label="' + escAttr(g.label) + '">' : '') +
+    g.models.map(m => '<option value="' + escAttr(m) + '">' + esc(m) + '</option>').join('') +
+    (g.label && groups.length > 1 ? '</optgroup>' : '')).join('');
+  sel.value = p.chat_model || '';
+  if (p.chat_model && sel.value !== p.chat_model) sel.insertAdjacentHTML('beforeend', '<option value="' + escAttr(p.chat_model) + '" selected>' + esc(p.chat_model) + ' (not available now)</option>');
+  sel.onchange = () => { savePref({chat_model: sel.value}, 'Default model saved.'); try { localStorage.setItem('chat.model', sel.value); } catch (e) {} };
+  const web = document.getElementById('defweb');
+  web.checked = !!p.chat_web;
+  web.onchange = () => { savePref({chat_web: web.checked}, web.checked ? 'Chats start with 🌐 Web on.' : 'Chats start with 🌐 Web off.'); try { localStorage.setItem('chat.web', web.checked ? '1' : '0'); } catch (e) {} };
+})();
+
+// ---------- connectors summary ----------
+document.addEventListener('connectors:change', e => {
+  const list = e.detail;
+  document.getElementById('cxsummary').innerHTML = list.length
+    ? '<ul class="setlist">' + list.map(v => '<li><strong>' + esc(v.name) + '</strong> <span class="muted">' + esc(v.url) + '</span> ' +
+        (v.enabled ? '<span class="badge ok">on</span>' : '<span class="badge off">off</span>') +
+        (v.auth === 'oauth' && !v.signed_in ? ' <span class="badge grace">not signed in</span>' : '') + '</li>').join('') + '</ul>'
+    : '<p class="muted">None yet. Connectors add tools from services like GitHub, Notion or Linear to chats in 🌐 Web mode.</p>';
+});
+document.getElementById('managecx').onclick = () => Connectors.open();
+Connectors.reload();
+
+// ---------- your data ----------
+document.getElementById('export').addEventListener('click', async () => {
+  const btn = document.getElementById('export');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/chats');
+    if (!r.ok) { flash(r.data.error || 'Couldn’t list your chats.', true); return; }
+    const out = [];
+    for (const c of (r.data.chats || []).filter(c => !c.deleted)) {
+      const d = await api('/api/chats/' + encodeURIComponent(c.id));
+      if (d.ok) out.push(d.data);
+    }
+    const blob = new Blob([JSON.stringify({exported: new Date().toISOString(), chats: out}, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'llm-gateway-chats-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    flash('Exported ' + out.length + ' chat' + (out.length === 1 ? '' : 's') + '.');
+  } finally { btn.disabled = false; }
+});
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.settings { max-width: 720px; }
+.set-jump { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: -6px 0 14px; font-size: 13px; }
+.set-jump a { color: var(--muted); text-decoration: none; }
+.set-jump a:hover { color: var(--text); }
+.settings .card { scroll-margin-top: 16px; }
+.settings label.f { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+.settings label.f:first-of-type { margin-top: 4px; }
+.setrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
+.setrow + .setrow { border-top: 1px solid var(--border2); }
+.setrow .sr-text { min-width: 0; flex: 1 1 260px; }
+.setrow .sr-text strong { display: block; font-size: 14px; }
+.setrow .sr-text span { font-size: 12.5px; color: var(--muted); }
+.setrow select { max-width: 100%; }
+.setlist { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; overflow-wrap: anywhere; }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13.5px; }
+</style>
+<div class="page settings">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Settings</h1></div>
+  <nav class="set-jump" aria-label="Sections"><a href="#account">Account</a><a href="#appearance">Appearance</a><a href="#chat">Chat</a><a href="#connectors">Connectors</a><a href="#data">Your data</a></nav>
+  <div class="flash" id="flash"></div>
+
+  <div class="card" id="account">
+    <h2>Profile</h2>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+      <span class="avatar" style="width:44px;height:44px;font-size:20px" id="avatar">{{.Avatar}}</span>
+      <div>
+        <div style="font-weight:600" id="profile-name">{{.Username}}</div>
+        <div class="muted">username: {{.Username}} · role: {{.Role}} · managed by the gateway</div>
+      </div>
+    </div>
+    <label style="display:block;font-size:13px;color:var(--muted);margin:4px 0 4px">Display name</label>
+    <input id="pname" style="width:100%" maxlength="80" placeholder="Your name">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Email (used for future password-reset)</label>
+    <input id="pemail" type="email" style="width:100%" placeholder="you@example.com">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Confirm with current password</label>
+    <input id="ppw" type="password" autocomplete="current-password" style="width:100%">
+    <button class="btn primary" id="saveprofile" style="margin-top:14px">Save profile</button>
+  </div>
+
+
+  <div class="card">
+    <h2>Change password</h2>
+    <label style="display:block;font-size:13px;color:var(--muted);margin:4px 0 4px">Current password</label>
+    <input id="opw" type="password" autocomplete="current-password" style="width:100%">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">New password (min 8 characters)</label>
+    <input id="npw" type="password" autocomplete="new-password" style="width:100%">
+    <label style="display:block;font-size:13px;color:var(--muted);margin:12px 0 4px">Confirm new password</label>
+    <input id="npw2" type="password" autocomplete="new-password" style="width:100%">
+    <button class="btn primary" id="chpw" style="margin-top:14px">Update password</button>
+  </div>
+
+
+  <div class="card" id="appearance">
+    <h2>Appearance</h2>
+    <div class="setrow"><div class="sr-text"><strong>Theme</strong><span>Saved to your account, so it follows you to other devices.</span></div>
+      <div id="themeseg"></div></div>
+  </div>
+
+  <div class="card" id="chat">
+    <h2>Chat</h2>
+    <div class="setrow"><div class="sr-text"><strong>Default model</strong><span>What new chats use. You can still switch per chat.</span></div>
+      <select id="defmodel" aria-label="Default model"></select></div>
+    <div class="setrow"><div class="sr-text"><strong>Start with 🌐 Web on</strong><span>Lets the model search the web and use your connectors. Slower, with sources.</span></div>
+      <label class="switch"><input type="checkbox" id="defweb"> On</label></div>
+  </div>
+
+  <div class="card" id="connectors">
+    <h2>Connectors</h2>
+    <p class="muted" style="margin:0 0 10px">Remote MCP servers whose tools the model can use in 🌐 Web mode. <a href="/guide/mcp">How connectors work</a></p>
+    <div id="cxsummary"><p class="muted">Loading…</p></div>
+    <button class="btn" id="managecx">Manage connectors</button>
+  </div>
+
+  <div class="card" id="data">
+    <h2>Your data</h2>
+    <div class="setrow"><div class="sr-text"><strong>Chat history</strong><span>Your chats are saved to your account and sync across your devices.</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="export">Export all chats</button><button class="btn danger" id="wipe">Delete all chats</button></div></div>
+    <div class="setrow"><div class="sr-text"><strong>Usage and API keys</strong><span>What you've used, and the keys that call the API.</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/usage/me">Usage</a><a class="btn" href="/keys">API keys</a></div></div>
+  </div>
+</div>
+{{template "connectors" .}}
+{{end}}

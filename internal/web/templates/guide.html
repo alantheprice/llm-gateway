@@ -1,0 +1,29 @@
+{{define "title"}}{{.Title}} — Help — LLM Gateway{{end}}
+{{define "scripts"}}{{end}}
+{{define "content"}}
+<style>
+.guide-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--border); }
+.guide-tabs a { padding: 7px 12px; font-size: 13.5px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.guide-tabs a:hover { color: var(--text); }
+.guide-tabs a.on { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+.guide-tabs .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); align-self: center; padding: 0 4px 0 10px; }
+.guide { max-width: 860px; font-size: 15px; line-height: 1.65; }
+.guide h1 { font-size: 24px; margin: 0 0 12px; }
+.guide h2 { font-size: 19px; margin: 28px 0 8px; }
+.guide h3 { font-size: 16px; margin: 20px 0 6px; }
+.guide a { color: var(--info, #58a6ff); }
+.guide code { background: var(--card2); border-radius: 5px; padding: .1em .35em; font-size: .9em; }
+.guide pre { background: var(--card2); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+.guide pre code { background: none; padding: 0; }
+.guide table { border-collapse: collapse; width: 100%; margin: 12px 0; display: block; overflow-x: auto; }
+.guide th, .guide td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.guide th { background: var(--card2); }
+.guide-foot { margin-top: 32px; font-size: 13px; }
+</style>
+<div class="page">
+  {{if .Chrome}}<div class="page-head"><button class="hamburger" id="hamburger" aria-label="Menu">☰</button><h1>Help</h1></div>{{end}}
+  <nav class="guide-tabs" aria-label="Help topics">{{.Extra.tabs}}</nav>
+  <article class="guide">{{.Extra.body}}</article>
+  {{if not .Chrome}}<p class="guide-foot muted"><a href="/">Sign in to LLM Gateway →</a></p>{{end}}
+</div>
+{{end}}

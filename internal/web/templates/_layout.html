@@ -3,7 +3,7 @@
 {{define "title"}}LLM Gateway{{end}}
 {{define "scripts"}}{{end}}
 {{define "base"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="en"{{with .Extra}}{{with .theme}} data-theme="{{.}}"{{end}}{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -16,43 +16,91 @@
 {{template "head" .}}
 </head>
 <body class="{{template "bodyclass" .}}">
-{{if .Chrome}}{{template "chrome" .}}{{end}}
+{{if .Chrome}}{{template "chrome" .}}{{else}}<script>try{var t=localStorage.getItem('llmgw_theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<main class="main plain">{{template "content" .}}</main>
+</body>
+</html>{{end}}
 {{end}}
+{{/* The Connectors dialog (remote MCP servers), used by Chat and Settings
+   with static/connectors.js. */}}
+{{define "connectors"}}<dialog id="connectors" class="connectors">
+  <div class="cx-head"><h2>Connectors</h2><button class="btn sm" id="cxClose" aria-label="Close">✕</button></div>
+  <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>🌐 Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
+  <div class="flash" id="cxFlash"></div>
+  <div id="cxList"></div>
+  <form id="cxForm" class="cx-form" autocomplete="off">
+    <div class="cx-sub">Add a server</div>
+    <div class="cx-quick" id="cxQuick" aria-label="Quick add"></div>
+    <div class="cx-row">
+      <label>Name<input id="cxName" placeholder="github" maxlength="24" required></label>
+      <label class="cx-grow">URL<input id="cxURL" type="url" placeholder="https://example.com/mcp" required></label>
+    </div>
+    <div class="cx-row">
+      <label>Sign-in<select id="cxAuth">
+        <option value="header">API key or token</option>
+        <option value="oauth">Sign in with the service (OAuth)</option>
+        <option value="none">None</option>
+      </select></label>
+    </div>
+    <div class="cx-row" id="cxHeaderRow">
+      <label>Auth header<input id="cxHName" value="Authorization"></label>
+      <label class="cx-grow">Value<input id="cxHVal" type="password" placeholder="Bearer …"></label>
+    </div>
+    <p class="muted cx-hint" id="cxOAuthHint" hidden>After adding, click <strong>Sign in</strong>: a window opens where you approve access at the service.</p>
+    <div class="cx-actions"><button type="button" class="btn sm" id="cxTest">Test</button><button type="submit" class="btn sm primary">Add</button></div>
+    <div id="cxTestOut"></div>
+  </form>
+  <div class="cx-find">
+    <div class="cx-sub">Find more servers</div>
+    <p class="muted">Pick servers marked <strong>remote</strong> or <strong>hosted</strong> (an <code>https://…/mcp</code> or <code>…/sse</code> URL). Servers you run yourself with <code>npx</code> or <code>uvx</code> can’t be added here.</p>
+    <ul class="cx-dirs">
+      <li><a href="https://registry.modelcontextprotocol.io" target="_blank" rel="noopener">Official MCP Registry</a> <span class="muted">— the protocol’s own catalog</span></li>
+      <li><a href="https://smithery.ai" target="_blank" rel="noopener">Smithery</a> <span class="muted">— many hosted servers, with remote URLs</span></li>
+      <li><a href="https://glama.ai/mcp/servers" target="_blank" rel="noopener">Glama</a> <span class="muted">— large directory, filter by hosting</span></li>
+      <li><a href="https://mcp.so" target="_blank" rel="noopener">mcp.so</a> <span class="muted">— community directory</span></li>
+      <li><a href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener">modelcontextprotocol/servers</a> <span class="muted">— reference servers and a long list of official integrations</span></li>
+    </ul>
+  </div>
+</dialog>{{end}}
 {{define "chrome"}}<div class="backdrop" id="backdrop"></div>
 <div class="shell">
   <aside class="sidebar" id="sidebar">
     <div class="brand"><span class="brand-mark"><svg class="brand-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 22V10.6a6.6 6.6 0 0 1 13.2 0V22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M13.5 8.2 8.8 15h3.4l-1.3 6.4 5.2-7.8h-3.4z" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round"/></svg></span><span class="brand-name">LLM Gateway</span></div>
     <nav class="nav">
+      <div class="nav-section">Workspace</div>
       <a href="/chat" class="nav-item {{if eq .Nav "chat"}}active{{end}}">{{Icon "message-square"}}<span>Chat</span></a>
       <a href="/images" class="nav-item {{if eq .Nav "images"}}active{{end}}">{{Icon "image"}}<span>Images</span></a>
       <a href="/embeddings" class="nav-item {{if eq .Nav "embeddings"}}active{{end}}">{{Icon "scatter-chart"}}<span>Embeddings</span></a>
       <a href="/models" class="nav-item {{if eq .Nav "models"}}active{{end}}">{{Icon "box"}}<span>Models</span></a>
+      <div class="nav-section">Developer</div>
       <a href="/keys" class="nav-item {{if eq .Nav "keys"}}active{{end}}">{{Icon "key-round"}}<span>API Keys</span></a>
       <a href="/gpus" class="nav-item {{if eq .Nav "gpus"}}active{{end}}">{{Icon "cpu"}}<span>My GPUs</span></a>
-      <a href="/account" class="nav-item {{if eq .Nav "account"}}active{{end}}">{{Icon "shield"}}<span>Account</span></a>
-      <a href="/usage/me" class="nav-item {{if eq .Nav "myusage"}}active{{end}}">{{Icon "bar-chart-3"}}<span>My Usage</span></a>
+      <a href="/docs" class="nav-item" target="_blank" rel="noopener" title="API reference (opens in a new tab)">{{Icon "code"}}<span>API reference ↗</span></a>
+      <div class="nav-section">You</div>
+      <a href="/usage/me" class="nav-item {{if eq .Nav "myusage"}}active{{end}}">{{Icon "line-chart"}}<span>Usage</span></a>
+      <a href="/settings" class="nav-item {{if eq .Nav "settings"}}active{{end}}">{{Icon "settings"}}<span>Settings</span></a>
+      <a href="/guide" class="nav-item {{if eq .Nav "help"}}active{{end}}">{{Icon "book-open"}}<span>Help</span></a>
       {{if eq .Role "admin"}}
       <div class="nav-section">Admin</div>
+      <a href="/admin/system" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "layout-dashboard"}}<span>Overview</span></a>
       <a href="/admin/users/page" class="nav-item {{if eq .Nav "admin_users"}}active{{end}}">{{Icon "users"}}<span>Users</span></a>
-      <a href="/admin/system" class="nav-item {{if eq .Nav "admin_system"}}active{{end}}">{{Icon "activity"}}<span>System</span></a>
-      <a href="/admin/costs" class="nav-item {{if eq .Nav "admin_costs"}}active{{end}}">{{Icon "wallet"}}<span>Costs</span></a>
-      <a href="/admin/analytics/page" class="nav-item {{if eq .Nav "analytics"}}active{{end}}">{{Icon "bar-chart-3"}}<span>Analytics</span></a>
+      <a href="/admin/costs" class="nav-item {{if eq .Nav "admin_costs"}}active{{end}}">{{Icon "wallet"}}<span>Usage &amp; costs</span></a>
+      <a href="/admin/analytics/page" class="nav-item {{if eq .Nav "analytics"}}active{{end}}">{{Icon "gauge"}}<span>Performance</span></a>
       <a href="/admin/routing" class="nav-item {{if eq .Nav "admin_routing"}}active{{end}}">{{Icon "route"}}<span>Routing</span></a>
       <a href="/admin/config/page" class="nav-item {{if eq .Nav "admin_config"}}active{{end}}">{{Icon "sliders"}}<span>Config</span></a>
       {{end}}
-      <div class="nav-section">Settings</div>
-      <button class="nav-item" id="themeToggle" type="button" title="Switch between light and dark theme">
-        <span id="themeIcon">{{IconSize "sun" 18}}</span><span id="themeLabel">Light mode</span>
-      </button>
     </nav>
     <div class="sidebar-footer">
-      <div class="identity">
+      <a class="identity" href="/settings#account" title="Your account and settings">
         <span class="avatar">{{.Avatar}}</span>
         <span class="id-text">
           <span class="id-name">{{.Username}}</span>
           <span class="id-role role-{{.Role}}">{{.Role}}</span>
         </span>
-      </div>
+      </a>
+      <button class="nav-item small" id="themeToggle" type="button" title="Switch between light and dark theme">
+        <span id="themeIcon">{{IconSize "sun" 18}}</span><span id="themeLabel">Light mode</span>
+      </button>
       <a href="/logout" class="nav-item small" title="Sign out">{{Icon "log-out"}}<span>Sign out</span></a>
     </div>
   </aside>
@@ -85,8 +133,11 @@
 <script>
 (function () {
   // Theme (persisted per browser)
-  const saved = localStorage.getItem('llmgw_theme') || 'dark';
+  // The theme saved to your account (set on <html> by the server) wins;
+  // the browser copy covers signed-out pages.
+  const saved = document.documentElement.getAttribute('data-theme') || localStorage.getItem('llmgw_theme') || 'dark';
   document.documentElement.setAttribute('data-theme', saved);
+  try { localStorage.setItem('llmgw_theme', saved); } catch (e) {}
   const apply = t => {
     const el = document.getElementById('themeIcon');
     const lb = document.getElementById('themeLabel');
@@ -96,12 +147,14 @@
     if (meta) meta.content = t === 'light' ? '#f6f8fa' : '#0d1117';
   };
   apply(saved);
+  window.applyThemeChrome = apply; // Settings changes the theme too
   const btn = document.getElementById('themeToggle');
   if (btn) btn.addEventListener('click', () => {
-    const next = (localStorage.getItem('llmgw_theme') || 'dark') === 'light' ? 'dark' : 'light';
+    const next = (document.documentElement.getAttribute('data-theme') || 'dark') === 'light' ? 'dark' : 'light';
     localStorage.setItem('llmgw_theme', next);
     document.documentElement.setAttribute('data-theme', next);
     apply(next);
+    fetch('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: next }) }).catch(() => {});
   });
 
   // PWA service worker (root scope registration)
