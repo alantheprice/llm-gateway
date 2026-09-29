@@ -142,6 +142,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/images", s.handleImagesPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
 	mux.HandleFunc("/api/mcp", s.handleAPIMCP)
+	mux.HandleFunc("/api/chats", s.handleAPIChats)
+	mux.HandleFunc("/api/chats/", s.handleAPIChats)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  s.handleKeysPage, // page (Python parity)

@@ -1,7 +1,11 @@
-/* LLM Gateway — chat with named browser-local sessions.
+/* LLM Gateway — chat with named sessions.
    Storage: llmgw_sessions = [{id,title,created,updated,model,messages:[{role,content,thinking,stats}]}]
             llmgw_active   = session id or ''
-   Server never sees chat history.
+            llmgw_synced   = {id: updated} last saved to / loaded from the server
+   Conversations are saved per user on the server (/api/chats) so they
+   follow the user between devices; localStorage is the fast local copy.
+   A session listed by the server but not yet loaded here has stale:true
+   and empty messages until it's opened.
    stats: {tg, pp, cache_pct, draft_pct, out_tokens} from engine timings chunk. */
 (function () {
   const CAP_MSGS = 200;
@@ -28,7 +32,8 @@
     activeId = localStorage.getItem('llmgw_active') || '';
     if (!sessions.find(s => s.id === activeId)) activeId = '';
   }
-  function saveStore() {
+  function saveStore(push = true) {
+    if (push) schedulePush();
     try {
       localStorage.setItem('llmgw_sessions', JSON.stringify(sessions));
       localStorage.setItem('llmgw_active', activeId);
@@ -41,6 +46,108 @@
     }
   }
   const active = () => sessions.find(s => s.id === activeId);
+
+  /* ---------- server sync ---------- */
+  let synced = {};
+  let serverSync = true;
+  let pushTimer = null;
+  function loadSynced() {
+    try { synced = JSON.parse(localStorage.getItem('llmgw_synced') || '{}'); } catch (e) { synced = {}; }
+  }
+  function saveSynced() {
+    try { localStorage.setItem('llmgw_synced', JSON.stringify(synced)); } catch (e) {}
+  }
+  const forServer = s => ({ title: s.title, model: s.model, created: s.created, updated: s.updated,
+    messages: s.messages.filter(m => !m.pending).map(m => { const c = Object.assign({}, m); delete c.pending; return c; }) });
+  function schedulePush() {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(pushChanges, 1500);
+  }
+  // Save every session changed since it was last synced (not mid-reply).
+  async function pushChanges() {
+    if (!serverSync) return;
+    for (const s of [...sessions]) {
+      if (s.stale || !s.messages.length || (synced[s.id] || 0) >= s.updated) continue;
+      if (busy && s.id === activeId) { schedulePush(); continue; }
+      let r;
+      try {
+        r = await fetch('/api/chats/' + encodeURIComponent(s.id), { method: 'PUT',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(forServer(s)) });
+      } catch (e) { schedulePush(); return; }   // offline: retry later
+      if (r.ok) synced[s.id] = s.updated;
+      else if (r.status === 409) await loadFull(s);           // newer copy elsewhere wins
+      else if (r.status === 503) { serverSync = false; break; } // no history store: local only
+      else if (r.status === 413) { synced[s.id] = s.updated; console.warn('chat not saved:', (await r.json()).error); }
+      else break;
+    }
+    saveSynced();
+  }
+  // Fetch one conversation's messages from the server.
+  async function loadFull(s) {
+    let r;
+    try { r = await fetch('/api/chats/' + encodeURIComponent(s.id)); } catch (e) { return false; }
+    if (r.status === 404) {
+      sessions = sessions.filter(x => x.id !== s.id);
+      if (activeId === s.id) activeId = '';
+      delete synced[s.id];
+    } else if (r.ok) {
+      const d = await r.json();
+      Object.assign(s, { title: d.title, model: d.model, created: d.created, updated: d.updated,
+        messages: d.messages || [], stale: false });
+      delete s.msgCount;
+      synced[s.id] = d.updated;
+    } else return false;
+    saveStore(false); saveSynced();
+    return true;
+  }
+  // Merge the server's list: new and newer conversations, deletions.
+  async function pullChanges() {
+    if (!serverSync) return;
+    let r;
+    try { r = await fetch('/api/chats'); } catch (e) { return; }
+    if (r.status === 503) { serverSync = false; return; }
+    if (!r.ok) return;
+    const d = await r.json();
+    let changed = false;
+    for (const m of d.chats || []) {
+      const s = sessions.find(x => x.id === m.id);
+      const inUse = busy && m.id === activeId;
+      if (m.deleted) {
+        if (s && !inUse && s.updated <= m.updated) {
+          sessions = sessions.filter(x => x.id !== m.id);
+          if (activeId === m.id) activeId = '';
+          changed = true;
+        }
+        delete synced[m.id];
+        continue;
+      }
+      if (!s) {
+        sessions.push({ id: m.id, title: m.title, model: m.model, created: m.created, updated: m.updated,
+          messages: [], msgCount: m.msg_count, stale: true });
+        synced[m.id] = m.updated;
+        changed = true;
+      } else if (m.updated > s.updated && !inUse) {
+        Object.assign(s, { title: m.title, model: m.model, updated: m.updated, msgCount: m.msg_count, stale: true });
+        synced[m.id] = m.updated;
+        if (s.id === activeId) await loadFull(s);
+        changed = true;
+      }
+    }
+    saveSynced();
+    if (changed) { saveStore(false); if (!busy) render(); }
+    schedulePush(); // anything only this browser has (first sync uploads it)
+  }
+  // Open a session, fetching its messages first if needed.
+  async function openSession(id) {
+    activeId = id; saveStore(false);
+    const s = active();
+    if (s && s.stale) {
+      msgs.innerHTML = '<p class="muted" style="text-align:center;margin-top:40px">Opening conversation…</p>';
+      landing.style.display = 'none';
+      if (!await loadFull(s)) { msgs.innerHTML = '<p class="muted" style="text-align:center;margin-top:40px">Couldn’t load this conversation. Check your connection.</p>'; return; }
+    }
+    render();
+  }
 
   function newSession() {
     const s = { id: 's' + Date.now(), title: 'New chat', created: Date.now(), updated: Date.now(), model: modelEl.value || '', messages: [] };
@@ -330,6 +437,7 @@
     const s = active();
     landing.style.display = 'none';
     msgs.innerHTML = '';
+    msgs.appendChild(landing); // the conversation list lives inside #msgs
     if (!s) { renderLanding(); return; }
     if (!s.messages.length) { renderLanding(); return; }
     s.messages.forEach((m, i) => msgs.appendChild(msgDiv(m, i)));
@@ -354,7 +462,7 @@
         const avgTg = st.length ? Math.round(st.reduce((a, m) => a + m.stats.tg, 0) / st.length) : 0;
         return '<li data-id="' + esc(s.id) + '">' +
         '<span class="s-title">' + esc(s.title) + '</span>' +
-        '<span class="s-meta">' + s.messages.length + ' msg' +
+        '<span class="s-meta">' + (s.stale ? s.msgCount || 0 : s.messages.length) + ' msg' +
         (avgTg ? ' · ⚡' + avgTg + ' tok/s avg' : '') +
         ' · ' + fmtTime(s.updated) + '</span>' +
         '<span class="s-actions">' +
@@ -368,7 +476,7 @@
     landing.querySelectorAll('li').forEach(li => {
       li.addEventListener('click', ev => {
         if (ev.target.closest('button')) return;
-        activeId = li.dataset.id; saveStore(); render();
+        openSession(li.dataset.id);
       });
     });
     landing.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', ev => {
@@ -376,13 +484,15 @@
       const s = sessions.find(x => x.id === b.dataset.id);
       if (!s) return;
       if (b.dataset.act === 'del') {
-        if (!confirm('Delete "' + s.title + '"? This only affects this browser.')) return;
+        if (!confirm('Delete "' + s.title + '"? It\'s removed from all your devices.')) return;
         sessions = sessions.filter(x => x.id !== s.id);
         if (activeId === s.id) activeId = '';
-        saveStore(); renderLanding();
+        delete synced[s.id]; saveSynced();
+        if (serverSync) fetch('/api/chats/' + encodeURIComponent(s.id) + '?at=' + Date.now(), { method: 'DELETE' }).catch(() => {});
+        saveStore(false); renderLanding();
       } else if (b.dataset.act === 'rename') {
         const t = prompt('Rename conversation:', s.title);
-        if (t && t.trim()) { s.title = t.trim().slice(0, 80); saveStore(); renderLanding(); }
+        if (t && t.trim()) { s.title = t.trim().slice(0, 80); s.updated = Date.now(); saveStore(); renderLanding(); }
       }
     }));
     const ln = document.getElementById('landing-new');
@@ -567,10 +677,11 @@
     saveStore(); busy = false; abortCtrl = null; setBusy(false); render();
   }
 
-  function send() {
+  async function send() {
     if (busy) { if (abortCtrl) abortCtrl.abort(); return; }
     const text = promptEl.value.trim();
     if (!text || !cfg) return;
+    if (active() && active().stale && !await loadFull(active())) return;
     promptEl.value = '';
     promptEl.style.height = 'auto';
     const s = ensureActive();
@@ -615,7 +726,12 @@
       }
     }
     loadStore();
-    render();
+    loadSynced();
+    const cur = active();
+    if (cur && cur.stale) openSession(cur.id); else render();
+    pullChanges();
+    window.addEventListener('focus', pullChanges);
+    setInterval(() => { if (!document.hidden) pullChanges(); }, 60000);
   }
 
   promptEl.addEventListener('input', () => {

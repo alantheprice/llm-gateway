@@ -135,6 +135,9 @@ func main() {
 	if err := pbApp.InitRequestsSchema(); err != nil {
 		log.Printf("analytics schema: %v (continuing)", err)
 	}
+	if err := pbApp.InitChatsSchema(); err != nil {
+		log.Printf("chat history schema: %v (continuing)", err)
+	}
 	// Legacy import: usage.json merges on every boot (MAX-upserts are
 	// idempotent; usage counters are monotone). cost_history.json imports
 	// ONLY while SQLite's cost_history table is empty — its rows are

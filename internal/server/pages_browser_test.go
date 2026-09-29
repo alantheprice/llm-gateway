@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,12 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"llmgateway/internal/auth"
-	"llmgateway/internal/embeddedpb"
 )
 
 // Every page, rendered by a real headless browser against a running
@@ -86,37 +85,7 @@ func TestPagesRenderInBrowser(t *testing.T) {
 	  "model_pools":{"page-pool":{"members":[{"backend":%q,"model_id":"page-model"}]}},
 	  "hosts":[{"label":"box (5090)","ips":["127.0.0.1"],"overhead_watts":100,"hardware_cost_usd":4000,"purchased":"2026-06-01","amortize_years":3,"gpus":[{"name":"RTX 5090"}]}],
 	  "price_book":{"prompt_usd_per_m":0.1,"cached_usd_per_m":0.01,"output_usd_per_m":0.3}}`, u.Port(), eng.URL)
-	// A real embedded PocketBase (accounts, analytics, ops tables) on a free
-	// port, so the account, users and analytics pages load real data.
-	pbDir := t.TempDir()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pbPort := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-	app, err := embeddedpb.Start(embeddedpb.Config{DataDir: pbDir, Port: pbPort})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := app.WaitUntilHealthy("127.0.0.1", pbPort, 20*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.InitOpsTables(); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.InitRequestsSchema(); err != nil {
-		t.Fatal(err)
-	}
-	suPass, err := app.EnsureSuperuserEnv(pbDir, "admin@llm.local", "page-test-superuser")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, u := range []string{"admin", "carol"} {
-		if err := app.CreateAdminUser(u, "page-test-password"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	app, pbPort, suPass := testPB(t)
 	old := os.Getenv("POCKETBASE_URL")
 	os.Setenv("POCKETBASE_URL", fmt.Sprintf("http://127.0.0.1:%d", pbPort))
 	t.Cleanup(func() { os.Setenv("POCKETBASE_URL", old) })
@@ -266,4 +235,77 @@ func checkPage(t *testing.T, browser string, s http.Handler, tok, path string) {
 		return
 	}
 	t.Fatalf("page kept making new requests after 6 rounds")
+}
+
+// Chat sync, in a real browser: a conversation that exists only in this
+// browser is uploaded, and one saved from another device shows up.
+func TestChatSyncInBrowser(t *testing.T) {
+	browser := findBrowser()
+	if browser == "" {
+		if os.Getenv("REQUIRE_BROWSER") != "" {
+			t.Fatal("REQUIRE_BROWSER set but no Chrome/Chromium found")
+		}
+		t.Skip("no Chrome/Chromium")
+	}
+	if err := InitUI(); err != nil {
+		t.Fatal(err)
+	}
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	h := s.Handler()
+	tok := s.store.SignSession(auth.Claims{U: "carol", Role: "user"}, time.Hour)
+	_, _, page := get(h, tok, "GET", "/chat")
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "static"), 0o755)
+	html := assetRef.ReplaceAllStringFunc(string(page), func(m string) string {
+		sm := assetRef.FindStringSubmatch(m)
+		_, _, body := get(h, tok, "GET", "/static/"+sm[2])
+		os.WriteFile(filepath.Join(dir, "static", sm[2]), body, 0o644)
+		return sm[1] + `="static/` + sm[2] + `"`
+	})
+	_, _, cfg := get(h, tok, "GET", "/chat/config")
+	responses := map[string]recorded{
+		"GET /chat/config": {Status: 200, CT: "application/json", Body: string(cfg)},
+		"GET /api/mcp":     {Status: 200, CT: "application/json", Body: `{"servers":[]}`},
+		"GET /api/chats": {Status: 200, CT: "application/json", Body: `{"now":5000,"chats":[
+			{"id":"remote1","title":"Remote chat","model":"m","created":1,"updated":4000,"msg_count":3}]}`},
+	}
+	rj, _ := json.Marshal(responses)
+	seed := `<script>localStorage.setItem('llmgw_sessions', JSON.stringify([{id:'local1',title:'Local chat',created:1,updated:2000,model:'m',
+	  messages:[{role:'user',content:'hi'},{role:'assistant',content:'hello'}]}]));</script>`
+	doc := strings.Replace(html, "<head>", "<head>"+seed+strings.Replace(pageShim, "__RESPONSES__", string(rj), 1), 1)
+	file := filepath.Join(dir, "chat.html")
+	os.WriteFile(file, []byte(doc), 0o644)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, browser, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
+		"--user-data-dir="+filepath.Join(dir, "profile"), "--allow-file-access-from-files",
+		"--enable-logging=stderr", "--v=0", "--virtual-time-budget=6000", "--dump-dom", "file://"+file)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	dom, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("browser: %v", err)
+	}
+	out := string(dom)
+	if m := consoleErr.FindAllStringSubmatch(stderr.String(), -1); len(m) > 0 {
+		t.Errorf("script errors: %v", m)
+	}
+	var missing []string
+	if m := missAttr.FindStringSubmatch(out); m != nil {
+		json.Unmarshal([]byte(strings.ReplaceAll(m[1], "&quot;", `"`)), &missing)
+	}
+	if !slices.Contains(missing, "PUT /api/chats/local1") {
+		t.Errorf("local-only chat not uploaded; requests: %v", missing)
+	}
+	if slices.Contains(missing, "PUT /api/chats/remote1") {
+		t.Errorf("unloaded remote chat was uploaded (would overwrite it with nothing)")
+	}
+	if !strings.Contains(out, "Remote chat") || !strings.Contains(out, "Local chat") || !strings.Contains(out, "3 msg") {
+		t.Errorf("conversation list missing entries:\n%s", visibleText(out))
+	}
+}
+
+func visibleText(html string) string {
+	t := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(scriptBlock.ReplaceAllString(html, ""), " ")
+	return strings.Join(strings.Fields(t), " ")
 }

@@ -81,6 +81,7 @@ type Server struct {
 	// PocketBase's database. Nil in tests that don't embed PB — every
 	// call site must nil-check.
 	ops   OpsStore
+	chats ChatStore // chat history (nil without the embedded database)
 	muOps sync.RWMutex
 
 	// embeddedPB: the in-process PocketBase app (bootstrap flows).
@@ -159,6 +160,8 @@ func (s *Server) SetOps(ops OpsStore) {
 	s.muOps.Lock()
 	s.ops = ops
 	s.muOps.Unlock()
+	// The same database keeps chat history.
+	s.chats, _ = ops.(ChatStore)
 }
 
 // SyncUsageToOps mirrors the in-memory usage tallies (lifetime users map
