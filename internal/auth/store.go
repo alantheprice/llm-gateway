@@ -595,9 +595,17 @@ type KV struct {
 // cross-language parity). Serialized exactly like Python json.dumps defaults.
 func (s *Store) SignSessionOrdered(exp int64, kvs ...KV) string {
 	body := pyDumpsOrdered(kvs) + "|" + fmt.Sprint(exp)
-	mac := hmac.New(sha256.New, []byte(s.SessionSecret))
+	mac := hmac.New(sha256.New, s.sessionKey())
 	mac.Write([]byte(body))
 	return base64.URLEncoding.EncodeToString([]byte(body)) + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+// sessionKey: the session signing secret, read under the lock (users.json
+// reloads rewrite it in the background).
+func (s *Store) sessionKey() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return []byte(s.SessionSecret)
 }
 
 // VerifySession validates signature, expiry, and epoch. Returns claims.
@@ -612,7 +620,7 @@ func (s *Store) VerifySession(token string) (Claims, bool) {
 	if err != nil {
 		return c, false
 	}
-	mac := hmac.New(sha256.New, []byte(s.SessionSecret))
+	mac := hmac.New(sha256.New, s.sessionKey())
 	mac.Write(body)
 	want := hex.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(sigHex), []byte(want)) != 1 {
