@@ -37,6 +37,7 @@ func main() {
 	var (
 		server   = flag.String("server", "", "gateway base URL, e.g. https://gw.example.com")
 		token    = flag.String("token", os.Getenv("LLM_LINK_TOKEN"), "link token (a gateway key)")
+		tokFile  = flag.String("token-file", "", "read the link token from this file (keeps it out of process listings and service files)")
 		agent    = flag.String("name", "", "agent label (default: hostname)")
 		engines  engineFlags
 		interval = flag.Duration("retry-max", 30*time.Second, "max reconnect backoff")
@@ -45,8 +46,18 @@ func main() {
 	flag.Var(&engines, "engine", "local engine, host:port=model-id[:max-conc] (repeatable)")
 	flag.Parse()
 
+	if *tokFile != "" {
+		b, err := os.ReadFile(*tokFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "token file:", err)
+			os.Exit(2)
+		}
+		t := strings.TrimSpace(string(b))
+		t = strings.TrimPrefix(t, "LLM_LINK_TOKEN=") // accept the env-file form too
+		*token = t
+	}
 	if *server == "" || *token == "" || len(engines) == 0 {
-		fmt.Fprintln(os.Stderr, "required: --server, --token, --engine host:port=model-id[:max-conc]")
+		fmt.Fprintln(os.Stderr, "required: --server, --token or --token-file, --engine host:port=model-id[:max-conc]")
 		os.Exit(2)
 	}
 	agentName := *agent

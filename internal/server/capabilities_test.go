@@ -139,3 +139,43 @@ func TestNinferCardCaps(t *testing.T) {
 		t.Fatalf("card caps = %+v", c)
 	}
 }
+
+// Engines without load metrics (Ollama, MLX, LM Studio) are polled as up
+// via /v1/models, and Ollama's /api/show capabilities are read.
+func TestBasicPollAndOllamaCaps(t *testing.T) {
+	ol := newFakeEngine(t, "llama3.1:8b", "ollama")
+	s := testServer(t, `{"gateway":{"port":0},"metrics":{"default_max_seqs":4}}`, nil)
+	s.mu.Lock()
+	s.backends[ol.URL] = &BackendInfo{Models: []string{"llama3.1:8b"}, Chat: true}
+	s.mu.Unlock()
+	s.PollOnce()
+	l := s.tracker.Get(ol.URL)
+	if l == nil || l.Engine != "openai" || l.Lanes != 4 || s.tracker.IsDown(ol.URL) {
+		t.Fatalf("basic poll = %+v down=%v", l, s.tracker.IsDown(ol.URL))
+	}
+	c := s.engineCaps(ol.URL, "llama3.1:8b")
+	if c.Source != "engine" || !slices.Contains(c.Features, "thinking") {
+		t.Fatalf("ollama caps = %+v", c)
+	}
+}
+
+// Agent downloads: only supported platforms; a missing build says which.
+func TestAgentDownloadPlatforms(t *testing.T) {
+	s := testServer(t, `{"gateway":{"port":0}}`, nil)
+	for path, want := range map[string]int{
+		"/downloads/llm-link-agent-windows-amd64": 404,
+		"/downloads/llm-link-agent-..%2fetc":      404,
+		"/downloads/llm-link-agent-darwin-arm64":  404, // not built in tests
+	} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != want {
+			t.Errorf("%s = %d, want %d", path, w.Code, want)
+		}
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/downloads/llm-link-agent-darwin-arm64", nil))
+	if !strings.Contains(w.Body.String(), "darwin-arm64") {
+		t.Errorf("missing-build message = %s", w.Body)
+	}
+}

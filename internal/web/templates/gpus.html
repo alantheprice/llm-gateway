@@ -14,11 +14,19 @@ const ENGINES = {
   llamacpp: {port: 8080, label: 'llama.cpp',
     cmd: 'llama-server -m model.gguf --host 127.0.0.1 --port 8080 --alias my-model',
     id: 'the <code>--alias</code> value',
-    note: 'Serving works; the gateway reads lanes from <code>/slots</code>.'},
+    note: 'Linux or Mac (Metal). The gateway reads lanes from <code>/slots</code> and vision support from <code>/props</code>.'},
   ollama: {port: 11434, label: 'Ollama',
     cmd: 'ollama serve            # listens on 127.0.0.1:11434\nollama pull llama3.1:8b',
     id: 'the model tag, e.g. <code>llama3.1:8b</code>',
-    note: 'Serving works through its OpenAI-compatible API; fewer metrics.'},
+    note: 'Linux or Mac. The gateway reads vision, tools and thinking support from Ollama; load is counted from requests it sends.'},
+  mlx: {port: 8080, label: 'MLX (Mac)',
+    cmd: 'pip install mlx-lm\nmlx_lm.server --model mlx-community/Qwen3-8B-4bit --host 127.0.0.1 --port 8080',
+    id: 'the <code>--model</code> value, e.g. <code>mlx-community/Qwen3-8B-4bit</code>',
+    note: 'Apple Silicon only; usually the fastest option on a Mac. Load is counted from requests the gateway sends.'},
+  lmstudio: {port: 1234, label: 'LM Studio',
+    cmd: '# LM Studio → Developer → Start Server (port 1234)\nlms server start',
+    id: 'the model identifier shown in LM Studio',
+    note: 'Linux or Mac. Load is counted from requests the gateway sends.'},
 };
 let engineKind = 'ninfer', step = 1, created = null, lastData = null, pollTimer = null;
 
@@ -96,7 +104,7 @@ function linkCard(row, isAdmin) {
   if (row.settings.paused) h += '<div class="hint warn">Paused: nobody, including you, is routed to this GPU. The agent stays connected.</div>';
   if (!a) {
     h += '<div class="hint">No agent is connected with this token. Run the install script on the GPU machine, then check its log:<br>' +
-      '<code>journalctl --user -u llm-link-agent-' + esc(name) + ' -n 30</code> · <a href="' + GUIDE + '#troubleshooting">troubleshooting</a></div>';
+      '<code>journalctl --user -u llm-link-agent-' + esc(name) + ' -n 30</code> (Linux) or <code>~/Library/Logs/llm-link-agent-' + esc(name) + '.log</code> (Mac) · <a href="' + GUIDE + '#troubleshooting">troubleshooting</a></div>';
   } else {
     h += (a.engines || []).map(e => engineBlock(e, row, isAdmin)).join('') || '<div class="muted">No engines registered.</div>';
   }
@@ -402,12 +410,13 @@ table.mini { font-size: 12px; }
       <div class="seg">
         <button data-engine="ninfer">NInfer</button><button data-engine="vllm">vLLM</button>
         <button data-engine="llamacpp">llama.cpp</button><button data-engine="ollama">Ollama</button>
+        <button data-engine="mlx">MLX (Mac)</button><button data-engine="lmstudio">LM Studio</button>
       </div>
       <pre id="enginecmd"></pre>
       <p class="hint" id="enginenote"></p>
       <p><strong>Find the model id</strong>. It's <span id="engineid"></span>. To check what the engine actually serves:</p>
       <pre>curl -s http://127.0.0.1:<span id="modelsport"></span>/v1/models   # use the "id" field</pre>
-      <div class="callout"><strong>Requirements:</strong> Linux x86-64 with systemd, and outbound HTTPS to this gateway. No inbound ports and no root.
+      <div class="callout"><strong>Requirements:</strong> Linux (x86-64 or ARM64, with systemd) or macOS (Apple Silicon or Intel), and outbound HTTPS to this gateway. No inbound ports and no root.
         <a href="/guide/link-gpu#requirements">Details</a></div>
       <div class="wz-nav"><span></span><button class="btn primary" data-go="2">My engine is running →</button></div>
     </div>
@@ -440,14 +449,15 @@ table.mini { font-size: 12px; }
       <div class="callout warn"><strong>This script contains your link token and is shown only once.</strong> Save it now. If you lose it, revoke this link and create a new one.</div>
       <p>Save it as <code class="scriptname"></code> on the GPU machine and run:</p>
       <pre>bash <span class="scriptname"></span></pre>
-      <p>It downloads <code>llm-link-agent</code> into <code>~/.local/bin</code>, stores the token in a private (0600) file, and starts the user service <code>llm-link-agent-<span class="agentname"></span></code>.</p>
+      <p>It downloads <code>llm-link-agent</code> into <code>~/.local/bin</code>, stores the token in a private (0600) file, and starts a background service: <code>llm-link-agent-<span class="agentname"></span></code> under systemd on Linux, or a LaunchAgent on macOS. It picks the right agent build for the machine.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
         <button class="btn" id="copyscript">Copy script</button>
         <a class="btn" id="dlscript" href="#">Download <span class="scriptname"></span></a>
       </div>
       <details><summary class="muted" style="cursor:pointer">Show the script</summary>
         <pre id="scripttext" style="white-space:pre-wrap;max-height:320px;overflow:auto"></pre></details>
-      <div class="callout">To keep the agent running after you log out, run this once: <code>sudo loginctl enable-linger $USER</code></div>
+      <div class="callout"><strong>Linux:</strong> to keep the agent running after you log out, run this once: <code>sudo loginctl enable-linger $USER</code><br>
+        <strong>Mac:</strong> the agent runs while you're logged in. Stop the Mac from sleeping (System Settings → Energy, or <code>caffeinate -s</code> while plugged in).</div>
       <div class="wz-nav"><span></span><button class="btn primary" data-go="4">I ran it →</button></div>
     </div>
 
@@ -460,7 +470,10 @@ table.mini { font-size: 12px; }
       <div class="chk" id="chk-pool"><span class="chk-t"></span></div>
       <div id="verifyhelp">
         <p style="margin-top:12px"><strong>Not connecting?</strong> Check the agent's log on the GPU machine:</p>
-        <pre>journalctl --user -u llm-link-agent-<span class="agentname"></span> -n 30</pre>
+        <pre># Linux
+journalctl --user -u llm-link-agent-<span class="agentname"></span> -n 30
+# Mac
+tail -n 30 ~/Library/Logs/llm-link-agent-<span class="agentname"></span>.log</pre>
         <ul class="help-list">
           <li><code>refused the link token (401)</code>: the link was revoked or the token was mistyped. Create a new link.</li>
           <li><code>agent version … is too old</code>: re-run the script; it downloads the current agent.</li>

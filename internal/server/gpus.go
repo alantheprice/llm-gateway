@@ -271,30 +271,49 @@ func enginePort(addr string) int {
 	return n
 }
 
-// handleAgentDownload: GET /downloads/llm-link-agent-linux-amd64 — the agent
-// binary the installer fetches. Served from LLM_LINK_AGENT_BIN, else from
-// llm-link-agent next to the gateway binary (bin/ in the repo layout).
+// agentPlatforms: platforms a link agent is built for (see deploy build).
+var agentPlatforms = map[string]bool{
+	"linux-amd64": true, "linux-arm64": true, "darwin-arm64": true, "darwin-amd64": true,
+}
+
+// handleAgentDownload: GET /downloads/llm-link-agent-<os>-<arch> — the agent
+// binary the installer fetches. Served from bin/llm-link-agent-<os>-<arch>
+// next to the gateway binary; linux-amd64 also accepts LLM_LINK_AGENT_BIN
+// or bin/llm-link-agent (the native build).
 func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
-	path := os.Getenv("LLM_LINK_AGENT_BIN")
-	if path == "" {
-		if exe, err := os.Executable(); err == nil {
-			path = filepath.Join(filepath.Dir(exe), "llm-link-agent")
+	platform := strings.TrimPrefix(r.URL.Path, "/downloads/llm-link-agent-")
+	if !agentPlatforms[platform] {
+		errBody(w, http.StatusNotFound, "no agent build for that platform (have: linux-amd64, linux-arm64, darwin-arm64, darwin-amd64)")
+		return
+	}
+	dir := ""
+	if exe, err := os.Executable(); err == nil {
+		dir = filepath.Dir(exe)
+	}
+	candidates := []string{filepath.Join(dir, "llm-link-agent-"+platform)}
+	if platform == "linux-amd64" {
+		if p := os.Getenv("LLM_LINK_AGENT_BIN"); p != "" {
+			candidates = append([]string{p}, candidates...)
 		}
+		candidates = append(candidates, filepath.Join(dir, "llm-link-agent"))
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		errBody(w, http.StatusNotFound, "agent binary not available on this gateway")
+	for _, path := range candidates {
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		st, err := f.Stat()
+		if err != nil || st.IsDir() {
+			f.Close()
+			continue
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="llm-link-agent"`)
+		http.ServeContent(w, r, "llm-link-agent", st.ModTime(), f)
 		return
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil || st.IsDir() {
-		errBody(w, http.StatusNotFound, "agent binary not available on this gateway")
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="llm-link-agent"`)
-	http.ServeContent(w, r, "llm-link-agent", st.ModTime(), f)
+	errBody(w, http.StatusNotFound, "agent binary for "+platform+" not available on this gateway")
 }
 
 // maxShares: users one link may be shared with.

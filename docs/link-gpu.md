@@ -31,7 +31,7 @@ your app ──HTTPS──> gateway ──(the agent's own outbound connection)�
 
 ## Requirements
 
-- **Linux, x86-64, with systemd.** This is what the installer supports today.
+- **Linux** (x86-64 or ARM64) with systemd, or **macOS** (Apple Silicon or Intel). The installer detects which and sets up the right background service.
 - **An OpenAI-compatible engine** running on the machine (step 1). The agent works with any server that answers `/v1/chat/completions`.
 - **Outbound HTTPS** to the gateway. No inbound access is needed.
 
@@ -44,7 +44,11 @@ Start your engine bound to `127.0.0.1`, so only the agent (on the same machine) 
 | **NInfer** (full stats + model card) | `ninfer-serve model.ninfer --host 127.0.0.1 --port 8006 --model-id my-model --model-card card.json` | set with `--port` | `--model-id` |
 | **vLLM** | `vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000 --served-model-name my-model` | 8000 | `--served-model-name` |
 | **llama.cpp** | `llama-server -m model.gguf --host 127.0.0.1 --port 8080 --alias my-model` | 8080 | `--alias` |
-| **Ollama** | `ollama serve` (then `ollama pull llama3.1:8b`) | 11434 | the model tag, e.g. `llama3.1:8b` |
+| **Ollama** (Linux, Mac) | `ollama serve` (then `ollama pull llama3.1:8b`) | 11434 | the model tag, e.g. `llama3.1:8b` |
+| **MLX** (Mac, Apple Silicon) | `mlx_lm.server --model mlx-community/Qwen3-8B-4bit --host 127.0.0.1 --port 8080` | 8080 | the `--model` value |
+| **LM Studio** (Linux, Mac) | Developer → Start Server, or `lms server start` | 1234 | the model identifier LM Studio shows |
+
+llama.cpp runs on a Mac too (Metal). On a Mac, MLX is usually the fastest choice for Apple Silicon.
 
 To confirm the model id your engine serves:
 
@@ -54,7 +58,9 @@ curl -s http://127.0.0.1:<port>/v1/models
 
 The `id` field is the value to enter as **Model id**.
 
-**NInfer engines get the most out of the gateway.** They report load, cache and energy, and can serve a model card (weights, quantization, hardware), which shows up as **Stats for nerds** in the chat. Other engines work for serving, with fewer metrics.
+**NInfer engines get the most out of the gateway.** They report load, cache and energy, and can serve a model card (weights, quantization, hardware), which shows up as **Stats for nerds** in the chat. Other engines work for serving, with fewer metrics: llama.cpp and vLLM report their load; for Ollama, MLX and LM Studio the gateway counts the requests it has sent them.
+
+**What the model can do** (chat, embeddings, image input, tool calls, thinking) is read from the engine where it says so: the NInfer model card, llama.cpp `/props`, Ollama's model details. It shows as badges on the **Models** page, and an admin can correct it on the **Routing** page.
 
 ## Step 2: Create the link
 
@@ -77,15 +83,15 @@ bash link-<name>.sh
 ```
 
 **The script:**
-1. downloads `llm-link-agent` from the gateway into `~/.local/bin`
-2. stores the token in `~/.config/llm-link-agent-<name>.env` (mode 0600)
-3. creates and starts the user service `llm-link-agent-<name>`
+1. downloads the right `llm-link-agent` build for the machine (Linux or macOS, x86-64 or ARM64) into `~/.local/bin`
+2. stores the token in `~/.config/llm-link-agent-<name>.token` (mode 0600)
+3. starts the agent in the background:
+   - **Linux:** the systemd user service `llm-link-agent-<name>`
+   - **Mac:** a LaunchAgent (`~/Library/LaunchAgents/com.llm-gateway.link-agent.<name>.plist`) that starts at login and restarts if it stops
 
-**Keep it running after you log out:**
-
-```bash
-sudo loginctl enable-linger $USER
-```
+**Keep it running:**
+- **Linux**, after you log out: `sudo loginctl enable-linger $USER`
+- **Mac:** the agent runs while you're logged in. Stop the Mac from sleeping when you want it to serve (System Settings → Energy, or `caffeinate -s` while plugged in).
 
 ## Step 4: Verify
 
@@ -94,7 +100,8 @@ sudo loginctl enable-linger $USER
 **Check the agent's log on the GPU machine:**
 
 ```bash
-journalctl --user -u llm-link-agent-<name> -f
+journalctl --user -u llm-link-agent-<name> -f      # Linux
+tail -f ~/Library/Logs/llm-link-agent-<name>.log    # Mac
 ```
 
 A healthy start looks like:
@@ -164,15 +171,25 @@ Once serving, the GPU's requests appear in **Analytics → Per GPU**, and NInfer
 | `gateway refused registration: agent name "…" is registered to another user` | Someone else's agent holds that name | Create a link with a different name |
 | `link down: … — reconnecting in …` repeating | Network or gateway unreachable | Check outbound HTTPS to the gateway; the agent keeps retrying (1 s → 30 s) |
 | Connected, but the engine is **down** | The engine isn't listening on the declared address | Start the engine; confirm with `curl http://127.0.0.1:<port>/v1/models` |
-| Stops after logout | User services end at logout without lingering | `sudo loginctl enable-linger $USER` |
-| macOS / Windows | Not supported by the installer yet | Use a Linux machine |
+| Stops after logout (Linux) | User services end at logout without lingering | `sudo loginctl enable-linger $USER` |
+| Stops when the Mac sleeps | The Mac is asleep, so the agent can't answer | Prevent sleep while serving (System Settings → Energy, or `caffeinate -s`) |
+| Windows | Not supported by the installer | Use Linux (WSL may work, untested) or a Mac |
 
 ## Uninstall
 
+**Linux:**
+
 ```bash
 systemctl --user disable --now llm-link-agent-<name>
-rm ~/.config/systemd/user/llm-link-agent-<name>.service ~/.config/llm-link-agent-<name>.env
+rm ~/.config/systemd/user/llm-link-agent-<name>.service ~/.config/llm-link-agent-<name>.token
 systemctl --user daemon-reload
+```
+
+**Mac:**
+
+```bash
+launchctl bootout gui/$(id -u)/com.llm-gateway.link-agent.<name>
+rm ~/Library/LaunchAgents/com.llm-gateway.link-agent.<name>.plist ~/.config/llm-link-agent-<name>.token
 ```
 
 Then revoke the link in **My GPUs**.

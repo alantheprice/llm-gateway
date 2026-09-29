@@ -139,7 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
 	mux.HandleFunc("/models", s.handleModelsPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
-	mux.HandleFunc("/downloads/llm-link-agent-linux-amd64", s.handleAgentDownload)
+	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  s.handleKeysPage, // page (Python parity)
 		http.MethodPost: s.handleKeys,     // API action

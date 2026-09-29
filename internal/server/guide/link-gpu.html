@@ -22,7 +22,7 @@
 <p><strong>Privacy:</strong> whoever runs a GPU can see the prompts sent to it. If you share your GPU, or let it serve a platform model, <em>you</em> can see other people's prompts on your machine. Treat that responsibly. The reverse holds too: when you call a GPU someone shared with you, its owner can see your prompts.</p>
 <h2 id="requirements">Requirements</h2>
 <ul>
-<li><strong>Linux, x86-64, with systemd.</strong> This is what the installer supports today.</li>
+<li><strong>Linux</strong> (x86-64 or ARM64) with systemd, or <strong>macOS</strong> (Apple Silicon or Intel). The installer detects which and sets up the right background service.</li>
 <li><strong>An OpenAI-compatible engine</strong> running on the machine (step 1). The agent works with any server that answers <code>/v1/chat/completions</code>.</li>
 <li><strong>Outbound HTTPS</strong> to the gateway. No inbound access is needed.</li>
 </ul>
@@ -57,18 +57,32 @@
 <td><code>--alias</code></td>
 </tr>
 <tr>
-<td><strong>Ollama</strong></td>
+<td><strong>Ollama</strong> (Linux, Mac)</td>
 <td><code>ollama serve</code> (then <code>ollama pull llama3.1:8b</code>)</td>
 <td>11434</td>
 <td>the model tag, e.g. <code>llama3.1:8b</code></td>
 </tr>
+<tr>
+<td><strong>MLX</strong> (Mac, Apple Silicon)</td>
+<td><code>mlx_lm.server --model mlx-community/Qwen3-8B-4bit --host 127.0.0.1 --port 8080</code></td>
+<td>8080</td>
+<td>the <code>--model</code> value</td>
+</tr>
+<tr>
+<td><strong>LM Studio</strong> (Linux, Mac)</td>
+<td>Developer → Start Server, or <code>lms server start</code></td>
+<td>1234</td>
+<td>the model identifier LM Studio shows</td>
+</tr>
 </tbody>
 </table>
+<p>llama.cpp runs on a Mac too (Metal). On a Mac, MLX is usually the fastest choice for Apple Silicon.</p>
 <p>To confirm the model id your engine serves:</p>
 <pre><code class="language-bash">curl -s http://127.0.0.1:&lt;port&gt;/v1/models
 </code></pre>
 <p>The <code>id</code> field is the value to enter as <strong>Model id</strong>.</p>
-<p><strong>NInfer engines get the most out of the gateway.</strong> They report load, cache and energy, and can serve a model card (weights, quantization, hardware), which shows up as <strong>Stats for nerds</strong> in the chat. Other engines work for serving, with fewer metrics.</p>
+<p><strong>NInfer engines get the most out of the gateway.</strong> They report load, cache and energy, and can serve a model card (weights, quantization, hardware), which shows up as <strong>Stats for nerds</strong> in the chat. Other engines work for serving, with fewer metrics: llama.cpp and vLLM report their load; for Ollama, MLX and LM Studio the gateway counts the requests it has sent them.</p>
+<p><strong>What the model can do</strong> (chat, embeddings, image input, tool calls, thinking) is read from the engine where it says so: the NInfer model card, llama.cpp <code>/props</code>, Ollama's model details. It shows as badges on the <strong>Models</strong> page, and an admin can correct it on the <strong>Routing</strong> page.</p>
 <h2 id="step-2-create-the-link">Step 2: Create the link</h2>
 <p>In <strong>My GPUs → Link a GPU</strong>, enter:</p>
 <ul>
@@ -84,17 +98,25 @@
 </code></pre>
 <p><strong>The script:</strong></p>
 <ol>
-<li>downloads <code>llm-link-agent</code> from the gateway into <code>~/.local/bin</code></li>
-<li>stores the token in <code>~/.config/llm-link-agent-&lt;name&gt;.env</code> (mode 0600)</li>
-<li>creates and starts the user service <code>llm-link-agent-&lt;name&gt;</code></li>
+<li>downloads the right <code>llm-link-agent</code> build for the machine (Linux or macOS, x86-64 or ARM64) into <code>~/.local/bin</code></li>
+<li>stores the token in <code>~/.config/llm-link-agent-&lt;name&gt;.token</code> (mode 0600)</li>
+<li>starts the agent in the background:
+<ul>
+<li><strong>Linux:</strong> the systemd user service <code>llm-link-agent-&lt;name&gt;</code></li>
+<li><strong>Mac:</strong> a LaunchAgent (<code>~/Library/LaunchAgents/com.llm-gateway.link-agent.&lt;name&gt;.plist</code>) that starts at login and restarts if it stops</li>
+</ul>
+</li>
 </ol>
-<p><strong>Keep it running after you log out:</strong></p>
-<pre><code class="language-bash">sudo loginctl enable-linger $USER
-</code></pre>
+<p><strong>Keep it running:</strong></p>
+<ul>
+<li><strong>Linux</strong>, after you log out: <code>sudo loginctl enable-linger $USER</code></li>
+<li><strong>Mac:</strong> the agent runs while you're logged in. Stop the Mac from sleeping when you want it to serve (System Settings → Energy, or <code>caffeinate -s</code> while plugged in).</li>
+</ul>
 <h2 id="step-4-verify">Step 4: Verify</h2>
 <p><strong>My GPUs</strong> shows the link as <strong>connected</strong> within a few seconds. After the first metrics poll (up to ~10 s) the engine shows its lanes, and, for NInfer engines with a model card, a summary like <code>nvfp4 weights · KV nvfp4 · dflash2 ×7 · RTX 5090 · 240K ctx</code>.</p>
 <p><strong>Check the agent's log on the GPU machine:</strong></p>
-<pre><code class="language-bash">journalctl --user -u llm-link-agent-&lt;name&gt; -f
+<pre><code class="language-bash">journalctl --user -u llm-link-agent-&lt;name&gt; -f      # Linux
+tail -f ~/Library/Logs/llm-link-agent-&lt;name&gt;.log    # Mac
 </code></pre>
 <p>A healthy start looks like:</p>
 <pre><code>connected to https://&lt;gateway&gt;
@@ -209,20 +231,30 @@ agent: relay GET /slots
 <td>Start the engine; confirm with <code>curl http://127.0.0.1:&lt;port&gt;/v1/models</code></td>
 </tr>
 <tr>
-<td>Stops after logout</td>
+<td>Stops after logout (Linux)</td>
 <td>User services end at logout without lingering</td>
 <td><code>sudo loginctl enable-linger $USER</code></td>
 </tr>
 <tr>
-<td>macOS / Windows</td>
-<td>Not supported by the installer yet</td>
-<td>Use a Linux machine</td>
+<td>Stops when the Mac sleeps</td>
+<td>The Mac is asleep, so the agent can't answer</td>
+<td>Prevent sleep while serving (System Settings → Energy, or <code>caffeinate -s</code>)</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>Not supported by the installer</td>
+<td>Use Linux (WSL may work, untested) or a Mac</td>
 </tr>
 </tbody>
 </table>
 <h2 id="uninstall">Uninstall</h2>
+<p><strong>Linux:</strong></p>
 <pre><code class="language-bash">systemctl --user disable --now llm-link-agent-&lt;name&gt;
-rm ~/.config/systemd/user/llm-link-agent-&lt;name&gt;.service ~/.config/llm-link-agent-&lt;name&gt;.env
+rm ~/.config/systemd/user/llm-link-agent-&lt;name&gt;.service ~/.config/llm-link-agent-&lt;name&gt;.token
 systemctl --user daemon-reload
+</code></pre>
+<p><strong>Mac:</strong></p>
+<pre><code class="language-bash">launchctl bootout gui/$(id -u)/com.llm-gateway.link-agent.&lt;name&gt;
+rm ~/Library/LaunchAgents/com.llm-gateway.link-agent.&lt;name&gt;.plist ~/.config/llm-link-agent-&lt;name&gt;.token
 </code></pre>
 <p>Then revoke the link in <strong>My GPUs</strong>.</p>
