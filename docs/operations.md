@@ -65,14 +65,25 @@ What matters, in order:
 |---|---|---|
 | `/var/lib/llm-gateway/pb/` | No (accounts) | **yes — stop the gateway or use PB's backup API** |
 | `/opt/llm-gateway/users.json` | No (key hashes, epochs) | yes |
+| `/opt/llm-gateway/users.json.key` | No: without it, the encrypted secrets in `users.json` are lost | **yes, stored apart from users.json** |
 | `/opt/llm-gateway/llm_gateway.conf` | Painfully | yes |
 | `usage.json`, `cost_history.json` | Mirrors of SQLite | optional |
 
 ```bash
 sudo systemctl stop llm-gateway
 tar czf llm-gateway-backup.tgz /var/lib/llm-gateway/pb /opt/llm-gateway/{users.json,llm_gateway.conf}
+# the secrets key goes somewhere else (another disk, a password manager)
+cp -p /opt/llm-gateway/users.json.key /secure/place/
 sudo systemctl start llm-gateway
 ```
+
+### Secrets in users.json
+
+The session signing secret, each user's UI key and connector (MCP) auth headers are stored **encrypted** in `users.json` (AES-256-GCM). The key is in `users.json.key` next to it (mode 600; override the path with `LLM_GATEWAY_SECRETS_KEY_FILE`), created on first start. Older files with plain values are encrypted automatically on the next start.
+
+- Back the key up, but not in the same place as `users.json`: together they reveal the secrets.
+- Lose the key and the gateway refuses to start, saying so. Restore the key, or move `users.json`'s encrypted values aside: users then sign in again, UI keys are re-issued and connectors need their tokens re-entered.
+- A gateway older than this change can't read the encrypted values: rolling back signs everyone out and breaks connectors until they're re-entered.
 
 ## Data flow (why restarts are safe)
 

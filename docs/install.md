@@ -37,7 +37,8 @@ What it does:
 |---|---|
 | `/opt/llm-gateway/llm-gateway` | binary |
 | `/opt/llm-gateway/llm_gateway.conf` | config (form-editable at `/admin/config/page`) |
-| `/opt/llm-gateway/users.json` | API keys + session state (0600) |
+| `/opt/llm-gateway/users.json` | API keys + session state (0600; secrets encrypted) |
+| `/opt/llm-gateway/users.json.key` | key for the secrets in users.json (0600; back it up separately) |
 | `/opt/llm-gateway/usage.json` | usage mirror (SQLite is the store) |
 | `/var/lib/llm-gateway/pb/` | embedded PocketBase + SQLite history |
 

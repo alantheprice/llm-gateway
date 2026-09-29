@@ -19,6 +19,9 @@ binary via the PocketBase framework — see docs/start.md).
 - Comparison is constant-time.
 
 ### 1.2 users.json schema (read/write compatible)
+
+Secret values (`session_secret`, `auto_key_plaintexts` values, `mcp_servers[*].headers` values) are stored as `enc:v1:<base64(nonce‖AES-256-GCM ciphertext)>` with the key in `users.json.key`; plain values are still accepted on read. The Python gateway can't read the encrypted form.
+
 ```json
 {
   "session_secret": "<hex string>",

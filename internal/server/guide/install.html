@@ -64,7 +64,11 @@ superuser</strong> — the admin password is printed once, store it</li>
 </tr>
 <tr>
 <td><code>/opt/llm-gateway/users.json</code></td>
-<td>API keys + session state (0600)</td>
+<td>API keys + session state (0600; secrets encrypted)</td>
+</tr>
+<tr>
+<td><code>/opt/llm-gateway/users.json.key</code></td>
+<td>key for the secrets in users.json (0600; back it up separately)</td>
 </tr>
 <tr>
 <td><code>/opt/llm-gateway/usage.json</code></td>

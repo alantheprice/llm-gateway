@@ -112,6 +112,10 @@ type Store struct {
 
 	// verified: sha256(plaintext) → record that passed PBKDF2 (see LookupKey).
 	verified map[[32]byte]verifiedKey
+
+	// seal encrypts the secrets written to users.json (see secrets.go).
+	seal          *sealer
+	legacySecrets bool // loaded plain secrets that still need encrypting
 }
 
 // UserSettings carries per-user service policy.
@@ -163,8 +167,23 @@ func Open(path string) (*Store, error) {
 	s := &Store{path: path, LocalKeys: map[string][]*KeyRecord{},
 		MustChangePWMap: map[string]bool{}, SessionEpochs: map[string]int{},
 		uiPlain: map[string]string{}}
+	existing, _ := os.ReadFile(path)
+	key, err := loadOrCreateKey(SecretsKeyPath(path), hasEncrypted(existing))
+	if err != nil {
+		return nil, err
+	}
+	if s.seal, err = newSealer(key); err != nil {
+		return nil, err
+	}
 	if err := s.reload(); err != nil {
 		return nil, err
+	}
+	// Encrypt secrets an older users.json still holds in plain text.
+	if s.legacySecrets {
+		if err := s.saveLocked(); err != nil {
+			return nil, fmt.Errorf("encrypting users.json secrets: %w", err)
+		}
+		s.legacySecrets = false
 	}
 	if s.SessionSecret == "" {
 		s.SessionSecret = newSecret(32)
@@ -193,6 +212,11 @@ func (s *Store) reload() error {
 	if err := json.Unmarshal(data, s); err != nil {
 		return fmt.Errorf("users.json parse: %w", err)
 	}
+	legacy, err := s.decryptSecrets()
+	if err != nil {
+		return fmt.Errorf("users.json: %w", err)
+	}
+	s.legacySecrets = s.legacySecrets || legacy
 	if s.LocalKeys == nil {
 		s.LocalKeys = map[string][]*KeyRecord{}
 	}
@@ -265,7 +289,7 @@ func (s *Store) Save() error {
 }
 
 func (s *Store) saveLocked() error {
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := s.marshalSealed()
 	if err != nil {
 		return err
 	}

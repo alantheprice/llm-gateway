@@ -69,6 +69,11 @@ a grace window; revocation kills sessions instantly (epoch bump).</li>
 <td>yes</td>
 </tr>
 <tr>
+<td><code>/opt/llm-gateway/users.json.key</code></td>
+<td>No: without it, the encrypted secrets in <code>users.json</code> are lost</td>
+<td><strong>yes, stored apart from users.json</strong></td>
+</tr>
+<tr>
 <td><code>/opt/llm-gateway/llm_gateway.conf</code></td>
 <td>Painfully</td>
 <td>yes</td>
@@ -82,8 +87,17 @@ a grace window; revocation kills sessions instantly (epoch bump).</li>
 </table>
 <pre><code class="language-bash">sudo systemctl stop llm-gateway
 tar czf llm-gateway-backup.tgz /var/lib/llm-gateway/pb /opt/llm-gateway/{users.json,llm_gateway.conf}
+# the secrets key goes somewhere else (another disk, a password manager)
+cp -p /opt/llm-gateway/users.json.key /secure/place/
 sudo systemctl start llm-gateway
 </code></pre>
+<h3 id="secrets-in-usersjson">Secrets in users.json</h3>
+<p>The session signing secret, each user's UI key and connector (MCP) auth headers are stored <strong>encrypted</strong> in <code>users.json</code> (AES-256-GCM). The key is in <code>users.json.key</code> next to it (mode 600; override the path with <code>LLM_GATEWAY_SECRETS_KEY_FILE</code>), created on first start. Older files with plain values are encrypted automatically on the next start.</p>
+<ul>
+<li>Back the key up, but not in the same place as <code>users.json</code>: together they reveal the secrets.</li>
+<li>Lose the key and the gateway refuses to start, saying so. Restore the key, or move <code>users.json</code>'s encrypted values aside: users then sign in again, UI keys are re-issued and connectors need their tokens re-entered.</li>
+<li>A gateway older than this change can't read the encrypted values: rolling back signs everyone out and breaks connectors until they're re-entered.</li>
+</ul>
 <h2 id="data-flow-why-restarts-are-safe">Data flow (why restarts are safe)</h2>
 <p>Usage is recorded in memory → <strong>synced to SQLite every 60s and at<br>
 shutdown</strong> → <code>usage.json</code>/<code>cost_history.json</code> are mirrors. Every boot<br>
