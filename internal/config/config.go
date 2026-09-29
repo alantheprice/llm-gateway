@@ -1,5 +1,5 @@
-// Package config loads the gateway JSON configuration (same format as the
-// Python gateway's llm_gateway.conf). See docs/SPEC.md §10.
+// Package config loads the gateway JSON configuration (llm_gateway.conf).
+// See docs/SPEC.md §10.
 package config
 
 import (
@@ -124,7 +124,7 @@ type PriceBook struct {
 
 // HostCfg describes one physical box (1 IP = 1 box) for full-cost
 // accounting: GPU energy comes from the engines' NVML; overhead watts and
-// capex amortization are declared here (SPEC §11).
+// capex amortization are declared here (see docs/operations.md).
 type HostCfg struct {
 	Label           string   `json:"label"`
 	IPs             []string `json:"ips"`               // backend URL hosts on this box
@@ -193,10 +193,10 @@ type Config struct {
 	onReload []func(*Config)
 }
 
-// ApplyDefaults fills zero values the way the Python gateway defaults them.
+// ApplyDefaults fills zero values with the gateway's defaults.
 func (c *Config) ApplyDefaults() { c.applyDefaults() }
 
-// Defaults fill zero values the way the Python gateway defaults them.
+// applyDefaults fills zero values with the gateway's defaults.
 func (c *Config) applyDefaults() {
 	if c.Gateway.Port == 0 {
 		c.Gateway.Port = 8033

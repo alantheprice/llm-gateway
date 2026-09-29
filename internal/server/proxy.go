@@ -712,7 +712,7 @@ func stripIfInjected(r *http.Request, buffered []byte) []byte {
 	return buffered
 }
 
-// --- observability (SPEC §12) ---
+// --- observability (SPEC §11) ---
 
 func (s *Server) handleSlots(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.checkAuth(w, r); !ok {

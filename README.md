@@ -64,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/alantheprice/llm-gateway/main/scrip
 Already running vLLM or llama.cpp? Set `model_pools` in
 `/opt/llm-gateway/llm_gateway.conf` (or the admin config page) to point at
 it and restart the service. Pool knobs — thresholds, cache affinity,
-capacity weights, size affinity — are all live-editable.
+capacity weights, context limits — are all live-editable.
 
 ## The NInfer fork — energy metrics
 

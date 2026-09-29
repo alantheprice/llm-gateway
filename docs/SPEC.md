@@ -1,16 +1,9 @@
-# LLM Gateway — Behavioral Specification (Go port)
+# LLM Gateway — Behavioral Specification
 
-Source of truth for the Go single-binary port. Written from the behavior of
-the Python gateway (llm_gateway.py @ 523feab) as observed in production, NOT
-by copying its code. Tests are written against THIS document; the Go
-implementation is written to pass the tests.
+Source of truth for the gateway's behavior. Tests are written against this
+document; the implementation is written to pass the tests.
 
-Goal: a **drop-in replacement** for the Python gateway: same endpoints,
-same config file, same users.json/usage.json formats, same routing
-decisions. §11 documents the identity plane (since embedded into this
-binary via the PocketBase framework — see docs/start.md).
-
-## 1. Identity & Formats (compat-critical)
+## 1. Identity & Formats
 
 ### 1.1 Key hashing (PBKDF2)
 - Algorithm: PBKDF2-HMAC-SHA256, **60000 iterations**, salt = the key
@@ -18,9 +11,9 @@ binary via the PocketBase framework — see docs/start.md).
 - `hash(sk, salt) = hex(pbkdf2_hmac_sha256(sk, salt, 60000))`
 - Comparison is constant-time.
 
-### 1.2 users.json schema (read/write compatible)
+### 1.2 users.json schema
 
-Secret values (`session_secret`, `auto_key_plaintexts` values, `mcp_servers[*].headers` values) are stored as `enc:v1:<base64(nonce‖AES-256-GCM ciphertext)>` with the key in `users.json.key`; plain values are still accepted on read. The Python gateway can't read the encrypted form.
+Secret values (`session_secret`, `auto_key_plaintexts` values, `mcp_servers[*].headers` values) are stored as `enc:v1:<base64(nonce‖AES-256-GCM ciphertext)>` with the key in `users.json.key`; plain values are still accepted on read (files written by older gateways).
 
 ```json
 {
@@ -44,7 +37,7 @@ Rules:
   null). On any store mutation check, expired rotations flip to
   `active=false, rotating=false, grace_until=null` (lazy expiry).
 
-### 1.3 Session cookies (compat-critical)
+### 1.3 Session cookies
 - Cookie name: `llmgw_session`.
 - Token format: `base64url(json(claims) + "|" + <exp_unix>)` + `.` +
   `hex(hmac_sha256(body, session_secret))` — note the payload is base64 of
@@ -59,7 +52,7 @@ Rules:
 - File `/etc/llm-inference/api-keys.list`: one key per line, `#` comments.
   Accepted as admin/operator keys when local-store auth fails.
 
-## 2. HTTP surface (inference plane)
+## 2. HTTP surface
 
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
@@ -75,8 +68,8 @@ Rules:
 | GET | `/backends` | key or LAN-trust | per-backend engine/score/lanes snapshot |
 | ANY | other `/v1/*` | stricter | 404; if unknown subpath: log + 60/min/IP probe throttle |
 
-- **Auth modes** (`_auth_required` semantics): if `gateway.trust_local_networks`
-  is true AND source IP ∈ `local_networks` → no key needed. Else Bearer key
+- **Auth modes**: if `gateway.trust_local_networks` is true AND source IP ∈
+  `local_networks` → no key needed. Else Bearer key
   required. **127.0.0.1 is NEVER trusted** (it's the tunnel path).
 - **Exception — model catalog:** `GET /v1/models` is public by default
   (`gateway.models_require_auth: false`): OpenAI-compatible clients probe
@@ -138,8 +131,7 @@ current leader (per pool, in-memory).
    override) is smaller than `estTokens + requested max_tokens` are
    skipped. Unknown windows count as fitting; if no member fits, all are
    kept and the engine rejects with its own error. Cache affinity applies
-   at every prompt size. (Replaces the retired size routing; old
-   `large_context` / `large_prompt_tokens` keys are ignored.)
+   at every prompt size.
 6. **Threshold filter**: eligible = score < pool.overflow_threshold; if none
    eligible → least-loaded single member.
 7. **Choice**: min by `(score - (member==leader ? sticky_bias:0),
@@ -174,8 +166,8 @@ Loop guard: each member tried at most once.
 - Catalog: pool MEMBER model ids are hidden (clients must use the pool
   virtual name so cache-affinity routing can't be bypassed); all other
   discovered models (embeddings, FIM, standalone) are advertised; pool
-  virtual names are synthesized if no backend reports them. (An old
-  `public_models` key is ignored.) Output shape mirrors OpenAI:
+  virtual names are synthesized if no backend reports them. Output shape
+  mirrors OpenAI:
   `{"object":"list","data":[{"id":...,"object":"model",...}]}`.
 - `/chat/config` returns every discovered model id (sorted), member ids
   included — the chat UI can target a specific engine if it wants.
@@ -185,23 +177,22 @@ Loop guard: each member tried at most once.
 ```json
 {"users": {"<username>": {"requests": N, "prompt_tokens": N,
   "output_tokens": N, "keys": {"<key_id>": {...same3...}},
-  "kinds": {"chat"/"embeddings"/"fim": {...same3...}}}}}
+  "kinds": {"chat"/"embeddings"/"fim"/"images": {...same3...}}}}}
 ```
-- kind from model name: contains "embed" → embeddings, "fim" → fim, else chat.
+- kind from model id: segments starting "embed" → embeddings, "fim" → fim,
+  image-model names (FLUX, SDXL, DALL·E, …) → images, else chat.
 - Recorded once per request on the serving member, streaming included
   (tokens from backend usage or final SSE chunk).
-- Legacy-key requests attribute to user "legacy" (or configured name).
+- Requests from the legacy key file (§1.4) attribute to user `operator`;
+  LAN-trusted unkeyed requests attribute to user `local`.
 
 ## 9. Aliases
 A pool's `aliases` are other model names that route exactly like the pool
 (same member pick, same conversation affinity, keyed by the pool's name).
 Resolution order: pool name or alias → engine serving that model id →
-private link. Responses echo the name the client called. (`overflow_pairs`
-were removed: a pool with capacity weights and a busy threshold covers the
-same case and keeps conversations on one GPU. Old configs still load; the
-key is ignored.)
+private link. Responses echo the name the client called.
 
-## 10. Config file (same format as llm_gateway.conf)
+## 10. Config file
 Single JSON file (strict JSON — no comments), keys: gateway{port,
 trust_local_networks, models_require_auth, api_keys_file,
 internal_api_key_file, users_file, usage_file},
@@ -210,7 +201,7 @@ local_networks[], metrics{...}, backend_max_seqs{}, model_pools{} (each
 with members[], aliases[], cache_affinity, max_pool_share,
 overflow_threshold, sticky_bias, capacity_bias), hosts[], price_book{},
 cache{ttl}.
-- Auto-reload on mtime change (like the Python conf watcher).
+- Auto-reload on mtime change.
 - Admin UI (`/admin/config/page` → GET/POST `/admin/config`) reads and
   writes this file: POST overlays onto the current config, validates,
   persists atomically, and hot-swaps (tracker weights + networks re-derived;
@@ -218,14 +209,6 @@ cache{ttl}.
   UI edits survive restarts.
 - Env overrides: `LLM_GATEWAY_CONF` (path), `PORT` (listen port).
 
-## 11. Explicitly out of scope for Go v1 (stays on Python instance)
-- Web UI (templates/static), PocketBase identity, login/logout/sessions-as-
-  auth-for-pages, invites, password flows, admin pages, `/chat` `/keys`
-  `/account` `/admin` routes.
-- seed-agent proxying (`/v1/agent/chat`) — add post-parity.
-The Go binary serves the inference plane only; UI/identity remains on the
-Python service until the Go port proves itself, then ports incrementally.
-
-## 12. Observability endpoints (parity)
+## 11. Observability endpoints
 - `/backends`: `{"backends":{url:{"engine","score","lanes","running","waiting","tps","energy_daily_kwh","cache_hit_pct","last_updated"}}}`
 - `/usage`: pass-through merge of backend /usage payloads keyed by backend.

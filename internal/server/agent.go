@@ -10,8 +10,8 @@ import (
 // bytesReader is a tiny alias to keep imports tidy in this file.
 func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
-// handleAgentChat proxies the seed-agent sidecar (SPEC §2 identity plane of
-// the Python gateway: auth-gated at the gateway, sidecar loopback-only).
+// handleAgentChat proxies the seed-agent sidecar (auth-gated at the
+// gateway, sidecar loopback-only).
 // SSE stream is relayed byte-for-byte; failover doesn't apply (single sidecar).
 func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 	user, keyID, ok := s.checkAuth(w, r)

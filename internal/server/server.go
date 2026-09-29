@@ -1,4 +1,4 @@
-// Package server wires the HTTP surface (SPEC §2, §4, §7, §8, §12):
+// Package server wires the HTTP surface (SPEC §2, §4, §7, §8, §11):
 // auth, throttles, discovery, pool routing with reactive failover, usage.
 package server
 

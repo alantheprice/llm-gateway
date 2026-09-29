@@ -126,7 +126,7 @@ func (s *Server) registerInferenceDocs() {
 		{
 			OperationID: "chat-completions", Method: http.MethodPost, Path: "/v1/chat/completions",
 			Summary:     "Chat completion (OpenAI-compatible)",
-			Description: "Routes through the model pool (session pinning, size affinity, reactive failover before first byte) or directly to the resolved backend. Supports \"stream\": true (SSE). Usage is recorded once on the serving member.",
+			Description: "Routes through the model pool (session pinning, context limits, reactive failover before first byte) or directly to the resolved backend. Supports \"stream\": true (SSE). Usage is recorded once on the serving member.",
 			Tags:        []string{"inference"},
 			Security:    secs(secBearer, secSession),
 			Responses: map[string]*huma.Response{

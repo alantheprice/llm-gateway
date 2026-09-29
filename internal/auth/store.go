@@ -1,5 +1,5 @@
 // Package auth implements users.json storage, PBKDF2 key hashing, session
-// tokens, and legacy key files — byte-compatible with the Python gateway.
+// tokens, and legacy key files.
 // See docs/SPEC.md §1.
 package auth
 
@@ -570,7 +570,7 @@ func (s *Store) LegacyKeys() []string {
 	return s.legacyKeys
 }
 
-// --- session tokens (SPEC §1.3, byte-compatible with Python _HmacSigner) ---
+// --- session tokens (SPEC §1.3) ---
 
 type Claims struct {
 	U    string `json:"u"`

@@ -250,11 +250,9 @@ type Member struct {
 // tokens (prompt estimate + requested output). Members with an unknown
 // window are kept. If nobody fits, all members are returned: the engine
 // then rejects with its own, more precise error rather than the gateway
-// guessing from a chars/4 estimate.
-//
-// This replaces size-based routing (large_context / large_prompt_tokens):
-// every member that can physically serve a request is a candidate, and
-// cache affinity applies at every prompt size.
+// guessing from a chars/4 estimate. Every member that can physically
+// serve a request is a candidate, and cache affinity applies at every
+// prompt size.
 func FitContext(members []Member, need int) []Member {
 	if need <= 0 {
 		return members
@@ -369,8 +367,8 @@ type PickResult struct {
 //
 // guards: depth>=3 match released above 0.90; depth==2 above 0.50 (a
 // thousand scraper sessions sharing an opener must not pile onto one GPU).
-// Large prompts are handled by the caller's size-affinity path and never
-// reach here.
+// Large prompts are filtered by the caller's context-fit pass (FitContext)
+// and never reach here.
 // coldPrefillMs is the caller's estimate of what moving this conversation to
 // another GPU would cost (re-prefilling it there). When the pinned GPU is
 // queueing for longer than that and another member has a free lane, the
