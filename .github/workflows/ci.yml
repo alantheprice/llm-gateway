@@ -18,6 +18,9 @@ jobs:
         tz: [UTC, America/Chicago, Pacific/Auckland]
     env:
       TZ: ${{ matrix.tz }}
+      # Page smoke tests render every page in headless Chrome (preinstalled
+      # on GitHub's Ubuntu runners); fail rather than skip if it's missing.
+      REQUIRE_BROWSER: ${{ matrix.tz == 'UTC' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
