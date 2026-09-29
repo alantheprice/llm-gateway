@@ -18,6 +18,19 @@ accrual) means the system pays for itself. History persists in SQLite<br>
 <p>Engine energy comes from the NInfer fork's NVML accounting — see the<br>
 <a href="/guide/ninfer-engine">NInfer runbook</a>. Hosts without fork telemetry show<br>
 overhead + capex only.</p>
+<p><strong>Services and GPUs.</strong> A <em>service</em> is one engine (host + port); a <em>GPU</em> is<br>
+a physical card. Several services can share a card, and one service can<br>
+span several. Every engine on a card reports that card's whole draw, so<br>
+list each box's cards under <strong>gpus</strong> (one per line, <code>name = ports</code>):</p>
+<pre><code>RTX PRO 6000 = 8006
+RTX 4090 = 8001, 8009
+</code></pre>
+<p>A card with no ports runs every service on the box; a port on two cards<br>
+spans both. The gateway then counts each card (or group of cards joined<br>
+by a spanning service) once, and splits its energy between the services<br>
+on it by tokens served. Without a gpus list, each service is assumed to<br>
+have its own card, and the Costs page warns when a box has several<br>
+services reporting energy.</p>
 <h2 id="per-user-quotas">Per-user quotas</h2>
 <p>Admins → Users → set a daily token limit per user. Exceeding it returns<br>
 <code>429</code> with a retry hint until midnight UTC — the same UTC-day boundary<br>

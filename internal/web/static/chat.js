@@ -262,10 +262,20 @@
         for (const t of m.tools) {
           const chip = document.createElement('div');
           chip.className = 'toolchip';
-          const label = t.name === 'web_search' ? '🌐 ' : '📄 ';
           const arg = (t.args || '').replace(/^"|"$/g, '').slice(0, 70);
-          chip.textContent = label + (t.name === 'web_search' ? 'searching: ' : 'reading: ') + arg;
-          if (t.status !== 'running') chip.textContent += ' ✓';
+          if (t.name === 'notice') {
+            chip.classList.add('warn');
+            chip.textContent = '⚠ ' + (t.summary || '');
+          } else if (t.name.includes('__')) {
+            // A connector's tool: <server>__<tool>.
+            const i = t.name.indexOf('__');
+            chip.textContent = '🔌 ' + t.name.slice(0, i) + ' · ' + t.name.slice(i + 2) + (arg && arg !== '{}' ? ': ' + arg : '');
+            if (t.status !== 'running') chip.textContent += /^tool error/.test(t.summary || '') ? ' ✗' : ' ✓';
+            if (t.summary) chip.title = t.summary;
+          } else {
+            chip.textContent = (t.name === 'web_search' ? '🌐 searching: ' : '📄 reading: ') + arg;
+            if (t.status !== 'running') chip.textContent += ' ✓';
+          }
           div.appendChild(chip);
         }
       }
@@ -483,6 +493,8 @@
             } else if (ev === 'tool_end') {
               const t = [...a.tools].reverse().find(t => t.status === 'running');
               if (t) { t.status = d.status || 'done'; t.summary = d.summary || ''; }
+            } else if (ev === 'notice') {
+              a.tools.push({ name: 'notice', status: 'done', summary: d.message || '' });
             } else if (ev === 'content') {
               a.content += d.content || '';
             } else if (ev === 'error') {
@@ -612,6 +624,92 @@
       toolsLabel.classList.toggle('on', toolsToggle.checked);
     });
   }
+  /* ---------- connectors (remote MCP servers) ---------- */
+  const cx = document.getElementById('connectors');
+  let cxServers = [];
+  function cxLabel() {
+    const on = cxServers.filter(x => x.enabled).length;
+    const t = document.getElementById('toolsText');
+    if (t) t.textContent = on ? 'Web + ' + on + ' connector' + (on > 1 ? 's' : '') : 'Web';
+    if (toolsLabel) toolsLabel.title = on ? 'Let the model search the web and use your connectors' : 'Let the model search the web';
+  }
+  function cxToolList(res) {
+    if (!res) return '';
+    if (!res.ok) return '<div class="cx-err">✗ ' + esc(res.error || 'failed') + '</div>';
+    const tools = res.tools || [];
+    return '<div class="cx-ok">✓ Connected' + (res.legacy_sse ? ' (older SSE transport)' : '') + ' · ' + tools.length + ' tool' + (tools.length === 1 ? '' : 's') + '</div>' +
+      '<ul class="cx-tools">' + tools.map(t => '<li><code>' + esc(t.name) + '</code> <span class="muted">' + esc(t.description || '') + '</span></li>').join('') + '</ul>';
+  }
+  function cxRender() {
+    const list = document.getElementById('cxList');
+    list.innerHTML = cxServers.length ? cxServers.map(v =>
+      '<div class="cx-item" data-id="' + escAttr(v.id) + '">' +
+        '<div class="cx-line"><label class="cx-on"><input type="checkbox" data-cxon' + (v.enabled ? ' checked' : '') + '> <strong>' + esc(v.name) + '</strong></label>' +
+        '<span class="cx-url">' + esc(v.url) + '</span></div>' +
+        '<div class="cx-line muted">' + (Object.keys(v.headers || {}).map(k => esc(k) + ': ' + esc(v.headers[k])).join(' · ') || 'no auth header') + '</div>' +
+        '<div class="cx-actions"><button class="btn sm" data-cxtest>Test</button><button class="btn sm danger" data-cxdel>Remove</button></div>' +
+        '<div class="cx-out"></div></div>').join('')
+      : '<p class="muted">No connectors yet.</p>';
+    list.querySelectorAll('.cx-item').forEach(el => {
+      const id = el.dataset.id;
+      el.querySelector('[data-cxon]').onchange = e => cxPost({ action: 'update', id, enabled: e.target.checked });
+      el.querySelector('[data-cxdel]').onclick = () => {
+        const v = cxServers.find(x => x.id === id);
+        if (confirm('Remove ' + (v ? v.name : 'this connector') + '? Its saved auth header is deleted too.')) cxPost({ action: 'delete', id });
+      };
+      el.querySelector('[data-cxtest]').onclick = async e => {
+        const out = el.querySelector('.cx-out');
+        e.target.disabled = true; out.innerHTML = '<span class="muted">Connecting…</span>';
+        const r = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'test', id }) });
+        e.target.disabled = false;
+        out.innerHTML = r.ok ? cxToolList(r.data.test) : '<div class="cx-err">✗ ' + esc(r.data.error || 'failed') + '</div>';
+      };
+    });
+    cxLabel();
+  }
+  async function cxLoad() {
+    const r = await api('/api/mcp');
+    if (r.ok) { cxServers = r.data.servers || []; cxRender(); }
+  }
+  async function cxPost(body) {
+    const r = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { flash(r.data.error || 'failed', true, 'cxFlash'); await cxLoad(); return null; }
+    cxServers = r.data.servers || [];
+    cxRender();
+    return r.data;
+  }
+  function cxFormBody(action) {
+    const b = { action, name: document.getElementById('cxName').value.trim(), url: document.getElementById('cxURL').value.trim() };
+    const hn = document.getElementById('cxHName').value.trim(), hv = document.getElementById('cxHVal').value.trim();
+    b.headers = hn && hv ? { [hn]: hv } : {};
+    return b;
+  }
+  if (cx) {
+    document.getElementById('connectorsBtn').onclick = () => { cxLoad(); cx.showModal(); };
+    document.getElementById('cxClose').onclick = () => cx.close();
+    cx.addEventListener('click', e => { if (e.target === cx) cx.close(); });
+    document.getElementById('cxForm').onsubmit = async e => {
+      e.preventDefault();
+      const b = cxFormBody('add');
+      if (!b.name) b.name = (b.url.replace(/^https?:\/\//, '').split(/[./:]/)[0] || 'mcp').toLowerCase();
+      if (await cxPost(b)) {
+        e.target.reset(); document.getElementById('cxHName').value = 'Authorization';
+        document.getElementById('cxTestOut').innerHTML = '';
+        flash('Added ' + b.name + '. Turn on 🌐 Web to use it.', false, 'cxFlash');
+      }
+    };
+    document.getElementById('cxTest').onclick = async e => {
+      const out = document.getElementById('cxTestOut'), b = cxFormBody('test');
+      if (!b.url) { out.innerHTML = '<div class="cx-err">Enter the server URL.</div>'; return; }
+      b.name = b.name || 'test';
+      e.target.disabled = true; out.innerHTML = '<span class="muted">Connecting…</span>';
+      const r = await api('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      e.target.disabled = false;
+      out.innerHTML = r.ok ? cxToolList(r.data.test) : '<div class="cx-err">✗ ' + esc(r.data.error || 'failed') + '</div>';
+    };
+    cxLoad();
+  }
+
   sendBtn.addEventListener('click', () => { if (busy) { if (abortCtrl) abortCtrl.abort(); } else send(); });
   promptEl.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!busy) send(); }

@@ -1,6 +1,6 @@
 <h1 id="linking-a-gpu">Linking a GPU</h1>
 <p>Link a GPU you run to this gateway, so you can use it from anywhere through the gateway's API, with its analytics, keys and rate limits.</p>
-<p><strong>A linked GPU is private to you.</strong> Only you can see or call it until you share it with people you name. You administer it the way a platform admin administers the gateway's own GPUs: who may use it, whether it helps serve platform models, pausing it, and who used it.</p>
+<p><strong>A linked GPU is private to you.</strong> Only you can see or call it until you share it with people you name or with everyone. You administer it the way a platform admin administers the gateway's own GPUs: who may use it, whether it helps serve platform models, pausing it, and who used it.</p>
 <p>You don't open ports, set up a VPN, or give the gateway access to your network. A small agent on your GPU machine connects <strong>out</strong> to the gateway, and requests reach your engine through that connection.</p>
 <p>Do it from <strong>My GPUs</strong> in the gateway's menu. This guide explains each step.</p>
 <h2 id="how-it-works">How it works</h2>
@@ -130,13 +130,37 @@ agent: relay GET /slots
   -d '{&quot;model&quot;: &quot;office-4090/qwen3-8b&quot;, &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;hi&quot;}]}'
 </code></pre>
 <p>You also get the admin views for it: <code>GET /v1/models/&lt;gpu-name&gt;/&lt;model-id&gt;</code> returns the full model card, and <code>/details</code> returns live host and GPU facts. Other people get the redacted card only.</p>
-<p><strong>Share it.</strong> On <strong>My GPUs</strong>, add usernames under <strong>Shared with</strong>. Those users:</p>
+<p><strong>Share it.</strong> On <strong>My GPUs</strong>, choose who can call the GPU by its name:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Who can call <code>&lt;gpu-name&gt;/&lt;model-id&gt;</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Only me</strong> (default)</td>
+<td>You</td>
+</tr>
+<tr>
+<td><strong>People I name</strong></td>
+<td>You and the usernames you add</td>
+</tr>
+<tr>
+<td><strong>Everyone</strong></td>
+<td>Every signed-in user on the gateway</td>
+</tr>
+</tbody>
+</table>
+<p>People you share with:</p>
 <ul>
 <li>see the model in their <code>/v1/models</code> and chat picker, and under <strong>My GPUs → Shared with me</strong></li>
 <li>call it with their own API key; the requests count against their own quota</li>
-<li>can be removed at any time with ×; the next request is refused</li>
+<li>lose access at once when you remove them or switch back to <strong>Only me</strong></li>
 </ul>
-<p><strong>Share it with everyone.</strong> Tick <strong>Share with everyone</strong> on the link to open it to every signed-in user on the gateway, each calling with their own API key. Untick it to go back to just the people you named; that list is kept. Requests without an API key (anonymous LAN access) never reach a linked GPU.</p>
+<p>Requests without an API key (anonymous LAN access) never reach a linked GPU.</p>
+<p><strong>While your GPU serves a platform model</strong> (below), other people reach it only through that model, which balances load across its GPUs. Its own name stays yours for testing, whatever the sharing setting. The setting applies again once it stops serving platform models.</p>
 <p>The link's <strong>Usage</strong> table shows who used it over the last 7 days: requests, tokens, latency and errors.</p>
 <h2 id="platform-models">Platform models</h2>
 <p>A platform model is a shared name such as <code>qwen3.8-27b</code>, which the gateway routes across several GPUs by load, cache affinity and context window. Everyone with an API key can call it.</p>
@@ -146,8 +170,8 @@ agent: relay GET /slots
 <li><strong>You</strong> tick that model on the link in <strong>My GPUs</strong>.</li>
 </ol>
 <p>Until you tick it, no platform traffic reaches your GPU, even if an admin has listed it. Ticking it means anyone's prompts for that model may be routed to your machine. Untick it, or pause the link, to stop at once.</p>
-<p>GPUs linked by admins are platform infrastructure and serve the models that list them without the extra step.</p>
-<p>Once serving, the GPU's requests appear in <strong>Analytics → Per GPU</strong>, and NInfer model cards appear in <code>GET /v1/models/&lt;platform-model&gt;</code> and in <strong>Stats for nerds</strong>.</p>
+<p>GPUs linked by admins are platform infrastructure: they serve the models that list them without the extra step. <strong>My GPUs</strong> shows this as &quot;no opt-in is needed&quot; on each of those models.</p>
+<p>Once serving, the GPU's requests appear in <strong>Analytics → Per service</strong> (one row per engine), and NInfer model cards appear in <code>GET /v1/models/&lt;platform-model&gt;</code> and in <strong>Stats for nerds</strong>.</p>
 <h2 id="managing-a-link">Managing a link</h2>
 <table>
 <thead>

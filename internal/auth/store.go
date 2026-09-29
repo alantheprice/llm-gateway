@@ -99,6 +99,10 @@ type Store struct {
 	// LinkSettings: owner-controlled policy per GPU link, keyed by owner
 	// then link key id. A link is private to its owner until shared.
 	LinkSettings map[string]map[string]LinkSettings `json:"link_settings,omitempty"`
+	// MCPServers: each user's remote MCP servers (tools for agent chat),
+	// including the auth headers they need — same trust domain as the
+	// plaintext UI keys above (0600).
+	MCPServers map[string][]MCPServer `json:"mcp_servers,omitempty"`
 
 	// legacy key file path ("" disables)
 	LegacyKeysFile string
@@ -185,6 +189,7 @@ func (s *Store) reload() error {
 		s.SessionSecret = newSecret(32)
 		return nil
 	}
+	s.MCPServers = nil // replaced, not merged, on reload
 	if err := json.Unmarshal(data, s); err != nil {
 		return fmt.Errorf("users.json parse: %w", err)
 	}

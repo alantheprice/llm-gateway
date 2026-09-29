@@ -14,7 +14,8 @@ func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 // the Python gateway: auth-gated at the gateway, sidecar loopback-only).
 // SSE stream is relayed byte-for-byte; failover doesn't apply (single sidecar).
 func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.checkAuth(w, r); !ok {
+	user, keyID, ok := s.checkAuth(w, r)
+	if !ok {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -22,6 +23,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		errBody(w, http.StatusRequestEntityTooLarge, "body too large")
 		return
 	}
+	body = s.withMCPServers(body, user, keyID)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		s.agentURL+"/v1/agent/chat", bytesReader(body))

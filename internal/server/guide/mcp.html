@@ -1,0 +1,55 @@
+<h1 id="connectors-remote-mcp-servers">Connectors (remote MCP servers)</h1>
+<p>Connect <strong>remote MCP servers</strong> to the chat, and the model can use their tools: look up issues, query a database, read docs, whatever the server offers. You add a server by its URL; nothing runs on your computer.</p>
+<p><a href="https://modelcontextprotocol.io">MCP</a> (Model Context Protocol) is the open standard many services use to expose tools to AI models.</p>
+<h2 id="add-a-server">Add a server</h2>
+<ol>
+<li>In <strong>Chat</strong>, click <strong>🔌 Connectors</strong>.</li>
+<li>Enter:
+<ul>
+<li><strong>Name:</strong> a short name, e.g. <code>github</code> (lowercase letters, digits, <code>-</code>, <code>_</code>). Tools show up as <code>&lt;name&gt;__&lt;tool&gt;</code>.</li>
+<li><strong>URL:</strong> the server's MCP endpoint, e.g. <code>https://mcp.example.com/mcp</code>.</li>
+<li><strong>Auth header</strong> (if the server needs one): usually <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. Some servers use another header, such as <code>X-API-Key</code>.</li>
+</ul>
+</li>
+<li>Click <strong>Test</strong> to connect and list its tools, then <strong>Add</strong>.</li>
+</ol>
+<p>Turn on <strong>🌐 Web</strong> in the composer to use connectors. The toggle reads <strong>Web + N connectors</strong> while any are on. Each connector has its own on/off switch.</p>
+<p>In a reply, each tool call shows as a chip, e.g. <code>🔌 github · list_issues ✓</code>. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.</p>
+<h2 id="what-works">What works</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Transports</strong></td>
+<td>Streamable HTTP (current MCP) and the older HTTP + SSE transport (<code>/sse</code> endpoints). The gateway tries the current one first.</td>
+</tr>
+<tr>
+<td><strong>Auth</strong></td>
+<td>A static header: an API key or personal access token. Servers that only offer an OAuth sign-in flow aren't supported yet; use a token if the service offers one.</td>
+</tr>
+<tr>
+<td><strong>Tools</strong></td>
+<td>All of a server's tools. Text results go to the model; images in results are left out.</td>
+</tr>
+<tr>
+<td><strong>Limits</strong></td>
+<td>Up to 10 connectors per user. A tool call times out after 2 minutes.</td>
+</tr>
+</tbody>
+</table>
+<p>Stdio servers (the kind you run locally with <code>npx …</code> or <code>uvx …</code>) aren't connectors. Use a hosted version of the server if there is one.</p>
+<h2 id="security">Security</h2>
+<ul>
+<li><strong>Your header values are secret.</strong> The gateway stores them server-side and never shows them again; the list shows only the last four characters. They're sent only to that server, with each chat request that uses connectors.</li>
+<li><strong>A connector's tools act with your token's permissions.</strong> The model decides when to call them, based on your conversation. Give connectors tokens with only the access they need (read-only where possible).</li>
+<li><strong>Tool results go into the conversation</strong>, and a server's text can try to steer the model. Add servers you trust.</li>
+<li>Connectors must be on the public internet and use <code>https://</code>. Only admins can add servers on the local network or over plain <code>http://</code>.</li>
+</ul>
+<h2 id="for-admins">For admins</h2>
+<p>Connectors run in the agent service (<code>seed-agent</code>) that powers the chat's Web mode. The gateway stores each user's servers with their account and passes the enabled ones to the agent with each request; the agent connects, lists the tools, and calls them during the conversation. The agent refuses connections to loopback, private and link-local addresses for non-admins, checked after DNS resolution.</p>
+<p>API: <code>GET /api/mcp</code> lists the signed-in user's servers (header values masked); <code>POST /api/mcp</code> with <code>{&quot;action&quot;: &quot;add&quot; | &quot;update&quot; | &quot;delete&quot; | &quot;test&quot;, ...}</code> manages them.</p>

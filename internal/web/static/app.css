@@ -435,6 +435,30 @@ body.chatpage .main { height: 100dvh; }
   background: color-mix(in srgb, var(--primary) 16%, transparent);
   border-color: var(--primary); color: var(--primary-h);
 }
+button.tool-toggle { background: none; font-family: inherit; font-size: 12.5px; }
+.toolchip.warn { color: var(--warn, #d29922); }
+dialog.connectors {
+  width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto;
+  background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+}
+dialog.connectors::backdrop { background: rgba(0, 0, 0, .5); }
+.cx-head { display: flex; align-items: center; justify-content: space-between; }
+.cx-head h2 { margin: 0; font-size: 17px; }
+.cx-intro { font-size: 13px; margin: 8px 0 12px; }
+.cx-item { border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.cx-line { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.cx-url { color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.cx-on { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.cx-form { border-top: 1px solid var(--border2); margin-top: 12px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cx-sub { font-weight: 600; font-size: 13px; }
+.cx-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.cx-row label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; flex: 0 1 160px; min-width: 0; }
+.cx-row label.cx-grow { flex: 1 1 220px; }
+.cx-row input { width: 100%; font-weight: normal; }
+.cx-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.cx-ok { color: var(--ok, #3fb950); font-size: 13px; }
+.cx-err { color: var(--err, #f85149); font-size: 13px; overflow-wrap: anywhere; }
+.cx-tools { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; max-height: 180px; overflow: auto; }
 .composer-hint {
   text-align: center; font-size: 11px; color: var(--muted);
   margin: 8px 0 0; opacity: .8;

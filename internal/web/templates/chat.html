@@ -22,8 +22,9 @@
       <div class="composer-tools">
         <label class="tool-toggle" id="toolsLabel" title="Let the model search the web">
           <input type="checkbox" id="toolsToggle">
-          <span class="globe">🌐</span><span class="tool-label">Web</span>
+          <span class="globe">🌐</span><span class="tool-label" id="toolsText">Web</span>
         </label>
+        <button type="button" class="tool-toggle" id="connectorsBtn" title="Connect remote MCP servers: their tools join Web mode">🔌<span class="tool-label"> Connectors</span></button>
         <span style="flex:1"></span>
         <button class="btn primary" id="send">{{Icon "send"}}<span class="btn-label">Send</span></button>
       </div>
@@ -31,4 +32,23 @@
     <p class="composer-hint">LLMs can make mistakes. Web results are cited when used.</p>
   </div>
 </div>
+<dialog id="connectors" class="connectors">
+  <div class="cx-head"><h2>Connectors</h2><button class="btn sm" id="cxClose" aria-label="Close">✕</button></div>
+  <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>🌐 Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
+  <div class="flash" id="cxFlash"></div>
+  <div id="cxList"></div>
+  <form id="cxForm" class="cx-form" autocomplete="off">
+    <div class="cx-sub">Add a server</div>
+    <div class="cx-row">
+      <label>Name<input id="cxName" placeholder="github" maxlength="24" required></label>
+      <label class="cx-grow">URL<input id="cxURL" type="url" placeholder="https://example.com/mcp" required></label>
+    </div>
+    <div class="cx-row">
+      <label>Auth header<input id="cxHName" value="Authorization"></label>
+      <label class="cx-grow">Value (optional)<input id="cxHVal" type="password" placeholder="Bearer …"></label>
+    </div>
+    <div class="cx-actions"><button type="button" class="btn sm" id="cxTest">Test</button><button type="submit" class="btn sm primary">Add</button></div>
+    <div id="cxTestOut"></div>
+  </form>
+</dialog>
 {{end}}

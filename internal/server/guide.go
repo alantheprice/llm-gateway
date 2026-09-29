@@ -25,6 +25,7 @@ var guidePages = []struct{ Slug, Title string }{
 	{"ninfer-engine", "NInfer Engine Runbook"},
 	{"operations", "Operations Runbook"},
 	{"link-gpu", "Linking a GPU"},
+	{"mcp", "Connectors (MCP)"},
 }
 
 // guideHandler: GET /guide and /guide/<slug>.
