@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
 	mux.HandleFunc("/models", s.handleModelsPage)
 	mux.HandleFunc("/images", s.handleImagesPage)
+	mux.HandleFunc("/embeddings", s.handleEmbeddingsPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
 	mux.HandleFunc("/api/mcp", s.handleAPIMCP)
 	mux.HandleFunc("/api/mcp/oauth/start", s.handleMCPOAuthStart)

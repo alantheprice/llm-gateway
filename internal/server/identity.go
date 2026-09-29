@@ -202,6 +202,7 @@ func (s *Server) handleChatConfig(w http.ResponseWriter, r *http.Request) {
 		"models":             flatModels(groups),
 		"model_groups":       groups,
 		"image_models":       s.imageModels(sess.U),
+		"embedding_models":   s.embeddingModels(sess.U),
 		"image_prompt_model": s.imagePromptModelName(),
 	})
 }

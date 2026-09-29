@@ -438,7 +438,13 @@ func (s *Server) detectedCaps(name string) *Capabilities {
 
 // imageModels: names the user can generate images with (shared models and
 // engines, then their own and shared GPUs), for the Images page.
-func (s *Server) imageModels(user string) []string {
+func (s *Server) imageModels(user string) []string { return s.modelsFor(user, "images") }
+
+// embeddingModels: names the user can call /v1/embeddings with.
+func (s *Server) embeddingModels(user string) []string { return s.modelsFor(user, "embeddings") }
+
+// modelsFor: catalog and private names whose capabilities include endpoint.
+func (s *Server) modelsFor(user, endpoint string) []string {
 	out := []string{}
 	seen := map[string]bool{}
 	add := func(name string) {
@@ -446,7 +452,7 @@ func (s *Server) imageModels(user string) []string {
 			return
 		}
 		seen[name] = true
-		if c, ok := s.capsFor(name, user); ok && c.has(c.Endpoints, "images") {
+		if c, ok := s.capsFor(name, user); ok && c.has(c.Endpoints, endpoint) {
 			out = append(out, name)
 		}
 	}

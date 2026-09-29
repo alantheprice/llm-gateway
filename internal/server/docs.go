@@ -249,7 +249,9 @@ type ChatConfigOutput struct {
 		ModelGroups []chatModelGroup `json:"model_groups"`
 		// ImageModels: names the caller can generate images with;
 		// ImagePromptModel: the text model that improves image prompts ("" = off).
-		ImageModels      []string `json:"image_models"`
+		ImageModels []string `json:"image_models"`
+		// EmbeddingModels: names the caller can embed text with.
+		EmbeddingModels  []string `json:"embedding_models"`
 		ImagePromptModel string   `json:"image_prompt_model"`
 	}
 }

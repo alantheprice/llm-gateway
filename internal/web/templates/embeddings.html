@@ -1,0 +1,207 @@
+{{define "title"}}Embeddings — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+// Embedding models, tried through the gateway's /v1/embeddings with the
+// user's own key (usage and quotas apply like any request).
+let KEY = '', busy = false, last = null;
+const MAX_TEXTS = 64;
+const EXAMPLE = {
+  texts: [
+    'The cat curled up on the warm windowsill.',
+    'A kitten was sleeping in the sun by the window.',
+    'Our quarterly revenue grew by 12 percent.',
+    'Sales for the last three months were up twelve percent.',
+    'How do I reset my router?',
+    'Unplug the modem, wait thirty seconds, and plug it back in.',
+  ].join('\n'),
+  query: 'pets napping',
+};
+
+async function init() {
+  const r = await api('/chat/config');
+  if (!r.ok) { location = '/'; return; }
+  KEY = r.data.api_key;
+  const models = r.data.embedding_models || [];
+  const sel = document.getElementById('emodel');
+  sel.innerHTML = models.map(m => '<option value="' + escAttr(m) + '">' + esc(m) + '</option>').join('');
+  let saved = '';
+  try { saved = localStorage.getItem('embeddings.model') || ''; } catch (e) {}
+  if (models.includes(saved)) sel.value = saved;
+  document.getElementById('nomodels').hidden = models.length > 0;
+  document.getElementById('form').hidden = models.length === 0;
+  render();
+}
+
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+const norm = a => Math.sqrt(dot(a, a));
+const cosine = (a, b) => { const d = norm(a) * norm(b); return d ? dot(a, b) / d : 0; };
+const short = (t, n) => t.length > n ? t.slice(0, n - 1) + '…' : t;
+const f3 = v => v.toFixed(3);
+
+// Color a similarity relative to the spread of the off-diagonal values:
+// embedding similarities bunch together, so absolute shading hides contrast.
+function heat(v, lo, hi) {
+  const t = hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 1;
+  return 'background: color-mix(in srgb, var(--primary) ' + Math.round(8 + t * 72) + '%, transparent)';
+}
+
+function render() {
+  const box = document.getElementById('results');
+  if (!last) {
+    box.innerHTML = '<p class="muted">Enter a few texts, one per line, and see how close the model places them. Similar meanings score near 1; unrelated ones lower. Add a query to rank the texts as a search would.</p>';
+    return;
+  }
+  const { model, texts, vecs, query, qvec, ms, tokens } = last;
+  let h = '<div class="statgrid">' +
+    '<div class="stat"><div class="v">' + vecs[0].length + '</div><div class="l">dimensions</div></div>' +
+    '<div class="stat"><div class="v">' + texts.length + (query ? ' + 1' : '') + '</div><div class="l">texts' + (query ? ' + query' : '') + '</div></div>' +
+    '<div class="stat"><div class="v">' + (tokens != null ? tokens : '—') + '</div><div class="l">tokens</div></div>' +
+    '<div class="stat"><div class="v">' + (ms / 1000).toFixed(2) + ' s</div><div class="l">' + esc(model) + '</div></div></div>';
+
+  if (query) {
+    const ranked = texts.map((t, i) => ({ t, i, s: cosine(qvec, vecs[i]) })).sort((a, b) => b.s - a.s);
+    const lo = ranked[ranked.length - 1].s, hi = ranked[0].s;
+    h += '<div class="card"><h2>Closest to “' + esc(short(query, 60)) + '”</h2><ol class="ranked">' +
+      ranked.map(r => '<li><span class="sim" style="' + heat(r.s, lo, hi) + '">' + f3(r.s) + '</span>' +
+        '<span class="rt">' + esc(r.t) + '</span></li>').join('') + '</ol>' +
+      '<p class="muted hint">Cosine similarity between the query and each text. A search engine built on this model would return them in this order.</p></div>';
+  }
+
+  if (texts.length > 1) {
+    const sims = texts.map((_, i) => texts.map((_, j) => cosine(vecs[i], vecs[j])));
+    let lo = 1, hi = -1, best = null, worst = null;
+    for (let i = 0; i < texts.length; i++) for (let j = i + 1; j < texts.length; j++) {
+      const v = sims[i][j];
+      if (v < lo) { lo = v; worst = [i, j]; }
+      if (v > hi) { hi = v; best = [i, j]; }
+    }
+    const pair = (p, v, label) => '<div class="pair"><span class="lbl">' + label + ' · ' + f3(v) + '</span>' +
+      '<div>' + esc(texts[p[0]]) + '</div><div>' + esc(texts[p[1]]) + '</div></div>';
+    h += '<div class="card"><h2>Similarity between texts</h2>' +
+      '<div class="pairs">' + pair(best, hi, 'Most similar') + pair(worst, lo, 'Least similar') + '</div>' +
+      '<div class="matrixwrap"><table class="matrix"><thead><tr><th></th>' +
+      texts.map((t, j) => '<th title="' + escAttr(t) + '">' + (j + 1) + '</th>').join('') + '</tr></thead><tbody>' +
+      texts.map((t, i) => '<tr><th title="' + escAttr(t) + '"><span class="rn">' + (i + 1) + '</span> ' + esc(short(t, 38)) + '</th>' +
+        sims[i].map((v, j) => i === j ? '<td class="self">1</td>' :
+          '<td style="' + heat(v, lo, hi) + '" title="' + escAttr(short(texts[i], 60) + '  ↔  ' + short(texts[j], 60)) + '">' + v.toFixed(2) + '</td>').join('') +
+        '</tr>').join('') + '</tbody></table></div>' +
+      '<p class="muted hint">Cosine similarity for each pair. Shading runs from the least to the most similar pair here; hover a cell for its two texts.</p></div>';
+  }
+
+  h += '<div class="card"><h2>Vectors</h2><div class="tablewrap"><table class="mini"><thead><tr><th>#</th><th>Text</th><th>Length</th><th>First values</th><th></th></tr></thead><tbody>' +
+    texts.map((t, i) => '<tr><td data-label="#">' + (i + 1) + '</td><td data-label="Text">' + esc(short(t, 60)) + '</td>' +
+      '<td data-label="Length">' + f3(norm(vecs[i])) + '</td>' +
+      '<td data-label="First values" class="mono">[' + Array.from(vecs[i].slice(0, 6), v => v.toFixed(4)).join(', ') + ', …]</td>' +
+      '<td><button class="btn sm" data-copy="' + i + '">Copy</button></td></tr>').join('') +
+    '</tbody></table></div><p class="muted hint">Length is the vector’s norm (1.000 = normalized). Copy gives the full vector as JSON.</p></div>';
+  box.innerHTML = h;
+  box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
+    navigator.clipboard.writeText(JSON.stringify(Array.from(vecs[+b.dataset.copy]))).then(() => {
+      b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1500);
+    }));
+}
+
+async function embed() {
+  if (busy) return;
+  const model = document.getElementById('emodel').value;
+  const texts = document.getElementById('texts').value.split('\n').map(t => t.trim()).filter(Boolean);
+  const query = document.getElementById('query').value.trim();
+  if (!texts.length) { flash('Enter at least one text.', true); return; }
+  if (texts.length > MAX_TEXTS) { flash('At most ' + MAX_TEXTS + ' texts at a time.', true); return; }
+  if (texts.length < 2 && !query) { flash('Add a second text or a query to compare against.', true); return; }
+  try { localStorage.setItem('embeddings.model', model); } catch (e) {}
+  busy = true;
+  const btn = document.getElementById('go'), status = document.getElementById('status');
+  btn.disabled = true; status.textContent = 'Embedding…';
+  const t0 = performance.now();
+  try {
+    const input = query ? texts.concat([query]) : texts;
+    const resp = await fetch('/v1/embeddings', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEY },
+      body: JSON.stringify({ model, input }) });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) { flash((j.error && (j.error.message || j.error)) || ('Embedding failed (' + resp.status + ')'), true); return; }
+    const data = (j.data || []).slice().sort((a, b) => (a.index || 0) - (b.index || 0));
+    if (data.length !== input.length || !Array.isArray(data[0].embedding)) { flash('The model returned ' + data.length + ' vectors for ' + input.length + ' inputs.', true); return; }
+    const vecs = data.map(d => Float64Array.from(d.embedding));
+    last = { model, texts, query, vecs: query ? vecs.slice(0, -1) : vecs, qvec: query ? vecs[vecs.length - 1] : null,
+      ms: performance.now() - t0, tokens: j.usage ? (j.usage.prompt_tokens ?? j.usage.total_tokens) : null };
+    render();
+  } catch (e) {
+    flash('Couldn’t reach the gateway: ' + e.message, true);
+  } finally {
+    busy = false; btn.disabled = false; status.textContent = '';
+  }
+}
+
+document.getElementById('go').onclick = embed;
+document.getElementById('example').onclick = e => {
+  e.preventDefault();
+  document.getElementById('texts').value = EXAMPLE.texts;
+  document.getElementById('query').value = EXAMPLE.query;
+};
+document.getElementById('texts').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) embed(); });
+document.getElementById('query').addEventListener('keydown', e => { if (e.key === 'Enter') embed(); });
+init();
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.eform { display: flex; flex-direction: column; gap: 12px; }
+.eform textarea { width: 100%; min-height: 150px; resize: vertical; font: inherit; }
+.eform .f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.eform .f label, .eform .f .flabel { font-size: 12.5px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.erow { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.erow .grow { flex: 1; min-width: 200px; }
+#status { color: var(--muted); font-size: 13px; }
+#results { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+#results .card { margin: 0; }
+.hint { font-size: 12px; margin: 8px 0 0; }
+.ranked { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.ranked li { overflow-wrap: anywhere; }
+.ranked .sim, .matrix td { font-variant-numeric: tabular-nums; }
+.ranked .sim { display: inline-block; min-width: 52px; text-align: center; border-radius: 6px; padding: 1px 6px; margin-right: 8px; font-size: 12.5px; }
+.pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.pair { border: 1px solid var(--border2); border-radius: 8px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.pair .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+/* Its own scroll box: the site's mobile rule turns .tablewrap tables into cards. */
+.matrixwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+table.matrix { width: auto; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+table.matrix th { font-weight: 600; color: var(--muted); padding: 3px 6px; white-space: nowrap; }
+table.matrix tbody th { text-align: left; max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: normal; }
+table.matrix .rn { color: var(--muted); display: inline-block; min-width: 18px; }
+table.matrix td { text-align: center; padding: 5px 6px; border-radius: 4px; min-width: 40px; }
+table.matrix td.self { color: var(--muted); }
+@media (max-width: 720px) { table.matrix tbody th { max-width: 130px; } }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+</style>
+<div class="page">
+  <div class="page-head">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <h1>Embeddings</h1></div>
+  <div class="flash" id="flash"></div>
+
+  <div class="card">
+    <div id="nomodels" hidden>
+      <p style="margin-top:0"><strong>No embedding models are available to you yet.</strong></p>
+      <p class="muted">An embedding model shows up here when a shared model or one of your GPUs can create embeddings (for example Qwen3-Embedding or bge). To serve one from your own machine, link it on <a href="/gpus">My GPUs</a>.</p>
+    </div>
+    <div class="eform" id="form" hidden>
+      <div class="f">
+        <span class="flabel"><label for="texts">Texts to compare, one per line</label><a href="#" id="example">Try an example</a></span>
+        <textarea id="texts" placeholder="The cat curled up on the warm windowsill.&#10;A kitten was sleeping in the sun by the window.&#10;Our quarterly revenue grew by 12 percent."></textarea>
+      </div>
+      <div class="erow">
+        <div class="f grow"><label for="query">Search query (optional)</label><input id="query" placeholder="e.g. pets napping"></div>
+        <div class="f grow"><label for="emodel">Model</label><select id="emodel"></select></div>
+        <button class="btn primary" id="go">Embed</button>
+        <span id="status"></span>
+      </div>
+      <p class="hint muted" style="margin:0">Ctrl+Enter to run. Up to 64 texts at a time. Requests use your API key and count toward your usage.</p>
+    </div>
+  </div>
+
+  <div id="results"></div>
+</div>
+{{end}}

@@ -104,7 +104,7 @@ func TestPagesRenderInBrowser(t *testing.T) {
 	for _, role := range []string{"admin", "user"} {
 		user := map[string]string{"admin": "admin", "user": "carol"}[role]
 		tok := s.store.SignSession(auth.Claims{U: user, Role: role}, time.Hour)
-		pages := []string{"/chat", "/gpus", "/models", "/images", "/keys", "/account", "/usage/me", "/guide/mcp"}
+		pages := []string{"/chat", "/gpus", "/models", "/images", "/embeddings", "/keys", "/account", "/usage/me", "/guide/mcp"}
 		if role == "admin" {
 			pages = append(pages, "/admin/users/page", "/admin/system", "/admin/costs",
 				"/admin/analytics/page", "/admin/config/page", "/admin/routing")
