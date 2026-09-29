@@ -83,6 +83,9 @@ type Server struct {
 	ops   OpsStore
 	chats ChatStore  // chat history (nil without the embedded database)
 	oauth oauthState // connector sign-ins in progress
+	// alerts: problem detection and notification (alerts.go).
+	alerts   *alerter
+	dataDirs []string // extra directories whose disk space is watched
 	muOps sync.RWMutex
 
 	// embeddedPB: the in-process PocketBase app (bootstrap flows).
@@ -203,6 +206,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 		}),
 		client:       &http.Client{Timeout: 5 * time.Second},
 		streamClient: &http.Client{Timeout: 0, Transport: streamTransport()}, // streams: no overall deadline
+		alerts:       newAlerter(),
 		backends:     map[string]*BackendInfo{},
 		rate:         map[string][]time.Time{},
 		probe:        map[string][]time.Time{},
@@ -1097,3 +1101,7 @@ func (s *Server) SaveAffinity() {
 		log.Printf("cache affinity: save failed: %v", err)
 	}
 }
+
+// WatchDiskOf adds directories whose disk space alerts watch (e.g. the
+// embedded database's data dir).
+func (s *Server) WatchDiskOf(dirs ...string) { s.dataDirs = append(s.dataDirs, dirs...) }

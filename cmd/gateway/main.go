@@ -171,6 +171,7 @@ func main() {
 	}()
 
 	srv := server.New(cfg, store)
+	srv.WatchDiskOf(pbDataDir)
 	srv.SetOps(pbApp)
 	srv.SetEmbeddedPB(pbApp)
 	srv.ParseNetworks()
@@ -212,6 +213,19 @@ func main() {
 				return
 			case <-tick.C:
 				srv.PollOnce()
+			}
+		}
+	}()
+	// Alerts: problem checks every 30 s (after a first poll has settled).
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				srv.CheckAlerts()
 			}
 		}
 	}()

@@ -39,6 +39,29 @@ on it by tokens served. Without a gpus list, each service is assumed to
 have its own card, and the Costs page warns when a box has several
 services reporting energy.
 
+## Alerts
+
+The gateway checks every 30 seconds and notifies you when something breaks. Each problem is sent once when it starts and once when it clears.
+
+| Alert | When | Severity |
+|---|---|---|
+| **Service down** | An engine hasn't answered for 2 minutes (set with *alert after*). One that disappears from discovery counts as down too. | critical |
+| **GPU link disconnected** | The agent of an admin-owned link, or of a link serving a shared model, has been gone for 2 minutes. | critical |
+| **Engine restarted** | An engine's uptime went back: a crash, or a deliberate restart. | warning |
+| **Engine keeps restarting** | 3+ restarts within 10 minutes. A GPU fault can need a reboot. | critical |
+| **Disk nearly full** | Under 5% or 2 GB free where the gateway keeps its database and usage records. | critical |
+| **Daily limit reached** | A user hits their token limit (once per user per day). | info |
+
+Set it up in **Config → Alerts**: add a webhook, **Save**, then **Send a test alert**.
+
+- **Phone push:** install [ntfy](https://ntfy.sh), subscribe to a long, unguessable topic, and add `https://ntfy.sh/<topic>` with format *ntfy*. Self-hosted ntfy works the same way.
+- **Slack / Discord:** an incoming-webhook URL with format *Slack* or *Discord*.
+- **Anything else:** format *JSON* posts `{kind, severity, title, message, resolved, at}`.
+
+Each webhook chooses what it gets: everything, warnings and up (default), or critical only. You can switch individual alert kinds off.
+
+Active alerts and the last notifications are on the **System** page. When a service is gone for good, **Stop watching** it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (`journalctl -u llm-gateway | grep ALERT`).
+
 ## Per-user quotas
 
 Admins → Users → set a daily token limit per user. Exceeding it returns

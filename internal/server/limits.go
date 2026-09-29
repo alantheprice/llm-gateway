@@ -29,6 +29,7 @@ func (s *Server) enforceDailyLimit(w http.ResponseWriter, user string) bool {
 	if used < limit {
 		return true
 	}
+	s.quotaReached(user, limit)
 	// Over quota: retry after the UTC-day rollover (+1s of slack). Usage is
 	// bucketed by UTC date, so the quota window is the UTC day.
 	now := time.Now().UTC()

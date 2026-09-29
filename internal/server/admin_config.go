@@ -147,6 +147,21 @@ func validateConfig(c *config.Config) error {
 			return fmt.Errorf("discovery.remote_ports: %d out of range", p)
 		}
 	}
+	for i, wh := range c.Alerts.Webhooks {
+		if u, err := url.Parse(wh.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("alert webhook %d: URL must be http(s)", i+1)
+		}
+		switch wh.Format {
+		case "ntfy", "slack", "discord", "json":
+		default:
+			return fmt.Errorf("alert webhook %d: format must be ntfy, slack, discord or json", i+1)
+		}
+		switch wh.MinSeverity {
+		case "", "info", "warning", "critical":
+		default:
+			return fmt.Errorf("alert webhook %d: min_severity must be info, warning or critical", i+1)
+		}
+	}
 	for _, h := range c.Hosts {
 		for gi, g := range h.GPUs {
 			for _, sv := range g.Services {

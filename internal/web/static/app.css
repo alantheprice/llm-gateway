@@ -209,6 +209,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--info) 6%, transparent);
 .badge.ok { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--chart-1); }
 .badge.grace { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .badge.off { background: var(--border2); color: var(--muted); }
+.badge.bad { background: color-mix(in srgb, var(--danger, #f85149) 18%, transparent); color: var(--danger, #f85149); }
 .badge.role-admin { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 .flash { padding: 10px 14px; border-radius: var(--radius-s); margin-bottom: 14px; font-size: 13.5px; display: none; }

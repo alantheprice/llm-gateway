@@ -154,9 +154,61 @@ function collect() {
     },
     hosts,
     image_prompting: { model: val('ip_model'), system_prompt: val('ip_sys').trim() },
+    alerts: {
+      webhooks: [...document.querySelectorAll('.whrow')].map(row => ({
+        url: row.querySelector('[name="wh_url"]').value.trim(),
+        format: row.querySelector('[name="wh_format"]').value,
+        min_severity: row.querySelector('[name="wh_min"]').value,
+      })).filter(w => w.url),
+      down_after_seconds: parseInt(val('al_down'), 10) || 120,
+      disabled: ALERT_KINDS.map(k => k[0]).filter(k => !chkv('al_on_' + k)),
+    },
   };
 }
 
+// ---------- alerts ----------
+const ALERT_KINDS = [
+  ['service_down', 'A service is down', 'An engine stops answering for longer than the delay below.'],
+  ['link_down', 'A GPU link disconnects', 'An admin-owned link, or one serving a shared model, loses its agent.'],
+  ['engine_restart', 'An engine restarts', 'Its uptime went back: a crash, or someone restarted it.'],
+  ['restart_loop', 'An engine keeps restarting', '3 or more restarts within 10 minutes.'],
+  ['disk_low', 'Disk nearly full', 'Where the gateway keeps its database and usage records.'],
+  ['quota_reached', 'A user reaches their daily limit', 'Once per user per day (severity: info).'],
+];
+function whRow(w) {
+  const sel = (name, opts, v) => '<select name="' + name + '">' + opts.map(([val, label]) =>
+    '<option value="' + val + '"' + (val === v ? ' selected' : '') + '>' + label + '</option>').join('') + '</select>';
+  return '<div class="whrow cfgbox"><div class="cfggrid">' +
+    field('format', sel('wh_format', [['ntfy', 'ntfy (phone push)'], ['slack', 'Slack'], ['discord', 'Discord'], ['json', 'JSON']], w.format || 'ntfy')) +
+    field('URL', txt('wh_url', w.url, 'https://ntfy.sh/your-private-topic'),
+      'ntfy: a topic URL (pick a long, unguessable topic name). Slack/Discord: an incoming-webhook URL.') +
+    field('send', sel('wh_min', [['info', 'everything'], ['warning', 'warnings and up'], ['critical', 'critical only']], w.min_severity || 'warning')) +
+    '<div class="cfgfield"><span class="cfglabel">&nbsp;</span>' + delBtn('wh') + '</div></div></div>';
+}
+function wireWhDels() {
+  document.querySelectorAll('.wh-del').forEach(b => b.onclick = () => b.closest('.whrow').remove());
+}
+function renderAlerts(c) {
+  const a = c.alerts || {};
+  const off = a.disabled || [];
+  document.getElementById('whbox').innerHTML = (a.webhooks || []).map(whRow).join('') ||
+    '<p class="muted">No webhooks yet: alerts only go to the gateway log and the System page.</p>';
+  wireWhDels();
+  document.getElementById('alertgrid').innerHTML =
+    field('alert after (seconds down)', num('al_down', a.down_after_seconds || 120, 10), 'How long a service or link must be down before alerting. Short outages (restarts) stay quiet.') +
+    ALERT_KINDS.map(([k, label, hint]) => field(label, chk('al_on_' + k, !off.includes(k)), hint)).join('');
+}
+
+document.getElementById('addwh').addEventListener('click', () => {
+  const box = document.getElementById('whbox');
+  if (!box.querySelector('.whrow')) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', whRow({}));
+  wireWhDels();
+});
+document.getElementById('testwh').addEventListener('click', async () => {
+  const r = await api('/api/alerts', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'test'})});
+  flash(r.ok ? 'Test alert sent to every saved webhook.' : (r.data.error || 'test failed'), !r.ok);
+});
 document.getElementById('addhost').addEventListener('click', () => {
   document.getElementById('hostsbox').insertAdjacentHTML('beforeend', hostRow({}));
   wireHostDels();
@@ -197,6 +249,7 @@ async function load() {
     flash(r.data.error || 'failed to load config', true); return; }
   render(r.data.config);
   renderImagePrompting(r.data.config);
+  renderAlerts(r.data.config);
   document.getElementById('confpath').textContent = 'file: ' + r.data.confPath;
 }
 load();
@@ -240,6 +293,17 @@ load();
   <div class="card">
     <h2>Image generation</h2>
     <div class="cfggrid" id="imggrid"></div>
+  </div>
+
+  <div class="card">
+    <h2>Alerts</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Get told when something breaks: a problem is sent once when it starts and once when it clears. Active and recent alerts are on the <a href="/admin/system">System</a> page. For phone notifications, install the <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> app and subscribe to your topic.</p>
+    <div id="whbox"></div>
+    <div style="display:flex;gap:8px;margin:6px 0 12px">
+      <button type="button" class="btn small" id="addwh">+ webhook</button>
+      <button type="button" class="btn small" id="testwh" title="Sends a test alert to the saved webhooks (save first)">Send a test alert</button>
+    </div>
+    <div class="cfggrid" id="alertgrid"></div>
   </div>
 
   <div class="card">

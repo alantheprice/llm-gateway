@@ -1,6 +1,30 @@
 {{define "title"}}System — LLM Gateway{{end}}
 {{define "scripts"}}
 <script>
+// Alerts: what's wrong now, and the last notifications.
+async function loadAlerts() {
+  const r = await api('/api/alerts');
+  const box = document.getElementById('alertsbody');
+  if (!r.ok) { box.innerHTML = '<p class="muted">' + esc(r.data.error || 'unavailable') + '</p>'; return; }
+  const d = r.data, sev = a => '<span class="badge ' + ({critical: 'bad', warning: 'grace', info: 'ok'}[a.severity] || '') + '">' + esc(a.severity) + '</span>';
+  const when = a => esc(new Date(a.at).toLocaleString());
+  let h = (d.firing || []).length
+    ? '<ul class="alertlist">' + d.firing.map(a => '<li>' + sev(a) + ' <strong>' + esc(a.title) + '</strong> <span class="muted">since ' + when(a) + '</span>' +
+        '<div class="muted">' + esc(a.message) + '</div>' +
+        (/^(service_down|link_down):/.test(a.key) ? '<button class="btn sm" data-dismiss="' + escAttr(a.key) + '" title="Stop watching it (removed for good)">Stop watching</button>' : '') + '</li>').join('') + '</ul>'
+    : '<p>' + '<span class="badge ok">all clear</span> No active problems.</p>';
+  if (!d.webhooks) h += '<p class="muted" style="font-size:12px">No alert webhooks set, so nothing is sent anywhere. Add one under <a href="/admin/config/page">Config → Alerts</a>.</p>';
+  const recent = (d.recent || []).slice(0, 10);
+  if (recent.length) h += '<details><summary class="muted">Recent notifications (' + recent.length + ')</summary><ul class="alertlist">' +
+    recent.map(a => '<li>' + sev(a) + ' ' + esc(a.title) + ' <span class="muted">' + when(a) + '</span></li>').join('') + '</ul></details>';
+  box.innerHTML = h;
+  box.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async () => {
+    await api('/api/alerts', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'dismiss', key: b.dataset.dismiss})});
+    loadAlerts();
+  });
+}
+document.addEventListener('DOMContentLoaded', loadAlerts);
+
 async function load() {
   const [usageR, usersR] = await Promise.all([api('/usage'), api('/usage/users')]);
   if (!usageR.ok || !usersR.ok) { location = '/'; return; }
@@ -103,7 +127,7 @@ async function loadCharts() {
   if (kn) kn.textContent = TZ.bucketNote(days[days.length - 1]);
 }
 
-document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); });
+document.getElementById('refresh').addEventListener('click', () => { load(); loadCharts(); loadAlerts(); });
 load(); setInterval(load, 30000);
 loadCharts(); setInterval(loadCharts, 60000);
 </script>
@@ -118,6 +142,12 @@ loadCharts(); setInterval(loadCharts, 60000);
     <button class="btn" id="refresh">Refresh</button>
   </div>
   <div class="flash" id="flash"></div>
+
+  <style>.alertlist { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; } .alertlist .btn { margin-top: 4px; }</style>
+  <div class="card" id="alertscard">
+    <h2>Alerts</h2>
+    <div id="alertsbody"><p class="muted">Checking…</p></div>
+  </div>
 
   <div class="statgrid" id="energystats"></div>
   <p class="muted" id="todaynote" style="font-size:12px;margin:0 0 8px"></p>

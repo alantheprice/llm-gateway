@@ -94,6 +94,28 @@ type ImagePromptingCfg struct {
 	SystemPrompt string `json:"system_prompt,omitempty"` // "" = the built-in instructions
 }
 
+// AlertsCfg: problems worth a notification (a service down, an engine
+// restarting, a link disconnected, disk space, quotas), sent to webhooks.
+type AlertsCfg struct {
+	Webhooks []AlertWebhook `json:"webhooks,omitempty"`
+	// DownAfterSeconds: how long a service must be down before alerting
+	// (0 → 120).
+	DownAfterSeconds int `json:"down_after_seconds,omitempty"`
+	// Disabled: alert kinds not to send (service_down, link_down,
+	// engine_restart, restart_loop, disk_low, quota_reached).
+	Disabled []string `json:"disabled,omitempty"`
+}
+
+// AlertWebhook: where alerts go. Format: "ntfy" (plain text + Title and
+// Priority headers; ntfy.sh or self-hosted), "slack", "discord", or
+// "json" (the alert as a JSON object). MinSeverity: info | warning |
+// critical ("" → warning).
+type AlertWebhook struct {
+	URL         string `json:"url"`
+	Format      string `json:"format"`
+	MinSeverity string `json:"min_severity,omitempty"`
+}
+
 type PriceBook struct {
 	PromptUSDPerM float64 `json:"prompt_usd_per_m"` // non-cached prompt
 	CachedUSDPerM float64 `json:"cached_usd_per_m"` // cached prompt tokens
@@ -162,6 +184,8 @@ type Config struct {
 	PriceBook PriceBook `json:"price_book"`
 	// ImagePrompting: prompt improvement for /v1/images/generations.
 	ImagePrompting ImagePromptingCfg `json:"image_prompting"`
+	// Alerts: notifications about problems (see AlertsCfg).
+	Alerts AlertsCfg `json:"alerts"`
 
 	path     string
 	mtime    time.Time

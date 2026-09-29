@@ -31,6 +31,57 @@ by a spanning service) once, and splits its energy between the services<br>
 on it by tokens served. Without a gpus list, each service is assumed to<br>
 have its own card, and the Costs page warns when a box has several<br>
 services reporting energy.</p>
+<h2 id="alerts">Alerts</h2>
+<p>The gateway checks every 30 seconds and notifies you when something breaks. Each problem is sent once when it starts and once when it clears.</p>
+<table>
+<thead>
+<tr>
+<th>Alert</th>
+<th>When</th>
+<th>Severity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Service down</strong></td>
+<td>An engine hasn't answered for 2 minutes (set with <em>alert after</em>). One that disappears from discovery counts as down too.</td>
+<td>critical</td>
+</tr>
+<tr>
+<td><strong>GPU link disconnected</strong></td>
+<td>The agent of an admin-owned link, or of a link serving a shared model, has been gone for 2 minutes.</td>
+<td>critical</td>
+</tr>
+<tr>
+<td><strong>Engine restarted</strong></td>
+<td>An engine's uptime went back: a crash, or a deliberate restart.</td>
+<td>warning</td>
+</tr>
+<tr>
+<td><strong>Engine keeps restarting</strong></td>
+<td>3+ restarts within 10 minutes. A GPU fault can need a reboot.</td>
+<td>critical</td>
+</tr>
+<tr>
+<td><strong>Disk nearly full</strong></td>
+<td>Under 5% or 2 GB free where the gateway keeps its database and usage records.</td>
+<td>critical</td>
+</tr>
+<tr>
+<td><strong>Daily limit reached</strong></td>
+<td>A user hits their token limit (once per user per day).</td>
+<td>info</td>
+</tr>
+</tbody>
+</table>
+<p>Set it up in <strong>Config → Alerts</strong>: add a webhook, <strong>Save</strong>, then <strong>Send a test alert</strong>.</p>
+<ul>
+<li><strong>Phone push:</strong> install <a href="https://ntfy.sh">ntfy</a>, subscribe to a long, unguessable topic, and add <code>https://ntfy.sh/&lt;topic&gt;</code> with format <em>ntfy</em>. Self-hosted ntfy works the same way.</li>
+<li><strong>Slack / Discord:</strong> an incoming-webhook URL with format <em>Slack</em> or <em>Discord</em>.</li>
+<li><strong>Anything else:</strong> format <em>JSON</em> posts <code>{kind, severity, title, message, resolved, at}</code>.</li>
+</ul>
+<p>Each webhook chooses what it gets: everything, warnings and up (default), or critical only. You can switch individual alert kinds off.</p>
+<p>Active alerts and the last notifications are on the <strong>System</strong> page. When a service is gone for good, <strong>Stop watching</strong> it there; otherwise it keeps counting as down for a week. Every alert is also written to the gateway log (<code>journalctl -u llm-gateway | grep ALERT</code>).</p>
 <h2 id="per-user-quotas">Per-user quotas</h2>
 <p>Admins → Users → set a daily token limit per user. Exceeding it returns<br>
 <code>429</code> with a retry hint until midnight UTC — the same UTC-day boundary<br>
