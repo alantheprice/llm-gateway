@@ -118,7 +118,7 @@ code, .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size:
 /* ---------- shared components ---------- */
 .page { padding: 20px 24px; max-width: 1100px; width: 100%; margin: 0 auto; }
 .page.full { max-width: none; }
-.page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
 .page-head .hamburger {
   display: none; width: 36px; height: 36px; flex-shrink: 0;
   align-items: center; justify-content: center;

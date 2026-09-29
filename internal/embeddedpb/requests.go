@@ -163,7 +163,7 @@ type HourlyRow struct {
 
 // QueryAnalyticsHourly: hourly traffic + latency series (last N days).
 // p50/p95 via ordered-set aggregate: substring trick over grouped rows.
-func (a *App) QueryAnalyticsHourly(days int, dest *[]HourlyRow) error {
+func (a *App) QueryAnalyticsHourly(dr DayRange, dest *[]HourlyRow) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("analytics: DB not open")
 	}
@@ -177,9 +177,9 @@ func (a *App) QueryAnalyticsHourly(days int, dest *[]HourlyRow) error {
 			ROUND(MAX(ttft_ms), 0) AS ttft_max,
 			ROUND(AVG(tok_per_s), 0) AS tok_per_s
 		FROM requests
-		WHERE day >= {:start}
+		WHERE day >= {:start} AND day <= {:end}
 		GROUP BY ts_hour ORDER BY ts_hour
-	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+	`).Bind(map[string]any{"start": dr.From, "end": dr.To}).All(dest)
 }
 
 // GPURow: per-backend aggregates.
@@ -204,7 +204,7 @@ type GPURow struct {
 }
 
 // QueryAnalyticsPerGPU: per-backend request/token/latency aggregates.
-func (a *App) QueryAnalyticsPerGPU(days int, dest *[]GPURow) error {
+func (a *App) QueryAnalyticsPerGPU(dr DayRange, dest *[]GPURow) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("analytics: DB not open")
 	}
@@ -225,9 +225,9 @@ func (a *App) QueryAnalyticsPerGPU(days int, dest *[]GPURow) error {
 			SUM(draft_accepted) AS draft_accepted,
 			ROUND(100.0 * SUM(draft_accepted) / MAX(SUM(draft_n), 1), 1) AS draft_accept_pct
 		FROM requests
-		WHERE day >= {:start}
+		WHERE day >= {:start} AND day <= {:end}
 		GROUP BY backend ORDER BY SUM(output) DESC
-	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+	`).Bind(map[string]any{"start": dr.From, "end": dr.To}).All(dest)
 }
 
 // UserRow: per-user aggregates.
@@ -243,7 +243,7 @@ type UserRow struct {
 }
 
 // QueryAnalyticsPerUser: per-user request/token/latency aggregates.
-func (a *App) QueryAnalyticsPerUser(days int, dest *[]UserRow) error {
+func (a *App) QueryAnalyticsPerUser(dr DayRange, dest *[]UserRow) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("analytics: DB not open")
 	}
@@ -257,9 +257,9 @@ func (a *App) QueryAnalyticsPerUser(days int, dest *[]UserRow) error {
 			ROUND(AVG(ttft_ms), 0) AS ttft_avg,
 			SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors
 		FROM requests
-		WHERE day >= {:start}
+		WHERE day >= {:start} AND day <= {:end}
 		GROUP BY user ORDER BY SUM(output) DESC
-	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+	`).Bind(map[string]any{"start": dr.From, "end": dr.To}).All(dest)
 }
 
 // BackendUserRow: one user's traffic on one backend.
@@ -276,14 +276,14 @@ type BackendUserRow struct {
 
 // QueryBackendUsers: per-(backend, user) aggregates for a set of backends —
 // what a GPU owner sees about who used their GPU.
-func (a *App) QueryBackendUsers(days int, backends []string, dest *[]BackendUserRow) error {
+func (a *App) QueryBackendUsers(dr DayRange, backends []string, dest *[]BackendUserRow) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("analytics: DB not open")
 	}
 	if len(backends) == 0 {
 		return nil
 	}
-	params := map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}
+	params := map[string]any{"start": dr.From, "end": dr.To}
 	in := make([]string, len(backends))
 	for i, b := range backends {
 		k := fmt.Sprintf("b%d", i)
@@ -299,7 +299,7 @@ func (a *App) QueryBackendUsers(days int, backends []string, dest *[]BackendUser
 			SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
 			MAX(day) AS last_day
 		FROM requests
-		WHERE day >= {:start} AND backend IN (` + strings.Join(in, ",") + `)
+		WHERE day >= {:start} AND day <= {:end} AND backend IN (` + strings.Join(in, ",") + `)
 		GROUP BY backend, user ORDER BY SUM(output) DESC
 	`).Bind(params).All(dest)
 }
@@ -355,7 +355,7 @@ type ReuseRow struct {
 }
 
 // QueryAnalyticsReuse: reuse-path distribution (miss = empty path).
-func (a *App) QueryAnalyticsReuse(days int, dest *[]ReuseRow) error {
+func (a *App) QueryAnalyticsReuse(dr DayRange, dest *[]ReuseRow) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("analytics: DB not open")
 	}
@@ -363,9 +363,9 @@ func (a *App) QueryAnalyticsReuse(days int, dest *[]ReuseRow) error {
 		SELECT CASE WHEN reuse_path = '' THEN 'miss' ELSE reuse_path END AS path,
 			COUNT(*) AS requests
 		FROM requests
-		WHERE day >= {:start}
+		WHERE day >= {:start} AND day <= {:end}
 		GROUP BY path ORDER BY requests DESC
-	`).Bind(map[string]any{"start": time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")}).All(dest)
+	`).Bind(map[string]any{"start": dr.From, "end": dr.To}).All(dest)
 }
 
 // colType: SQL type for columns added by migration.
@@ -391,19 +391,19 @@ func colDefault(col string) string {
 // over the window for a set of backends (one GPU may appear under several
 // URLs). 0 when there is no data. SQLite has no percentile function, so this
 // counts, then seeks to the rank.
-func (a *App) QueryTTFTPercentile(days int, backends []string, q float64) (float64, error) {
+func (a *App) QueryTTFTPercentile(dr DayRange, backends []string, q float64) (float64, error) {
 	if a.pb.DB() == nil || len(backends) == 0 {
 		return 0, fmt.Errorf("analytics: DB not open")
 	}
-	start := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
-	params := map[string]any{"start": start}
+	start, end := dr.From, dr.To
+	params := map[string]any{"start": start, "end": end}
 	in := make([]string, len(backends))
 	for i, b := range backends {
 		k := fmt.Sprintf("b%d", i)
 		params[k] = b
 		in[i] = "{:" + k + "}"
 	}
-	where := "day >= {:start} AND ttft_ms > 0 AND backend IN (" + strings.Join(in, ",") + ")"
+	where := "day >= {:start} AND day <= {:end} AND ttft_ms > 0 AND backend IN (" + strings.Join(in, ",") + ")"
 	var c struct {
 		N int64 `db:"n"`
 	}
@@ -420,4 +420,13 @@ func (a *App) QueryTTFTPercentile(days int, backends []string, q float64) (float
 	err := a.pb.DB().NewQuery("SELECT ttft_ms AS t FROM requests WHERE " + where +
 		" ORDER BY ttft_ms LIMIT 1 OFFSET {:off}").Bind(params).One(&v)
 	return v.T, err
+}
+
+// DayRange: UTC days From..To inclusive ("YYYY-MM-DD").
+type DayRange struct{ From, To string }
+
+// LastDays: the last n days before today, through today.
+func LastDays(n int) DayRange {
+	now := time.Now().UTC()
+	return DayRange{From: now.AddDate(0, 0, -n).Format("2006-01-02"), To: now.Format("2006-01-02")}
 }

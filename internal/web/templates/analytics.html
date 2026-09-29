@@ -9,12 +9,16 @@ function ms(v) {
   return n >= 1000 ? (n / 1000).toFixed(2) + ' s' : n.toFixed(0) + ' ms';
 }
 
-let RANGE = 1;
+let range = null, DATA = null;
+const views = {};
 
 async function load() {
-  const r = await api('/api/analytics?days=' + RANGE);
+  const rg = range.get();
+  const r = await api('/api/analytics?from=' + rg.from + '&to=' + rg.to);
   if (!r.ok) { if (r.status === 401) { location = '/'; return; } flash(r.data.error || 'failed', true); return; }
+  DATA = r.data;
   const d = r.data;
+  document.getElementById('rangenote').textContent = rg.label + ' · UTC days · per-request detail is kept ' + d.retention_days + ' days';
 
   // --- Traffic chart: requests per hour + errors
   const hours = d.hourly || [];
@@ -41,21 +45,7 @@ async function load() {
     document.getElementById('latchart').innerHTML = '<p class="muted">No latency telemetry yet.</p>';
   }
 
-  // --- Per-service table
-  const gr = document.getElementById('gpurows');
-  gr.innerHTML = (d.per_gpu || []).map(g =>
-    '<tr>' +
-    '<td data-label="Service"><strong>' + gpuName(g) + '</strong></td>' +
-    '<td data-label="Share">' + pct(g.share_pct) + '</td>' +
-    '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
-    '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
-    '<td data-label="Tokens out">' + fmtNum(g.output) + '</td>' +
-    '<td data-label="Cache hit">' + pct(g.cache_hit_pct) + '</td>' +
-    '<td data-label="tok/s">' + fmtNum(g.tok_per_s) + '</td>' +
-    '<td data-label="TTFT avg / p95" title="max ' + ms(g.ttft_max) + '">' + ms(g.ttft_avg) + ' / ' + ms(g.ttft_p95) + '</td>' +
-    '<td data-label="Queue avg">' + ms(g.queue_avg) + '</td>' +
-    '<td data-label="Draft accept">' + (g.draft_n ? pct(g.draft_accept_pct) : '—') + '</td></tr>'
-  ).join('') || '<tr><td colspan="10" class="muted">No data.</td></tr>';
+  drawServices(); drawReuse(); drawUsers();
 
   // Routing imbalance: one GPU queueing while another has headroom.
   const gpus = (d.per_gpu || []).filter(g => g.requests > 0);
@@ -69,17 +59,69 @@ async function load() {
         cool.map(g => g.gpu_label || g.backend).join(', ') + ' has headroom — routing may be unbalanced.'
       : '';
   }
+}
 
-  // --- Reuse paths
-  const rr = document.getElementById('reuserows');
-  rr.innerHTML = (d.reuse || []).map(x =>
+// Per-service, reuse and per-user panels: a table or a chart each.
+function table(head, rows, empty) {
+  return '<div class="tablewrap"><table><thead><tr>' + head.map(h => '<th' + (h[1] ? ' title="' + escAttr(h[1]) + '"' : '') + '>' + h[0] + '</th>').join('') +
+    '</tr></thead><tbody>' + (rows || '<tr><td colspan="' + head.length + '" class="muted">No data.</td></tr>') + '</tbody></table></div>';
+}
+function drawServices() {
+  const d = DATA, box = document.getElementById('gpubody');
+  if (!d) return;
+  const rows = d.per_gpu || [];
+  if (views.gpu.get() === 'chart') {
+    box.innerHTML = '<h3 class="subh">Requests</h3>' + Charts.hbars({ items: rows.map((g, i) => ({ label: g.gpu_label || g.backend, value: g.requests,
+        color: SERIES_COLORS[i % SERIES_COLORS.length], sub: pct(g.share_pct) })) }) +
+      '<h3 class="subh">Average time to first token</h3>' + Charts.hbars({ items: rows.filter(g => g.ttft_avg > 0).map((g, i) => ({ label: g.gpu_label || g.backend,
+        value: g.ttft_avg, color: SERIES_COLORS[rows.indexOf(g) % SERIES_COLORS.length], sub: 'p95 ' + ms(g.ttft_p95) })), format: ms }) +
+      '<h3 class="subh">Generation speed</h3>' + Charts.hbars({ items: rows.filter(g => g.tok_per_s > 0).map(g => ({ label: g.gpu_label || g.backend,
+        value: g.tok_per_s, color: SERIES_COLORS[rows.indexOf(g) % SERIES_COLORS.length] })), format: v => Math.round(v) + ' tok/s' });
+    return;
+  }
+  box.innerHTML = table([['Service'], ['Share'], ['Requests'], ['Tokens in'], ['Tokens out'], ['Cache hit'], ['tok/s'],
+    ['TTFT avg / p95', 'Time to first token: average / 95th percentile (hover a cell for the max)'], ['Queue avg', 'Engine-reported wait before the request was scheduled'], ['Draft accept']],
+    rows.map(g =>
+    '<tr>' +
+    '<td data-label="Service"><strong>' + gpuName(g) + '</strong></td>' +
+    '<td data-label="Share">' + pct(g.share_pct) + '</td>' +
+    '<td data-label="Requests">' + fmtNum(g.requests) + '</td>' +
+    '<td data-label="Tokens in">' + fmtNum(g.input) + '</td>' +
+    '<td data-label="Tokens out">' + fmtNum(g.output) + '</td>' +
+    '<td data-label="Cache hit">' + pct(g.cache_hit_pct) + '</td>' +
+    '<td data-label="tok/s">' + fmtNum(g.tok_per_s) + '</td>' +
+    '<td data-label="TTFT avg / p95" title="max ' + ms(g.ttft_max) + '">' + ms(g.ttft_avg) + ' / ' + ms(g.ttft_p95) + '</td>' +
+    '<td data-label="Queue avg">' + ms(g.queue_avg) + '</td>' +
+    '<td data-label="Draft accept">' + (g.draft_n ? pct(g.draft_accept_pct) : '—') + '</td></tr>'
+  ).join(''));
+}
+function drawReuse() {
+  const d = DATA, box = document.getElementById('reusebody');
+  if (!d) return;
+  const rows = d.reuse || [], total = rows.reduce((a, x) => a + x.requests, 0);
+  if (views.reuse.get() === 'chart') {
+    box.innerHTML = Charts.hbars({ items: rows.map((x, i) => ({ label: x.path, value: x.requests,
+      color: x.path === 'miss' ? '#f85149' : SERIES_COLORS[i % SERIES_COLORS.length], sub: total ? (100 * x.requests / total).toFixed(1) + '%' : '' })) });
+    return;
+  }
+  box.innerHTML = table([['Path'], ['Requests'], ['Share']], rows.map(x =>
     '<tr><td data-label="Path"><code>' + esc(x.path) + '</code></td>' +
-    '<td data-label="Requests">' + fmtNum(x.requests) + '</td></tr>'
-  ).join('') || '<tr><td colspan="2" class="muted">No data.</td></tr>';
-
-  // --- Per-user table
-  const ur = document.getElementById('userrows');
-  ur.innerHTML = (d.per_user || []).map(u =>
+    '<td data-label="Requests">' + fmtNum(x.requests) + '</td>' +
+    '<td data-label="Share">' + (total ? (100 * x.requests / total).toFixed(1) + '%' : '—') + '</td></tr>').join(''));
+}
+function drawUsers() {
+  const d = DATA, box = document.getElementById('userbody');
+  if (!d) return;
+  const rows = d.per_user || [];
+  if (views.user.get() === 'chart') {
+    const tot = rows.reduce((a, u) => a + (u.prompt || 0) + (u.output || 0), 0);
+    box.innerHTML = '<h3 class="subh">Tokens</h3>' + Charts.hbars({ items: rows.map((u, i) => ({ label: u.user, value: (u.prompt || 0) + (u.output || 0),
+        color: SERIES_COLORS[i % SERIES_COLORS.length], sub: tot ? (100 * ((u.prompt || 0) + (u.output || 0)) / tot).toFixed(1) + '%' : '' })) }) +
+      '<h3 class="subh">Average time to first token</h3>' + Charts.hbars({ items: rows.filter(u => u.ttft_avg > 0).map(u => ({ label: u.user, value: u.ttft_avg,
+        color: SERIES_COLORS[rows.indexOf(u) % SERIES_COLORS.length] })), format: ms });
+    return;
+  }
+  box.innerHTML = table([['User'], ['Requests'], ['Prompt'], ['Output'], ['Cached'], ['Avg TTFT'], ['Errors']], rows.map(u =>
     '<tr>' +
     '<td data-label="User"><strong>' + esc(u.user) + '</strong></td>' +
     '<td data-label="Requests">' + fmtNum(u.requests) + '</td>' +
@@ -88,25 +130,30 @@ async function load() {
     '<td data-label="Cached">' + fmtNum(u.cached) + ' (' + pct(u.cached_pct) + ')</td>' +
     '<td data-label="Avg TTFT">' + ms(u.ttft_avg) + '</td>' +
     '<td data-label="Errors">' + fmtNum(u.errors) + '</td></tr>'
-  ).join('') || '<tr><td colspan="7" class="muted">No data.</td></tr>';
+  ).join(''));
 }
 
-document.getElementById('range').addEventListener('change', (e) => { RANGE = parseInt(e.target.value, 10); load(); });
-load(); setInterval(load, 60000);
+document.addEventListener('DOMContentLoaded', () => {
+  // Per-request detail is kept 14 days: offer ranges within that.
+  range = RangePicker.mount(document.getElementById('range'), { id: 'analytics', value: { preset: 'today' },
+    presets: ['today', '7d', '14d', 'custom'], min: RangePicker.minus(RangePicker.todayUTC(), 13), onChange: load });
+  views.gpu = ViewToggle.mount(document.getElementById('gpuview'), { id: 'an-services', onChange: drawServices });
+  views.reuse = ViewToggle.mount(document.getElementById('reuseview'), { id: 'an-reuse', onChange: drawReuse });
+  views.user = ViewToggle.mount(document.getElementById('userview'), { id: 'an-users', onChange: drawUsers });
+  load(); setInterval(load, 60000);
+});
 </script>
 {{end}}
 {{define "content"}}
+<style>.subh { font-size: 13px; margin: 14px 0 6px; } .subh:first-child { margin-top: 0; }</style>
 <div class="page">
   <div class="page-head">
     <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
     <h1>Analytics</h1>
     <span style="flex:1"></span>
-    <select id="range" class="btn" style="padding:.4rem .6rem">
-      <option value="1">Last 24h</option>
-      <option value="7">Last 7 days</option>
-      <option value="14">Last 14 days</option>
-    </select>
+    <div id="range"></div>
   </div>
+  <p class="muted" id="rangenote" style="font-size:12px;margin:0 0 10px"></p>
   <div class="flash" id="flash"></div>
 
   <div class="card">
@@ -120,29 +167,20 @@ load(); setInterval(load, 60000);
   </div>
 
   <div class="card">
-    <h2>Per service</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Service</th><th>Share</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th><th>Cache hit</th><th>tok/s</th><th title="Time to first token: average / 95th percentile (hover a cell for the max)">TTFT avg / p95</th><th title="Engine-reported wait before the request was scheduled">Queue avg</th><th>Draft accept</th></tr></thead>
-      <tbody id="gpurows"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
-    </table></div>
+    <div class="panel-head"><h2>Per service</h2><div class="panel-tools"><div id="gpuview"></div></div></div>
+    <div id="gpubody"><p class="muted">Loading…</p></div>
     <p class="muted" id="gpunote" style="margin:8px 0 0"></p>
   </div>
 
   <div class="card">
-    <h2>Prefix reuse paths</h2>
+    <div class="panel-head"><h2>Prefix reuse paths</h2><div class="panel-tools"><div id="reuseview"></div></div></div>
     <p class="muted" style="font-size:12px">How prompts reached (or missed) the KV cache: <code>shared_prefix</code>/<code>turn_closure</code>/<code>long_anchor</code> are reuse paths; <code>miss</code> means a full prefill.</p>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Path</th><th>Requests</th></tr></thead>
-      <tbody id="reuserows"><tr><td colspan="2" class="muted">Loading…</td></tr></tbody>
-    </table></div>
+    <div id="reusebody"><p class="muted">Loading…</p></div>
   </div>
 
   <div class="card">
-    <h2>Per user</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>User</th><th>Requests</th><th>Prompt</th><th>Output</th><th>Cached</th><th>Avg TTFT</th><th>Errors</th></tr></thead>
-      <tbody id="userrows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
-    </table></div>
+    <div class="panel-head"><h2>Per user</h2><div class="panel-tools"><div id="userview"></div></div></div>
+    <div id="userbody"><p class="muted">Loading…</p></div>
   </div>
 </div>
 {{end}}

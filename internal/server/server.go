@@ -108,12 +108,12 @@ type OpsStore interface {
 	GPUDaily(day string) ([]embeddedpb.GPUDailyRow, error)
 	ReplaceCostDay(day string, energy, overhead, capital, value float64, tokens int64) error
 	QueryUsageDay(day string, dest any) error
-	QueryAnalyticsHourly(days int, dest *[]embeddedpb.HourlyRow) error
-	QueryAnalyticsPerGPU(days int, dest *[]embeddedpb.GPURow) error
-	QueryTTFTPercentile(days int, backends []string, q float64) (float64, error)
-	QueryAnalyticsPerUser(days int, dest *[]embeddedpb.UserRow) error
-	QueryAnalyticsReuse(days int, dest *[]embeddedpb.ReuseRow) error
-	QueryBackendUsers(days int, backends []string, dest *[]embeddedpb.BackendUserRow) error
+	QueryAnalyticsHourly(dr embeddedpb.DayRange, dest *[]embeddedpb.HourlyRow) error
+	QueryAnalyticsPerGPU(dr embeddedpb.DayRange, dest *[]embeddedpb.GPURow) error
+	QueryTTFTPercentile(dr embeddedpb.DayRange, backends []string, q float64) (float64, error)
+	QueryAnalyticsPerUser(dr embeddedpb.DayRange, dest *[]embeddedpb.UserRow) error
+	QueryAnalyticsReuse(dr embeddedpb.DayRange, dest *[]embeddedpb.ReuseRow) error
+	QueryBackendUsers(dr embeddedpb.DayRange, backends []string, dest *[]embeddedpb.BackendUserRow) error
 	QueryBackendTokensDay(day string, dest *[]embeddedpb.BackendTokens) error
 	QueryRequestedDay(day string, dest *[]embeddedpb.NameCount) error
 	PruneOlderThan(days int) (int64, error)

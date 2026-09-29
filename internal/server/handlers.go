@@ -175,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/analytics", s.handleAnalytics)
 	mux.HandleFunc("/admin/costs/backfill", s.handleCostsBackfill)
 	mux.HandleFunc("/usage/costs", s.handleUsageCosts)
+	mux.HandleFunc("/api/costs/history", s.handleCostHistory)
 
 	// Embedded UI assets.
 	mux.Handle("/static/", web.StaticHandler(staticVerValue))

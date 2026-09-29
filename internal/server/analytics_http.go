@@ -25,15 +25,32 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		errBody(w, 503, "analytics store not attached")
 		return
 	}
-	days := 1
+	// ?from=&to= (UTC days, inclusive), or the older ?days=1|7|14.
+	dr := embeddedpb.LastDays(1)
 	switch r.URL.Query().Get("days") {
 	case "7":
-		days = 7
+		dr = embeddedpb.LastDays(7)
 	case "14":
-		days = 14
-	default:
-		days = 1
+		dr = embeddedpb.LastDays(14)
 	}
+	if f, t := r.URL.Query().Get("from"), r.URL.Query().Get("to"); f != "" || t != "" {
+		for _, d := range []string{f, t} {
+			if d != "" {
+				if _, err := time.Parse("2006-01-02", d); err != nil {
+					errBody(w, 400, "dates are YYYY-MM-DD")
+					return
+				}
+			}
+		}
+		if t == "" {
+			t = time.Now().UTC().Format("2006-01-02")
+		}
+		if f > t {
+			f, t = t, f
+		}
+		dr = embeddedpb.DayRange{From: f, To: t}
+	}
+	days := dr
 
 	// One row per hour: requests, tokens, errors, avg + p95 TTFT, tok/s.
 	var hourly []embeddedpb.HourlyRow
@@ -61,12 +78,15 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := map[string]any{
-		"days":      days,
-		"hourly":    hourly,
-		"per_gpu":   s.withTTFTPercentiles(ops, days, s.mergePerGPU(perGPU)),
-		"per_user":  perUser,
-		"reuse":     reuse,
-		"generated": time.Now().UTC().Format(time.RFC3339),
+		"from": dr.From,
+		"to":   dr.To,
+		// Per-request rows are kept this long; earlier days have no detail.
+		"retention_days": AnalyticsRetentionDays,
+		"hourly":         hourly,
+		"per_gpu":        s.withTTFTPercentiles(ops, days, s.mergePerGPU(perGPU)),
+		"per_user":       perUser,
+		"reuse":          reuse,
+		"generated":      time.Now().UTC().Format(time.RFC3339),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
@@ -158,7 +178,7 @@ func (s *Server) mergePerGPU(rows []embeddedpb.GPURow) []map[string]any {
 
 // withTTFTPercentiles adds a real p95 time-to-first-token per merged GPU
 // (over all of its backend URLs).
-func (s *Server) withTTFTPercentiles(ops OpsStore, days int, rows []map[string]any) []map[string]any {
+func (s *Server) withTTFTPercentiles(ops OpsStore, days embeddedpb.DayRange, rows []map[string]any) []map[string]any {
 	for _, r := range rows {
 		backends, _ := r["backends"].([]string)
 		if p, err := ops.QueryTTFTPercentile(days, backends, 0.95); err == nil && p > 0 {
@@ -167,3 +187,6 @@ func (s *Server) withTTFTPercentiles(ops OpsStore, days int, rows []map[string]a
 	}
 	return rows
 }
+
+// AnalyticsRetentionDays: how long per-request analytics rows are kept.
+const AnalyticsRetentionDays = 14

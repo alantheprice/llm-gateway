@@ -1,47 +1,68 @@
 {{define "title"}}My Usage — LLM Gateway{{end}}
 {{define "scripts"}}
 <script>
+// Your usage over a chosen range, as a table or a chart.
+const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
+let myRange = null, myView = null, myData = null;
+async function loadMine() {
+  const r = myRange.get();
+  const res = await api('/api/usage/range' + (r.from ? '?from=' + r.from + '&to=' + r.to : ''));
+  if (!res.ok) { if (res.status === 401) location = '/'; return; }
+  myData = res.data;
+  drawMine();
+}
+function drawMine() {
+  const d = myData, r = myRange.get();
+  if (!d) return;
+  const u = (d.users || [])[0] || {requests: 0, prompt_tokens: 0, cached_tokens: 0, output_tokens: 0, total_tokens: 0, kinds: {}};
+  document.getElementById('stats').innerHTML =
+    '<div class="stat"><div class="v">' + fmtNum(u.requests) + '</div><div class="l">requests</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(u.prompt_tokens) + '</div><div class="l">prompt tokens (incl. cached)</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(u.cached_tokens || 0) + '</div><div class="l">of which cached</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(u.output_tokens) + '</div><div class="l">output tokens</div></div>' +
+    '<div class="stat"><div class="v">' + fmtNum(u.total_tokens) + '</div><div class="l">total tokens</div></div>';
+  document.getElementById('mynote').textContent = r.label + (r.preset === 'all'
+    ? (d.first_day ? ' · daily records start ' + TZ.dayLabel(d.first_day) + '; totals include earlier usage' : '')
+    : ' · days are UTC');
+  const days = d.days || [], mine = (d.series || {})[u.user] || days.map(() => 0);
+  const kinds = Object.entries(u.kinds || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const box = document.getElementById('mybody');
+  if (!u.total_tokens) { box.innerHTML = '<p class="muted">No usage in this range.</p>'; return; }
+  if (myView.get() === 'table') {
+    box.innerHTML =
+      '<h3 class="subh">By model type</h3><div class="tablewrap"><table><thead><tr><th>Type</th><th>Tokens</th><th>Share</th></tr></thead><tbody>' +
+      kinds.map(([k, v]) => '<tr><td data-label="Type">' + esc(KINDS[k] || k) + '</td><td data-label="Tokens">' + fmtNum(v) +
+        '</td><td data-label="Share">' + (100 * v / u.total_tokens).toFixed(1) + '%</td></tr>').join('') + '</tbody></table></div>' +
+      (days.length ? '<h3 class="subh">By day</h3><div class="tablewrap"><table><thead><tr><th>Day (UTC)</th><th>Tokens</th></tr></thead><tbody>' +
+        days.map((day, i) => [day, mine[i]]).reverse().map(([day, v]) =>
+          '<tr><td data-label="Day">' + esc(TZ.dayLabel(day)) + '</td><td data-label="Tokens">' + fmtNum(v) + '</td></tr>').join('') +
+        '</tbody></table></div>' : '');
+    return;
+  }
+  let h = '<h3 class="subh">By model type</h3>' + Charts.hbars({ items: kinds.map(([k, v], i) =>
+    ({ label: KINDS[k] || k, value: v, color: SERIES_COLORS[i % SERIES_COLORS.length], sub: (100 * v / u.total_tokens).toFixed(1) + '%' })) });
+  if (days.length > 1) {
+    const c = (getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff').trim();
+    h += '<h3 class="subh">Tokens per day</h3>' + Charts.linesMulti({ series: [{ name: 'total tokens', color: c,
+      values: days.map((day, i) => ({ label: TZ.dayLabel(day), value: mine[i] || 0 })) }], height: 200, format: Charts.fmtShort, yLabel: 'tokens per day (UTC)' });
+  }
+  box.innerHTML = h;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  myRange = RangePicker.mount(document.getElementById('myrange'), { id: 'my-usage', value: { preset: '30d' }, onChange: loadMine });
+  myView = ViewToggle.mount(document.getElementById('myview'), { id: 'my-usage', views: [['chart', 'Chart'], ['table', 'Table']], onChange: drawMine });
+  loadMine();
+});
+
 async function load() {
   const [keysR, usageR] = await Promise.all([api('/api/keys'), api('/api/usage/me')]);
   if (!keysR.ok || !usageR.ok) { location = '/'; return; }
   const me = usageR.data;
-  const tot = me.totals || {};
-  document.getElementById('stats').innerHTML =
-    '<div class="stat"><div class="v">' + fmtNum(tot.requests) + '</div><div class="l">requests</div></div>' +
-    '<div class="stat"><div class="v">' + fmtNum(tot.prompt_tokens) + '</div><div class="l">prompt tokens (incl. cached)</div></div>' +
-    '<div class="stat"><div class="v">' + fmtNum(tot.cached_tokens || 0) + '</div><div class="l">of which cached</div></div>' +
-    '<div class="stat"><div class="v">' + fmtNum(tot.output_tokens) + '</div><div class="l">output tokens</div></div>' +
-    '<div class="stat"><div class="v">' + fmtNum(tot.total_tokens) + '</div><div class="l">total tokens</div></div>';
-  const KINDS = {chat: 'Chat', embeddings: 'Embeddings', fim: 'FIM'};
-  const kinds = tot.kinds || {};
-  const kr = document.getElementById('kindrows');
-  const kindNames = Object.keys(KINDS).filter(k => kinds[k]);
-  kr.innerHTML = kindNames.length
-    ? kindNames.map(k =>
-      '<tr>' +
-      '<td data-label="Type">' + KINDS[k] + '</td>' +
-      '<td data-label="Requests">' + fmtNum(kinds[k].requests) + '</td>' +
-      '<td data-label="Prompt">' + fmtNum(kinds[k].prompt_tokens) + '</td>' +
-      '<td data-label="Cached">' + fmtNum(kinds[k].cached_tokens || 0) + '</td>' +
-      '<td data-label="Output">' + fmtNum(kinds[k].output_tokens) + '</td></tr>').join('')
-    : '<tr><td colspan="5" class="muted">No usage yet.</td></tr>';
-
   const hr = await api('/api/usage/history');
   if (hr.ok) {
     const days = hr.data.days || [];
     const labels = days.map(d => TZ.dayLabel(d));
     const palette = ['#58a6ff', '#3fb950', '#e3b341', '#bc8cff', '#f85149', '#39c5cf'];
-
-    // Overall (all keys): always shown.
-    const mine = days.map(d => ((hr.data.tokens_by_day[d] || {})[me.username]) || 0);
-    const c = getComputedStyle(document.documentElement).getPropertyValue('--chart-2') || '#58a6ff';
-    if (mine.some(v => v > 0)) {
-      document.getElementById('mychart').innerHTML = Charts.linesMulti({
-        series: [{name: 'total tokens', color: c.trim(), values: labels.map((l, i) => ({label: l, value: mine[i]}))}],
-        height: 200, format: Charts.fmtShort, yLabel: 'tokens per day'});
-    } else {
-      document.getElementById('mychart').innerHTML = '<p class="muted">No daily usage recorded yet.</p>';
-    }
 
     // Per-key breakdown: separate chart below.
     const hasKeys = hr.data.tokens_by_day_key && Object.keys(hr.data.tokens_by_day_key).length;
@@ -59,8 +80,6 @@ async function load() {
       document.getElementById('keychart').innerHTML = Charts.linesMulti({
         series: kSeries, height: 200, format: Charts.fmtShort, yLabel: 'tokens per day'});
     }
-    const mn = document.getElementById('mynote');
-    if (mn && days.length) mn.textContent = TZ.bucketNote(days[days.length - 1]);
   }
   const tb = document.getElementById('keyrows');
   const keys = keysR.data.keys || [];
@@ -80,17 +99,18 @@ load();
 </script>
 {{end}}
 {{define "content"}}
+<style>.subh { font-size: 13px; margin: 14px 0 6px; }</style>
 <div class="page">
   <div class="page-head">
     <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
     <h1>My Usage</h1></div>
   <div class="flash" id="flash"></div>
-  <div class="statgrid" id="stats"></div>
-  <div style="height:18px"></div>
   <div class="card">
-    <h2>Your tokens per day</h2>
-    <div id="mychart"></div>
-    <p class="muted" id="mynote" style="font-size:12px;margin:6px 0 0"></p>
+    <div class="panel-head"><h2>Your usage</h2>
+      <div class="panel-tools"><div id="myrange"></div><div id="myview"></div></div></div>
+    <p class="muted" id="mynote" style="font-size:12px;margin:0 0 10px"></p>
+    <div class="statgrid" id="stats"></div>
+    <div id="mybody"></div>
   </div>
 
   <div class="card" id="keychartcard" style="display:none">
@@ -98,13 +118,6 @@ load();
     <div id="keychart"></div>
   </div>
 
-  <div class="card">
-    <h2>By model type</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Type</th><th>Requests</th><th>Prompt tokens</th><th>Cached (subset of prompt)</th><th>Output tokens</th></tr></thead>
-      <tbody id="kindrows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
-    </table></div>
-  </div>
   <div class="card">
     <h2>Consumption per key (all time)</h2>
     <div class="tablewrap"><table>

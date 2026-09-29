@@ -20,6 +20,40 @@ function lifetimeStat(l) {
     '<div class="l">lifetime all-in $ / 1M — hardware at full price over ' + Charts.fmtShort(l.tokens) + ' tokens so far</div></div>';
 }
 
+// Value vs cost over a chosen range: chart or table.
+let valRange = null, valView = null, valData = null;
+async function loadValue() {
+  const r = valRange.get();
+  const res = await api('/api/costs/history' + (r.from ? '?from=' + r.from + '&to=' + r.to : ''));
+  if (!res.ok) { document.getElementById('valuechart').innerHTML = '<p class="muted">' + esc(res.data.error || 'unavailable') + '</p>'; return; }
+  valData = res.data;
+  drawValue();
+}
+function drawValue() {
+  const d = valData, r = valRange.get(), box = document.getElementById('valuechart');
+  if (!d) return;
+  const hd = d.days || [], t = d.totals || {};
+  document.getElementById('valuernote').textContent = r.label + ' · ' + hd.length + ' day' + (hd.length === 1 ? '' : 's') +
+    ' · cost ' + usd(t.cost_usd, 2) + ' · value ' + usd(t.value_usd, 2) +
+    (t.usd_per_m_tokens != null ? ' · ' + usd(t.usd_per_m_tokens) + ' / 1M tokens' : '') + ' · UTC days';
+  if (!hd.length) { box.innerHTML = '<p class="muted">No cost history in this range (a row is recorded for each day).</p>'; return; }
+  if (valView.get() === 'table') {
+    box.innerHTML = '<div class="tablewrap"><table><thead><tr><th>Day</th><th>GPU energy</th><th>Overhead</th><th>Hardware</th><th>Total cost</th><th>Value</th><th>Tokens</th><th>$ / 1M</th></tr></thead><tbody>' +
+      hd.slice().reverse().map(x => '<tr><td data-label="Day">' + esc(TZ.dayLabel(x.day)) + '</td>' +
+        '<td data-label="GPU energy">' + usd(x.energy_usd, 2) + '</td><td data-label="Overhead">' + usd(x.overhead_usd, 2) + '</td>' +
+        '<td data-label="Hardware">' + usd(x.capital_usd, 2) + '</td><td data-label="Total cost"><strong>' + usd(x.total_usd, 2) + '</strong></td>' +
+        '<td data-label="Value" style="color:' + (x.value_usd >= x.total_usd ? 'var(--chart-1)' : 'inherit') + '">' + usd(x.value_usd, 2) + '</td>' +
+        '<td data-label="Tokens">' + Charts.fmtShort(x.tokens) + '</td>' +
+        '<td data-label="$ / 1M">' + (x.tokens ? usd(x.total_usd / x.tokens * 1e6) : '—') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    return;
+  }
+  box.innerHTML = Charts.linesMulti({ series: [
+    { name: 'actual cost', color: '#f85149', values: hd.map(x => ({ label: TZ.dayLabel(x.day), value: Math.round(x.total_usd * 1000) / 1000 })) },
+    { name: 'value (your prices)', color: '#3fb950', values: hd.map(x => ({ label: TZ.dayLabel(x.day), value: Math.round(x.value_usd * 1000) / 1000 })) },
+  ], height: 240, format: Charts.fmtShort, yLabel: 'USD/day' });
+}
+
 async function load() {
   const r = await api('/usage/costs');
   if (!r.ok) { location = '/'; return; }
@@ -104,20 +138,7 @@ async function load() {
     '<div class="stat"><div class="v">' + usd(d.value_today, 2) + '</div><div class="l">value generated today (at your prices)</div></div>' +
     '</div>';
 
-  const h = d.cost_history || {};
-  const hd = h.days || [];
-  if (hd.length) {
-    const costSeries = { name: 'actual cost', color: '#f85149',
-      values: hd.map(r => ({label: TZ.dayLabel(r.day), value: Math.round((r.total_usd)*1000)/1000})) };
-    const valSeries = { name: 'value (your prices)', color: '#3fb950',
-      values: hd.map(r => ({label: TZ.dayLabel(r.day), value: Math.round((r.value_usd)*1000)/1000})) };
-    const vn = document.getElementById('valuernote');
-    if (vn) vn.textContent = TZ.bucketNote(hd[hd.length - 1].day);
-    document.getElementById('valuechart').innerHTML = Charts.linesMulti({
-      series: [costSeries, valSeries], height: 240, format: Charts.fmtShort, yLabel: 'USD/day'});
-  } else {
-    document.getElementById('valuechart').innerHTML = '<p class="muted">History builds once a day completes — first row lands tonight.</p>';
-  }
+  loadValue();
 
   const uv = Object.entries(d.user_value_today || {}).sort((a,b) => b[1]-a[1]);
   document.getElementById('valuerows').innerHTML = uv.length
@@ -157,6 +178,9 @@ async function load() {
     '</tbody></table></div></div>').join('');
 }
 document.addEventListener('DOMContentLoaded', () => {
+  valRange = RangePicker.mount(document.getElementById('valrange'), { id: 'costs-value', value: { preset: '30d' },
+    presets: ['7d', '30d', '365d', 'all', 'custom'], onChange: loadValue });
+  valView = ViewToggle.mount(document.getElementById('valview'), { id: 'costs-value', views: [['chart', 'Chart'], ['table', 'Table']], onChange: drawValue });
   load();
   document.getElementById('refresh').onclick = load;
 });
@@ -183,7 +207,8 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
   <div class="card">
-    <h2>Value vs actual cost — daily</h2>
+    <div class="panel-head"><h2>Value vs actual cost — daily</h2>
+      <div class="panel-tools"><div id="valrange"></div><div id="valview"></div></div></div>
     <div id="valuechart"><p class="muted">Loading…</p></div>
     <p class="muted" id="valuernote" style="font-size:12px;margin:6px 0 0"></p>
     <p class="muted" style="font-size:12px;margin:4px 0 0">Red: what the fleet actually cost that day (GPU energy + host overhead + capex accrual). Green: what the day's traffic would have cost at your prices. Green above red = the system is paying for itself.</p>

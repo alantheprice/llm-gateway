@@ -440,7 +440,7 @@ func (s *Server) linkUsage(a *agentView) any {
 		urls = append(urls, e.URL)
 	}
 	var rows []embeddedpb.BackendUserRow
-	if err := ops.QueryBackendUsers(7, urls, &rows); err != nil {
+	if err := ops.QueryBackendUsers(embeddedpb.LastDays(7), urls, &rows); err != nil {
 		return nil
 	}
 	return rows

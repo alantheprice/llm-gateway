@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	htmlstd "html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -204,7 +205,7 @@ func checkPage(t *testing.T, browser string, s http.Handler, tok, path string) {
 		// in-process and render again.
 		var missing []string
 		if m := missAttr.FindStringSubmatch(out); m != nil {
-			json.Unmarshal([]byte(strings.ReplaceAll(m[1], "&quot;", `"`)), &missing)
+			json.Unmarshal([]byte(htmlstd.UnescapeString(m[1])), &missing)
 		}
 		if len(missing) > 0 {
 			for _, key := range missing {
@@ -292,7 +293,7 @@ func TestChatSyncInBrowser(t *testing.T) {
 	}
 	var missing []string
 	if m := missAttr.FindStringSubmatch(out); m != nil {
-		json.Unmarshal([]byte(strings.ReplaceAll(m[1], "&quot;", `"`)), &missing)
+		json.Unmarshal([]byte(htmlstd.UnescapeString(m[1])), &missing)
 	}
 	if !slices.Contains(missing, "PUT /api/chats/local1") {
 		t.Errorf("local-only chat not uploaded; requests: %v", missing)

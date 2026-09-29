@@ -775,3 +775,52 @@ func (s *Server) labelled(urls []string) []map[string]any {
 	}
 	return out
 }
+
+// CostRanger: cost history over a range of days (the embedded database).
+type CostRanger interface {
+	CostRange(from, to string) ([]embeddedpb.CostRow, error)
+}
+
+// handleCostHistory: GET /api/costs/history?from=&to= — daily cost and
+// value rows for a range of UTC days (both empty = all), admin only.
+func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.adminGate(w, r) {
+		return
+	}
+	cr, ok := s.Ops().(CostRanger)
+	if !ok || cr == nil {
+		errBody(w, http.StatusServiceUnavailable, "cost history unavailable")
+		return
+	}
+	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	for _, d := range []string{from, to} {
+		if d != "" {
+			if _, err := time.Parse("2006-01-02", d); err != nil {
+				errBody(w, http.StatusBadRequest, "dates are YYYY-MM-DD")
+				return
+			}
+		}
+	}
+	rows, err := cr.CostRange(from, to)
+	if err != nil {
+		errBody(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	var cost, value float64
+	var tokens int64
+	for _, row := range rows {
+		out = append(out, map[string]any{"day": row.Day, "energy_usd": row.EnergyUSD, "overhead_usd": row.OverheadUSD,
+			"capital_usd": row.CapitalUSD, "total_usd": row.Total(), "tokens": row.Tokens, "value_usd": row.ValueUSD})
+		cost += row.Total()
+		value += row.ValueUSD
+		tokens += row.Tokens
+	}
+	var perM any
+	if tokens > 0 {
+		perM = round4(cost / float64(tokens) * 1e6)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"from": from, "to": to, "days": out,
+		"totals": map[string]any{"cost_usd": round2(cost), "value_usd": round2(value), "tokens": tokens, "usd_per_m_tokens": perM}})
+}

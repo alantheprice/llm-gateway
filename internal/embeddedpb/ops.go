@@ -390,3 +390,20 @@ func RenameLegacy(path string) {
 		_ = os.Rename(path, path+".imported-"+stamp)
 	}
 }
+
+// CostRange returns the cost-history rows for UTC days from..to
+// (inclusive; "" = unbounded), oldest first.
+func (a *App) CostRange(from, to string) ([]CostRow, error) {
+	if a.pb.DB() == nil {
+		return nil, fmt.Errorf("ops: DB not open")
+	}
+	if to == "" {
+		to = "9999-12-31"
+	}
+	var rows []CostRow
+	err := a.pb.DB().NewQuery(`
+		SELECT day, energy_usd, overhead_usd, capital_usd, tokens, value_usd
+		FROM cost_history WHERE day >= {:from} AND day <= {:to} ORDER BY day`).
+		Bind(map[string]any{"from": from, "to": to}).All(&rows)
+	return rows, err
+}
