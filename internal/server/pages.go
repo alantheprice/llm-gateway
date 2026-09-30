@@ -9,7 +9,7 @@ import (
 	"llmgateway/internal/web"
 )
 
-// lucideNav is the server-side SVG map (Python _LUCIDE_NAV port).
+// lucideNav is the server-side SVG map.
 var lucideNav = map[string]string{
 	"message-square":   `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
 	"route":            `<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>`,
@@ -47,7 +47,7 @@ func iconSVG(name string) string {
 		`stroke-linecap="round" stroke-linejoin="round">` + path + `</svg>`
 }
 
-// staticVer mirrors Python: max mtime of the source static dir, falling back
+// staticVer: max mtime of the source static dir, falling back
 // to binary build time (embedded FS has no useful mtimes).
 var staticVer = "1"
 

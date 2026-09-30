@@ -11,10 +11,10 @@ import (
 	"llmgateway/internal/config"
 )
 
-// ---- admin-gated metrics views (Python parity: usage/metrics/backends) ----
+// ---- admin-gated metrics views (usage/metrics/backends) ----
 //
-// Python gates these with _admin_required: an admin session cookie OR a
-// Bearer/api_key key whose record is a UI key minted with role=admin.
+// Gate: an admin session cookie OR a Bearer/api_key key whose record is a
+// UI key minted with role=admin.
 // Everything else → 403 (had a session/key) or 401 (anonymous). LAN trust
 // does NOT apply — these reveal energy/cost/system info.
 
@@ -37,7 +37,7 @@ func (s *Server) adminGate(w http.ResponseWriter, r *http.Request) bool {
 			if rec.UI && rec.Role == "admin" {
 				return true
 			}
-			// Valid key, not an admin ui key → same 401 Python returns
+			// Valid key, not an admin ui key → falls through to 401
 			// (anonymous from the admin plane's perspective).
 		}
 	}
@@ -49,7 +49,7 @@ func (s *Server) adminGate(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // metricBackends: pool members + overflow fallbacks + discovered ninfer
-// engines (Python's backends set in usage/metrics handlers).
+// engines (the backend set used by the usage/metrics views).
 func (s *Server) metricBackends() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,7 +111,7 @@ func usageMap(m map[string]any, path ...string) map[string]any {
 	return node
 }
 
-// energyRate mirrors Python _energy_rate: prefer the engine's
+// energyRate: prefer the engine's
 // cost_per_m_tokens_usd (schema-2 engines bucket tokens correctly); fall
 // back to cost/tokens when internally consistent; else nil.
 func energyRate(usage map[string]any) any {
@@ -160,8 +160,7 @@ func (s *Server) gatherUsage(urls []string) map[string]map[string]any {
 }
 
 // handleUsageRich: GET /usage — aggregated engine metrics, admin only.
-// Python parity: gateway/totals envelope + per-backend reshape + blended
-// pool rate.
+// gateway/totals envelope + per-backend reshape + blended pool rate.
 func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 	if !s.adminGate(w, r) {
 		return
@@ -193,7 +192,7 @@ func (s *Server) handleUsageRich(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pool-wide blended rate (Python: sum today's cost / tokens).
+	// Pool-wide blended rate (sum today's cost / tokens).
 	// Energy is counted once per card group (see gpu_groups.go).
 	_, reporters, _ := s.countedEnergy(usageByBackend)
 	var totalCost, totalTokens float64
@@ -413,7 +412,7 @@ func formatProm(v float64) string {
 func round4(v float64) float64 { return float64(int64(v*1e4+0.5)) / 1e4 }
 
 // handleBackendsRich: GET /backends — live routing state per backend (admin).
-// Python parity: models per backend, score, engine, staleness, lane/queue
+// models per backend, score, engine, staleness, lane/queue
 // fields, throughput, KV health, energy, cache hit.
 func (s *Server) handleBackendsRich(w http.ResponseWriter, r *http.Request) {
 	if !s.adminGate(w, r) {

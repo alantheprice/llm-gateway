@@ -107,6 +107,9 @@ Build + serve details: [NInfer Engine Runbook](docs/ninfer-engine.md).
 | [docs/install.md](docs/install.md) | install/upgrade/uninstall runbook |
 | [docs/ninfer-engine.md](docs/ninfer-engine.md) | building + serving the telemetry fork |
 | [docs/operations.md](docs/operations.md) | costs, quotas, backups, troubleshooting |
+| [docs/link-gpu.md](docs/link-gpu.md) | linking your own GPU to the gateway |
+| [docs/link-agent.md](docs/link-agent.md) | link agent: remote GPUs without VPNs |
+| [docs/mcp.md](docs/mcp.md) | remote MCP connectors for the chat |
 | [docs/SPEC.md](docs/SPEC.md) | full behavioral specification |
 | `/guide` on any running gateway | the same docs, embedded |
 

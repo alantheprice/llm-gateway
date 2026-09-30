@@ -8,7 +8,7 @@ import (
 
 // handleUsageUsers: GET /usage/users — per-user token accounting (admin only).
 // Deliberately NO per-user energy: NVML meters whole-GPU power, so energy is
-// a full-system metric (Python parity).
+// a full-system metric.
 func (s *Server) handleUsageUsers(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.adminIdentity(w, r); !ok {
 		return // adminIdentity already wrote 403
@@ -44,7 +44,7 @@ func withTotal(in map[string]*UserUsage) map[string]map[string]any {
 	return out
 }
 
-// ---- /config + /config/reload (admin; Python parity) ----
+// ---- /config + /config/reload (admin) ----
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.adminIdentity(w, r); !ok {

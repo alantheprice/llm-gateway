@@ -21,8 +21,7 @@ import (
 
 const PBKDF2Iterations = 60000
 
-// HashSecret returns hex(pbkdf2_hmac_sha256(secret, salt, 60000)) —
-// identical to Python's _hash_secret.
+// HashSecret returns hex(pbkdf2_hmac_sha256(secret, salt, 60000)).
 func HashSecret(secret, salt string) string {
 	return hex.EncodeToString(pbkdf2SHA256([]byte(secret), []byte(salt), PBKDF2Iterations, 32))
 }
@@ -41,7 +40,7 @@ type KeyRecord struct {
 	Active     bool    `json:"active"`
 	Role       string  `json:"role,omitempty"`
 	Rotating   bool    `json:"rotating"`
-	GraceUntil *string `json:"grace_until"` // ISO datetime string (Python parity)
+	GraceUntil *string `json:"grace_until"` // ISO datetime string
 	UI         bool    `json:"ui,omitempty"`
 }
 
@@ -193,9 +192,8 @@ func Open(path string) (*Store, error) {
 	for u, p := range s.AutoKeyPlain {
 		s.uiPlain[u] = p
 	}
-	// Poll for external writes: two gateways sharing one users.json (the
-	// drop-in/cutover scenario) must see each other's key churn. Python's
-	// _load_users re-reads on a 30s TTL; we watch mtime every 5s.
+	// Poll for external writes: two gateways sharing one users.json must
+	// see each other's key churn; mtime is watched every 5s (watchLoop).
 	go s.watchLoop()
 	return s, nil
 }
@@ -317,7 +315,7 @@ func newSecret(n int) string {
 
 // --- key management ---
 
-// NewAPIKey generates (plaintext, prefix, salt) with Python parity:
+// NewAPIKey generates (plaintext, prefix, salt):
 // plaintext = 'sk-' + token_urlsafe(30), prefix = plaintext[:11],
 // salt = prefix + 'salt'. HashSecret(plaintext, salt) gives key_hash.
 func NewAPIKey() (plaintext, prefix, salt string) {
@@ -336,7 +334,7 @@ func tokenURLSafe(n int) string {
 }
 
 // CreateKey mints a new plaintext key, stores its hash, and returns the
-// plaintext (shown once) along with the record. Python parity: prefix/salt
+// plaintext (shown once) along with the record: prefix/salt
 // scheme, key_id trimmed to 40 chars.
 func (s *Store) CreateKey(username, keyID, role string, ui bool) (string, *KeyRecord, error) {
 	s.mu.Lock()
@@ -367,7 +365,7 @@ func (s *Store) CreateKey(username, keyID, role string, ui bool) (string, *KeyRe
 }
 
 // RotateKey retires keyID (keeping it valid for grace seconds under a
-// -retired- name) and mints a replacement with the same id. Python parity.
+// -retired- name) and mints a replacement with the same id.
 func (s *Store) RotateKey(username, keyID string, graceSeconds int) (string, *string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -580,23 +578,24 @@ type Claims struct {
 }
 
 // SignSession builds token = b64url(json(claims)+"|"+exp) + "." + hmac_hex.
-// JSON serialization matches Python json.dumps (", " / ": " separators).
+// JSON serialization is deterministic (", " / ": " separators) so tokens
+// stay interchangeable across gateways.
 func (s *Store) SignSession(c Claims, ttl time.Duration) string {
 	exp := time.Now().Add(ttl).Unix()
 	return s.SignSessionOrdered(exp, KV{"u", c.U}, KV{"role", c.Role}, KV{"ep", c.Ep})
 }
 
-// KV is one ordered claim (Python dicts preserve insertion order; Go maps
-// don't, so callers pass pairs).
+// KV is one ordered claim (Go maps don't preserve order, so callers pass
+// pairs).
 type KV struct {
 	K string
 	V any
 }
 
-// SignSessionOrdered signs ordered claims with a fixed expiry (golden tests,
-// cross-language parity). Serialized exactly like Python json.dumps defaults.
+// SignSessionOrdered signs ordered claims with a fixed expiry (used by
+// golden tests). Serialization is byte-stable.
 func (s *Store) SignSessionOrdered(exp int64, kvs ...KV) string {
-	body := pyDumpsOrdered(kvs) + "|" + fmt.Sprint(exp)
+	body := dumpsOrdered(kvs) + "|" + fmt.Sprint(exp)
 	mac := hmac.New(sha256.New, s.sessionKey())
 	mac.Write([]byte(body))
 	return base64.URLEncoding.EncodeToString([]byte(body)) + "." + hex.EncodeToString(mac.Sum(nil))
@@ -648,10 +647,9 @@ func (s *Store) VerifySession(token string) (Claims, bool) {
 	return c, true
 }
 
-// pyDumpsOrdered serializes ordered claims like Python json.dumps defaults:
-// ", " between items, ": " after keys. Scalar encodings match for the types
-// sessions use.
-func pyDumpsOrdered(kvs []KV) string {
+// dumpsOrdered serializes ordered claims: ", " between items, ": " after
+// keys. Byte-stable for the scalar types sessions use.
+func dumpsOrdered(kvs []KV) string {
 	var b strings.Builder
 	b.WriteString("{")
 	for i, kv := range kvs {
@@ -661,16 +659,16 @@ func pyDumpsOrdered(kvs []KV) string {
 		kb, _ := json.Marshal(kv.K)
 		b.Write(kb)
 		b.WriteString(": ")
-		b.WriteString(pyScalar(kv.V))
+		b.WriteString(encodeScalar(kv.V))
 	}
 	b.WriteString("}")
 	return b.String()
 }
 
-func pyScalar(v any) string {
+func encodeScalar(v any) string {
 	switch x := v.(type) {
 	case string:
-		b, _ := json.Marshal(x) // JSON escaping == Python's for session claims
+		b, _ := json.Marshal(x)
 		return string(b)
 	case bool:
 		if x {

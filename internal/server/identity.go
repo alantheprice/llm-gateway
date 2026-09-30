@@ -35,7 +35,7 @@ func (s *Server) setSession(w http.ResponseWriter, c auth.Claims) {
 	})
 }
 
-// ---- login (PB-backed; escalating per-IP+user backoff, SPEC parity) ----
+// ---- login (PB-backed, escalating per-IP+user backoff; per SPEC §3) ----
 
 var loginFails = struct {
 	sync.Mutex

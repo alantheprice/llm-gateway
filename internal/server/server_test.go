@@ -63,7 +63,7 @@ func TestHealthNoAuth(t *testing.T) {
 
 func TestAuthRequiredFromLoopback(t *testing.T) {
 	// 127.0.0.1 is tunnel traffic: never trusted (SPEC §2). /usage is
-	// ADMIN-gated (Python parity): session admin or admin ui key only.
+	// ADMIN-gated: session admin or admin ui key only.
 	s := testServer(t, `{"gateway":{"trust_local_networks":true},"local_networks":["192.168.1.0/24"]}`, nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/usage", nil))
@@ -129,7 +129,7 @@ func TestBearerKeyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A plain user key no longer opens the admin plane (Python parity).
+	// A plain user key no longer opens the admin plane.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/usage", nil)
 	r.Header.Set("Authorization", "Bearer "+plain)

@@ -76,12 +76,12 @@ func members() []Member {
 	}
 }
 
-// Golden pinning map from Python: md5("qwen|<session>") % 2
-func TestPinningParityWithPython(t *testing.T) {
+// Golden pinning map: md5("qwen|<session>") % 2
+func TestSessionPinning(t *testing.T) {
 	tr := NewTracker(DefaultWeights())
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 0, 0, 6, 0, 0, 0))
 	tr.Set("http://192.168.1.100:8006", mkLoad("ninfer", 0, 0, 8, 0, 0, 0))
-	cases := map[string]string{ // session -> expected URL (python md5 % 2)
+	cases := map[string]string{ // session -> expected URL
 		"alpha":            "http://192.168.1.100:8006", // idx 1
 		"beta":             "http://127.0.0.1:8000",     // idx 0
 		"gamma":            "http://127.0.0.1:8000",     // idx 0
@@ -95,9 +95,9 @@ func TestPinningParityWithPython(t *testing.T) {
 	}
 }
 
-// No size-based preference: an idle member wins whatever the prompt size
-// (the old large_context penalty queued small prompts on the busy GPU
-// while a large-context GPU sat idle).
+// Prompt size has no effect on selection: with a busy member over the pool
+// threshold the eligible sibling wins, and with both idle the larger
+// member (capacity weight) wins the tie.
 func TestNoSizePenalty(t *testing.T) {
 	tr := NewTracker(DefaultWeights())
 	tr.Set("http://127.0.0.1:8000", mkLoad("ninfer", 6, 0, 6, 0, 0, 0))
@@ -184,8 +184,8 @@ func TestStickyBiasPrefersLeader(t *testing.T) {
 	}
 }
 
-func TestEstimatePromptParity(t *testing.T) {
-	// Python: chars/4 for text; images 2000; at least the sum of parts.
+func TestEstimateTokens(t *testing.T) {
+	// chars/4 for text; images 2000; at least the sum of parts.
 	msgs := []map[string]any{
 		{"role": "user", "content": "abcdefgh"}, // 8 chars -> 2
 		{"role": "user", "content": []any{

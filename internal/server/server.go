@@ -251,7 +251,7 @@ func New(cfg *config.Config, store *auth.Store) *Server {
 	return s
 }
 
-// pbSuperuserPass mirrors the Python gateway: PB_SUPERUSER_PASS env wins,
+// pbSuperuserPass: PB_SUPERUSER_PASS env wins,
 // else read SUPERUSER_PASS from <users_file_dir>/../pb/.superuser-env with
 // identity from PB_SUPERUSER_ID (default "admin@llm.local").
 func pbSuperuserPass(cfg *config.Config) string {
@@ -392,7 +392,7 @@ func bearerKey(r *http.Request) string {
 	if strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(h[7:])
 	}
-	// query param fallback (mirrors Python's /metrics?api_key= usage)
+	// query param fallback (for Prometheus scrapes that can't set headers)
 	if k := r.URL.Query().Get("api_key"); k != "" {
 		return k
 	}
@@ -854,7 +854,7 @@ func getJSON(client *http.Client, url string, timeout time.Duration) (map[string
 
 // pollNinferFull fetches /slots + /usage and returns both the routing Load
 // and the raw /usage payload (uptime, KV windows, lane breakdown — the
-// /backends view needs them; see Python's _backend_load field list).
+// /backends view needs them; see the field list in handleBackendsRich).
 // Works for LAN backends and link engines alike (s.backendJSON).
 func (s *Server) pollNinferFull(backend string) (*routing.Load, map[string]any) {
 	slots, ok := s.backendJSON(backend, "/slots", 3*time.Second)

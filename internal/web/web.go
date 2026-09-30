@@ -18,8 +18,8 @@ var templateFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
-// PageData is the chrome context every template receives (Python render()
-// parity: nav, username, role + extras).
+// PageData is the chrome context every template receives: nav, username,
+// role + extras.
 type PageData struct {
 	Nav       string
 	Username  string

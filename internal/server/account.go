@@ -38,7 +38,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAccountUpdate: POST /account/update {name, email, password} —
-// PB profile edit, self-authorized with the current password (Python parity).
+// PB profile edit, self-authorized with the current password.
 func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.sessionFrom(r)
 	if !ok {
@@ -166,8 +166,8 @@ func (s *Server) handleAPIUsageMe(w http.ResponseWriter, r *http.Request) {
 	if u != nil && u.Kinds != nil {
 		tot["kinds"] = u.Kinds
 	}
-	// Python parity: keys = store views (key_id/active) merged with usage
-	// tallies, as an array.
+	// keys = store views (key_id/active) merged with usage tallies, as an
+	// array.
 	tallies := s.usage.KeyUsage(sess.U)
 	keys := []map[string]any{}
 	for _, kv := range s.store.ListKeys(sess.U) {

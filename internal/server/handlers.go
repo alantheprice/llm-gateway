@@ -64,7 +64,7 @@ func (s *Server) methodSwitch(handlers map[string]http.HandlerFunc) http.Handler
 }
 
 // handleChangePWSubmit is the form fallback (the UI posts JSON via
-// /chat/password; this form endpoint mirrors Python's /change-password POST).
+// /chat/password; this form endpoint mirrors the /change-password POST).
 func (s *Server) handleChangePWSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		errBody(w, http.StatusBadRequest, "bad form")
@@ -125,9 +125,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/slots", s.handleSlots)
 	mux.HandleFunc("/backends", s.handleBackendsRich)
 
-	// Identity plane (SPEC parity with Python gateway)
+	// Identity plane
 	mux.HandleFunc("/login", s.methodSwitch(map[string]http.HandlerFunc{
-		http.MethodPost: s.handleLogin, // GET /login = 405, Python parity (login page lives at /)
+		http.MethodPost: s.handleLogin, // GET /login = 405 (login page lives at /)
 	}))
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/chat", s.handleChatPage)
@@ -150,7 +150,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chats/", s.handleAPIChats)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
-		http.MethodGet:  s.handleKeysPage, // page (Python parity)
+		http.MethodGet:  s.handleKeysPage, // page
 		http.MethodPost: s.handleKeys,     // API action
 	}))
 	mux.HandleFunc("/api/keys", s.handleKeys) // UI JS calls /api/keys; same API handler
@@ -247,7 +247,7 @@ func (s *Server) embeddedPBHealthy() bool {
 }
 
 // checkAuth: key-or-LAN (the /v1 inference-plane contract; sessions do NOT
-// count here, matching the Python gateway).
+// count here).
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	user, keyID, ok := s.authorized(r)
 	if !ok {
@@ -255,7 +255,7 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) (string, stri
 		return "", "", false
 	}
 	if user == "" {
-		user = "local" // LAN-trusted unkeyed requests (Python parity)
+		user = "local" // LAN-trusted unkeyed requests
 	}
 	return user, keyID, true
 }
@@ -298,11 +298,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
-// catalog builds the model list, mirroring the live Python gateway's
-// models_handler: pool MEMBER model ids are hidden (they'd let clients pin an
-// engine and bypass cache-affinity routing); every other discovered model
-// (embeddings, FIM, standalone) is advertised; pool virtual names are
-// synthesized when no backend carries them.
+// catalog builds the model list: pool MEMBER model ids are hidden (they'd
+// let clients pin an engine and bypass cache-affinity routing); every other
+// discovered model (embeddings, FIM, standalone) is advertised; pool
+// virtual names are synthesized when no backend carries them.
 func (s *Server) catalog() []ModelEntry {
 	memberIDs := map[string]bool{}
 	s.mu.Lock()

@@ -35,9 +35,9 @@ func TestGoldenPBKDF2(t *testing.T) {
 	}
 }
 
-// TestSessionCrossPython proves the Go signer produces the exact token the
-// Python signer produces for the same secret/claims/exp (golden from Python).
-func TestSessionCrossPython(t *testing.T) {
+// TestSessionGoldenToken proves the Go signer reproduces the exact token
+// from the golden file for the same secret/claims/exp.
+func TestSessionGoldenToken(t *testing.T) {
 	var g goldenFile
 	if err := json.Unmarshal(goldenData, &g); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestKeyLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Python parity: prefix = plaintext[:11], salt = prefix + "salt"
+	// prefix = plaintext[:11], salt = prefix + "salt"
 	if rec.Prefix != plain[:11] {
 		t.Errorf("prefix = %s, want %s", rec.Prefix, plain[:11])
 	}
@@ -113,7 +113,7 @@ func TestKeyLifecycle(t *testing.T) {
 		t.Fatal("wrong key must not resolve")
 	}
 	// Rotation grace: rotate => old key keeps working until grace passes.
-	// Uses the production RotateKey (Python parity: rename to -retired-,
+	// Uses the production RotateKey (rename to -retired-,
 	// ISO grace_until, new key under original id).
 	newPlain, graceUntil, err := s2.RotateKey("bob", "main", 3600)
 	if err != nil {

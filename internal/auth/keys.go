@@ -13,7 +13,7 @@ import (
 // kill every other surface's live session (observed 2026-09-25: agent-mode
 // chat 401'd 13s after an admin login on another port). A bounded ring
 // keeps orphan accumulation capped while surviving cross-surface mints.
-// key_id = "ui-" + plaintext[3:11] (Python parity).
+// key_id = "ui-" + plaintext[3:11].
 // AutoKeyFor returns the plaintext of the user's stable "auto" UI key,
 // true when it exists and is active. Minted once by CreateUIKey (id
 // "auto"), reused across sessions and restarts — no per-restart churn.
@@ -92,7 +92,7 @@ func (s *Store) CreateUIKey(username, role string) (string, *KeyRecord, error) {
 
 // RoleOf returns the persisted role of a user's most relevant key (ui first,
 // then any record with a role), or "" if unknown. Used for admin Bearer
-// checks without a PB round-trip (Python: key.role persisted at mint time).
+// checks without a PB round-trip (key.role persisted at mint time).
 func (s *Store) RoleOf(username string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,7 +109,7 @@ func (s *Store) RoleOf(username string) string {
 }
 
 // SetKeyRoleIfDiffers records the mint-time role on the key matching the
-// plaintext prefix (Python chat/config parity). Cheap no-op when equal.
+// plaintext prefix. Cheap no-op when equal.
 func (s *Store) SetKeyRoleIfDiffers(username, plaintext, role string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,7 +124,7 @@ func (s *Store) SetKeyRoleIfDiffers(username, plaintext, role string) {
 	}
 }
 
-// SetAllKeyRoles updates role on every key of the user (set_role parity).
+// SetAllKeyRoles updates the role on every key of the user.
 func (s *Store) SetAllKeyRoles(username, role string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,7 +212,7 @@ type KeyView struct {
 // connection and nothing else (no model calls, no account role).
 const RoleLink = "link"
 
-// ListKeys renders redacted API-key views (Python /keys GET parity). Link
+// ListKeys renders redacted API-key views. Link
 // tokens are managed on the GPUs page and listed by ListLinkKeys.
 func (s *Store) ListKeys(username string) []KeyView {
 	return s.listKeys(username, false)

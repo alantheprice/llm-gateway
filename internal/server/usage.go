@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// UsageStore tracks per-user/per-key/per-kind counters (SPEC §8) with the
-// same JSON shape as the Python gateway's usage.json.
+// UsageStore tracks per-user/per-key/per-kind counters (SPEC §8).
 type UsageStore struct {
 	mu    sync.Mutex
 	path  string
@@ -108,8 +107,8 @@ func (u *UsageStore) RecordDetailed(user, keyID, model string, prompt, output, c
 		u.Data.Users[user] = usr
 	}
 	applyTally(usr, keyID, kind, prompt, output, cached)
-	// Per-day buckets (history charts + daily quotas). Python parity:
-	// local-date keys, full UserUsage shape.
+	// Per-day buckets (history charts + daily quotas): local-date keys,
+	// full UserUsage shape.
 	day := u.Data.Daily[today]
 	if day == nil {
 		day = map[string]*UserUsage{}

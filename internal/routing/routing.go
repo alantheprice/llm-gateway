@@ -567,7 +567,7 @@ func PickPool(poolName string, poolThreshold, stickyBias float64,
 	return PickResult{URL: chosen.URL, ModelID: chosen.ModelID, Scores: scores}
 }
 
-// md5Mod returns int(md5hex(s), 16) mod n — Python parity for pin hashing.
+// md5Mod returns int(md5hex(s), 16) mod n (pin hashing).
 func md5Mod(n int, s string) int {
 	sum := md5.Sum([]byte(s))
 	x := new(big.Int).SetBytes(sum[:])

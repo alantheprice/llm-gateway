@@ -1,8 +1,8 @@
-// Per-user daily token quotas (SPEC §7 identity plane). Admin sets a limit
-// per user; inference surfaces return 429 once today's prompt+output tokens
-// cross it. Admins, the legacy operator key, and LAN-trusted unkeyed
-// requests ("local") are exempt — you don't want to lock the operator out
-// of their own gateway.
+// Per-user daily token quotas (docs/operations.md, "Per-user quotas").
+// Admin sets a limit per user; inference surfaces return 429 once today's
+// prompt+output tokens cross it. Admins, the legacy operator key, and
+// LAN-trusted unkeyed requests ("local") are exempt — you don't want to
+// lock the operator out of their own gateway.
 package server
 
 import (

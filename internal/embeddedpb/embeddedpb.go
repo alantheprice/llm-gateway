@@ -233,8 +233,8 @@ func (a *App) ensureRoleField() (*core.Collection, error) {
 		return col, nil // already provisioned
 	}
 
-	// 1. username text field (gateway logs in by username — Python parity;
-	//    fresh PB 0.40 auth collections don't have one).
+	// 1. username text field (gateway logs in by username; fresh PB 0.40
+	//    auth collections don't have one).
 	old := *col
 	if !hasUsername {
 		col.Fields = append(col.Fields, &core.TextField{

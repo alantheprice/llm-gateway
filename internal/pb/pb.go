@@ -1,6 +1,6 @@
 // Package pb is a minimal PocketBase client for identity-plane operations:
 // authenticate a user, fetch an admin token, list/create/patch/delete users.
-// Endpoints mirror PB 0.30 (SPEC-consistent with the Python gateway).
+// Endpoints mirror the PB 0.30 API.
 package pb
 
 import (
@@ -118,8 +118,7 @@ func (c *Client) Authenticate(username, password string) (*UserRecord, error) {
 	return &out.Record, nil
 }
 
-// AdminToken returns a cached superuser auth token (refreshed every 20 min,
-// mirroring the Python gateway's _pb_admin_token TTL).
+// AdminToken returns a cached superuser auth token (refreshed every 20 min).
 // SetCredsRefresh registers a hook re-reading superuser credentials (used
 // when the env file appears after boot — fresh-install bootstrap).
 func (c *Client) SetCredsRefresh(fn func() (string, string)) {
@@ -174,7 +173,7 @@ func (c *Client) AdminToken() (string, error) {
 	return out.Token, nil
 }
 
-// ListUsers fetches all users (perPage=100, single page like Python).
+// ListUsers fetches all users (perPage=100, single page).
 func (c *Client) ListUsers() ([]UserRecord, error) {
 	tok, err := c.AdminToken()
 	if err != nil {
