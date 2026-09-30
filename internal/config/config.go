@@ -99,13 +99,13 @@ type ImagePromptingCfg struct {
 // EmbeddingModel: the model name to embed with (a pool name or a discovered
 // embedding model id). "" = first discovered Embeds backend.
 type RAGCfg struct {
-	EmbeddingModel   string `json:"embedding_model,omitempty"`
-	ChunkChars       int    `json:"chunk_chars"`        // 0 → 3200
-	OverlapChars     int    `json:"overlap_chars"`      // 0 → 300
-	MaxDocsPerUser   int    `json:"max_docs_per_user"`  // 0 → 100
-	MaxDocBytes      int    `json:"max_doc_bytes"`      // 0 → 5 MB
-	MaxChunksPerDoc  int    `json:"max_chunks_per_doc"` // 0 → 4000
-	MaxEmbedBatch    int    `json:"max_embed_batch"`    // 0 → 32
+	EmbeddingModel  string `json:"embedding_model,omitempty"`
+	ChunkChars      int    `json:"chunk_chars"`        // 0 → 3200
+	OverlapChars    int    `json:"overlap_chars"`      // 0 → 300
+	MaxDocsPerUser  int    `json:"max_docs_per_user"`  // 0 → 100
+	MaxDocBytes     int    `json:"max_doc_bytes"`      // 0 → 5 MB
+	MaxChunksPerDoc int    `json:"max_chunks_per_doc"` // 0 → 4000
+	MaxEmbedBatch   int    `json:"max_embed_batch"`    // 0 → 32
 }
 
 // AlertsCfg: problems worth a notification (a service down, an engine
