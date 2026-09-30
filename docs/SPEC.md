@@ -212,3 +212,46 @@ cache{ttl}.
 ## 11. Observability endpoints
 - `/backends`: `{"backends":{url:{"engine","score","lanes","running","waiting","tps","energy_daily_kwh","cache_hit_pct","last_updated"}}}`
 - `/usage`: pass-through merge of backend /usage payloads keyed by backend.
+
+## 12. At-rest encryption (per-user vault)
+
+Chat history (messages + titles) and document-search data (doc names +
+chunk text) are stored **encrypted per user** once the user signs in once.
+A stolen copy of `data.db` (and `users.json`, and even PB's password
+hash) cannot be opened — only the user's password can.
+
+Key schedule:
+- Each user has a random **DEK** (AES-256-GCM) that exists **only in
+  gateway process memory** (never written to disk). Sealed values are
+  `"vault:v1:" + base64(nonce ‖ ciphertext)`; values without the prefix
+  are plaintext (pre-vault rows) and pass through untouched.
+- The DEK is wrapped with a **wrap key = PBKDF2-SHA256(login password,
+  32-byte salt, 100 000 iterations)** derived **in the browser**
+  (`/static/vault.js`). The gateway receives the derived 32-byte key, not
+  the password. The salt is public by design; the wrapped DEK + salt are
+  stored in the `vault` table (one row per user).
+- The only server-side KDF run is a **rekey** during a password change
+  (the old and new passwords are already in that request for PocketBase
+  auth; the rekey re-wraps the cached DEK under the new password's wrap
+  key **before** the password is committed, and re-keys back if the commit
+  fails — the vault and the password can never disagree on disk).
+
+Lifecycle:
+- **First login**: the login page always posts a browser-derived wrap key
+  + salt; the gateway creates the vault, caches the DEK, and runs a
+  one-shot background migration that re-seals the user's existing
+  plaintext chats and doc chunks in place (idempotent; progress visible
+  at `GET /api/vault`). Login never blocks on vault failure.
+- **Locked** (restart, or before first login this process): sealed-data
+  reads fail with HTTP 503 `{"error":…,"code":"vault_locked"}`; the chat
+  list degrades (titles blanked, no ciphertext leaks) and the UI's
+  global fetch interceptor turns the 503 into a "enter your password to
+  unlock" modal that retries the original request. Document upload +
+  `POST /v1/rag/search` fail fast with the same 503 (no plaintext is
+  written under a live vault).
+- **Admin password reset** re-keys from the cached DEK; if the user's DEK
+  is not cached (no active session), the reset still succeeds and the
+  response carries a loud WARNING — the encrypted data is then
+  unreachable and must be treated as such.
+- Users who never sign in (API-key-only) have no vault; their data stays
+  plaintext (nothing to protect without a password-derived key).

@@ -71,8 +71,8 @@ func lowerExt(name string) string {
 }
 
 var htmlScriptRE = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
-var htmlStyleRE  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
-var htmlTagRE    = regexp.MustCompile(`<[^>]+>`)
+var htmlStyleRE = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
+var htmlTagRE = regexp.MustCompile(`<[^>]+>`)
 var htmlEntityRE = regexp.MustCompile(`&(#\d+|#x[0-9a-f]+|\w+);`)
 
 func stripHTML(s string) string {
@@ -342,11 +342,31 @@ func (s *Server) ingestDoc(user, name string, size int64, body []byte) (docID st
 	for i, p := range parts {
 		chunks[i] = embeddedpb.DocChunk{Seq: i, Text: p, Embedding: vecToBlob(vecs[i]), Dims: len(vecs[i])}
 	}
+	// Vault: seal the stored text + doc name. Embeddings stay PLAINTEXT —
+	// they are the cosine index (the query is embedded and scored against
+	// them), so only the human-readable fields are encrypted.
+	if s.vault != nil {
+		for i := range chunks {
+			if t, err := s.vault.Seal(user, chunks[i].Text); err != nil {
+				return "", 0, err
+			} else {
+				chunks[i].Text = t
+			}
+		}
+	}
+	sname := name
+	if s.vault != nil {
+		sn, err := s.vault.Seal(user, name)
+		if err != nil {
+			return "", 0, err
+		}
+		sname = sn
+	}
 	id := newDocID()
 	if err := s.docs.ReplaceDocChunks(user, id, chunks); err != nil {
 		return "", 0, err
 	}
-	if err := s.docs.AddDoc(user, id, name, size, time.Now().UnixMilli()); err != nil {
+	if err := s.docs.AddDoc(user, id, sname, size, time.Now().UnixMilli()); err != nil {
 		return "", 0, err
 	}
 	return id, len(chunks), nil
@@ -402,8 +422,25 @@ func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 				errBody(w, http.StatusInternalServerError, "could not list documents")
 				return
 			}
+			if s.vault != nil {
+				for i := range list {
+					if n, oerr := s.vault.Open(user, list[i].Name); oerr == nil {
+						list[i].Name = n
+					} else {
+						list[i].Name = "(locked — sign in to see the name)"
+					}
+				}
+			}
 			writeJSON(map[string]any{"docs": list})
 		case http.MethodPost:
+			// Vault: sealing happens in ingestDoc; a locked vault can't seal
+			// (we refuse to write plaintext under a live vault), so fail fast
+			// with the code the UI turns into a "sign in to unlock" prompt.
+			if s.vault != nil && s.vault.IsLocked(user) {
+				errBodyCode(w, http.StatusServiceUnavailable, "vault_locked",
+					"your documents are encrypted; sign in to unlock them")
+				return
+			}
 			ctype := r.Header.Get("Content-Type")
 			if !strings.HasPrefix(ctype, "multipart/") {
 				errBody(w, http.StatusUnsupportedMediaType, "upload as multipart/form-data with a 'file' field")
@@ -460,6 +497,13 @@ func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 			errBody(w, http.StatusNotFound, "no such document")
 			return
 		}
+		if s.vault != nil {
+			if n, oerr := s.vault.Open(user, d.Name); oerr == nil {
+				d.Name = n
+			} else {
+				d.Name = "(locked — sign in to see the name)"
+			}
+		}
 		writeJSON(map[string]any{"doc": d})
 	case http.MethodDelete:
 		if err := s.docs.DeleteDoc(user, id); err != nil {
@@ -509,6 +553,15 @@ func (s *Server) handleRAGSearch(w http.ResponseWriter, r *http.Request) {
 		in.TopK = 5
 	}
 
+	// Vault: sealed documents can only be read while the owner's DEK is
+	// cached. Fail fast (before the embedding backend call) so a locked
+	// vault surfaces a clean "sign in to unlock" rather than a wasted embed.
+	if s.vault != nil && s.vault.IsLocked(user) {
+		errBodyCode(w, http.StatusServiceUnavailable, "vault_locked",
+			"your documents are encrypted; sign in to unlock them")
+		return
+	}
+
 	queryVecs, err := s.embedTexts(r.Context(), user, keyID, []string{strings.TrimSpace(in.Query)})
 	if err != nil {
 		errBody(w, http.StatusBadGateway, "could not embed the query: "+err.Error())
@@ -520,6 +573,20 @@ func (s *Server) handleRAGSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errBody(w, http.StatusInternalServerError, "could not read documents")
 		return
+	}
+	// Vault: chunk text (and doc names) may be sealed; a locked vault can't
+	// be opened — 503 + code so the UI can prompt for a re-unlock. (Embeddings
+	// are the plaintext index and are searched regardless.)
+	if s.vault != nil {
+		for i := range chunks {
+			if t, oerr := s.vault.Open(user, chunks[i].Text); oerr != nil {
+				errBodyCode(w, http.StatusServiceUnavailable, "vault_locked",
+					"your documents are encrypted; sign in to unlock them")
+				return
+			} else {
+				chunks[i].Text = t
+			}
+		}
 	}
 	hits := make([]ragHit, 0, len(chunks))
 	for _, c := range chunks {
@@ -538,7 +605,15 @@ func (s *Server) handleRAGSearch(w http.ResponseWriter, r *http.Request) {
 	docs, _ := s.docs.ListDocs(user)
 	names := map[string]string{}
 	for _, d := range docs {
-		names[d.ID] = d.Name
+		nm := d.Name
+		if s.vault != nil {
+			if o, oerr := s.vault.Open(user, nm); oerr == nil {
+				nm = o
+			} else {
+				nm = "(locked — sign in to see the name)"
+			}
+		}
+		names[d.ID] = nm
 	}
 	results := make([]map[string]any, 0, len(hits))
 	for i, h := range hits {

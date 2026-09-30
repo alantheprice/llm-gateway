@@ -100,6 +100,29 @@ cp -p /opt/llm-gateway/users.json.key /secure/place/
 sudo systemctl start llm-gateway
 ```
 
+### Encrypted chat & document data (vault)
+
+Since the vault change, each user's chat history and document-search data
+are encrypted per-user (SPEC §12). The DEK never leaves gateway memory;
+only a wrapped DEK + public salt sit in the `vault` table inside `data.db`.
+
+- Backups of `pb/` (and `users.json`) are therefore **inherently safe**:
+  a copied `data.db` + `users.json` + PB password hash cannot be opened
+  without each user's current password. No extra off-site key to store.
+- Restoring a backup preserves the protection; the user's next sign-in
+  unlocks it as usual.
+- **Password change re-keys the data key in the same request** (the
+  gateway derives both wrap keys server-side — the passwords are in that
+  request anyway). If you ever see `vault rekey … ENCRYPTED DATA IS NOW
+  LOCKED` in the journal, the user's encrypted data is unreachable: treat
+  that user's chat/document history as lost (their API access and keys
+  still work).
+- **Admin password reset** can only re-key while the user's session is
+  live (the DEK is cached). Reset a locked-out user's password while they
+  have no session and their encrypted data becomes permanently
+  unreachable — the admin UI response carries an explicit WARNING when
+  that happens.
+
 ### Secrets in users.json
 
 The session signing secret, each user's UI key and connector (MCP) auth headers are stored **encrypted** in `users.json` (AES-256-GCM). The key is in `users.json.key` next to it (mode 600; override the path with `LLM_GATEWAY_SECRETS_KEY_FILE`), created on first start. Older files with plain values are encrypted automatically on the next start.

@@ -118,6 +118,68 @@ document.addEventListener('connectors:change', e => {
 document.getElementById('managecx').onclick = () => Connectors.open();
 Connectors.reload();
 
+// ---------- data protection (vault) ----------
+// Live status + unlock/lock controls for the at-rest encryption. The DEK
+// lives in gateway memory; "locked" means the DEK isn't cached (after a
+// restart) and the user must re-unlock with their password.
+async function vaultStatusUI() {
+  const st = document.getElementById('vlt-status');
+  const act = document.getElementById('vlt-actions');
+  if (!window.Vault) {
+    st.innerHTML = '<strong>Unavailable</strong><span>No embedded database on this gateway.</span>';
+    act.innerHTML = '';
+    return;
+  }
+  const r = await Vault.status();
+  if (!r.ok) {
+    st.innerHTML = '<strong>Unavailable</strong><span>' + esc(r.data.error || 'Could not read vault status.') + '</span>';
+    act.innerHTML = '';
+    return;
+  }
+  const d = r.data;
+  const m = d.migration || {};
+  if (!d.enabled) {
+    st.innerHTML = '<strong>Off</strong><span>Your data is stored in plaintext. Enable it to encrypt chats and documents.</span>';
+    act.innerHTML = '<button class="btn primary" id="vlt-enable">Encrypt my data</button>';
+    document.getElementById('vlt-enable').onclick = async () => {
+      const pw = prompt('Enter your current password to encrypt your data:');
+      if (pw === null) return;
+      const e = await Vault.enableWithPassword(pw);
+      flash(e.ok ? 'Your data is now encrypted.' : (e.error || 'Could not enable encryption.'), !e.ok);
+      if (e.ok) vaultStatusUI();
+    };
+    return;
+  }
+  if (m.active) {
+    const done = (m.chats_done || 0) + (m.docs_done || 0);
+    const tot = (m.chats_total || 0) + (m.docs_total || 0);
+    st.innerHTML = '<strong>Encrypting existing data…</strong><span>' + done + ' of ' + tot + ' items sealed.</span>';
+    act.innerHTML = '<button class="btn" id="vlt-wait">Refresh</button>';
+    document.getElementById('vlt-wait').onclick = vaultStatusUI;
+    return;
+  }
+  if (d.unlocked) {
+    st.innerHTML = '<strong>On · unlocked</strong><span>Your data is encrypted and open for this session.</span>';
+    act.innerHTML = '<button class="btn" id="vlt-lock">Lock now</button>';
+    document.getElementById('vlt-lock').onclick = async () => {
+      await Vault.lock();
+      flash('Vault locked. Re-unlock with your password when you need your data.');
+      vaultStatusUI();
+    };
+  } else {
+    st.innerHTML = '<strong>On · locked</strong><span>Your data is encrypted but closed. Unlock it to read or save.</span>';
+    act.innerHTML = '<button class="btn primary" id="vlt-unlock">Unlock</button>';
+    document.getElementById('vlt-unlock').onclick = async () => {
+      const pw = prompt('Enter your password to unlock your data:');
+      if (pw === null) return;
+      const u = await Vault.unlockWithPassword(pw);
+      flash(u.ok ? 'Unlocked.' : (u.error || 'Wrong password.'), !u.ok);
+      if (u.ok) vaultStatusUI();
+    };
+  }
+}
+vaultStatusUI();
+
 // ---------- your data ----------
 document.getElementById('export').addEventListener('click', async () => {
   const btn = document.getElementById('export');
@@ -163,7 +225,7 @@ document.getElementById('export').addEventListener('click', async () => {
   <div class="page-head">
     <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
     <h1>Settings</h1></div>
-  <nav class="set-jump" aria-label="Sections"><a href="#account">Account</a><a href="#appearance">Appearance</a><a href="#chat">Chat</a><a href="#connectors">Connectors</a><a href="#data">Your data</a></nav>
+  <nav class="set-jump" aria-label="Sections"><a href="#account">Account</a><a href="#appearance">Appearance</a><a href="#chat">Chat</a><a href="#connectors">Connectors</a><a href="#protection">Data protection</a><a href="#data">Your data</a></nav>
   <div class="flash" id="flash"></div>
 
   <div class="card" id="account">
@@ -216,6 +278,17 @@ document.getElementById('export').addEventListener('click', async () => {
     <p class="muted" style="margin:0 0 10px">Remote MCP servers whose tools the model can use in 🌐 Web mode. <a href="/guide/mcp">How connectors work</a></p>
     <div id="cxsummary"><p class="muted">Loading…</p></div>
     <button class="btn" id="managecx">Manage connectors</button>
+  </div>
+
+  <div class="card" id="protection">
+    <h2>Data protection</h2>
+    <p class="muted" style="margin:0 0 10px">Your chats and documents are stored <strong>encrypted</strong>. Only your
+    password can open them — a stolen copy of the gateway database (or a backup) reveals nothing.</p>
+    <p class="muted" style="margin:0 0 10px">⚠️ Changing your password is safe (your data key is re-wrapped in the same step).
+    But if an admin <strong>resets</strong> your password while you're signed out, the gateway can't re-wrap your data key and
+    your encrypted chats and documents can't be recovered.</p>
+    <div class="setrow"><div class="sr-text" id="vlt-status"><strong>Checking…</strong><span>Reading your vault status.</span></div>
+      <div id="vlt-actions" style="display:flex;gap:8px;flex-wrap:wrap"></div></div>
   </div>
 
   <div class="card" id="data">

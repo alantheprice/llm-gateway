@@ -12,7 +12,7 @@
   <div class="auth-card">
     <h1><span class="brand-mark"><svg class="brand-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 22V10.6a6.6 6.6 0 0 1 13.2 0V22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M13.5 8.2 8.8 15h3.4l-1.3 6.4 5.2-7.8h-3.4z" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round"/></svg></span> LLM Gateway</h1>
     <p class="sub">Sign in to chat and manage your API keys.</p>
-    <form method="post" action="/login">
+    <form method="post" action="/login" id="loginForm">
       <label for="username">Username</label>
       <input id="username" name="username" autofocus autocomplete="username" required>
       <label for="password">Password</label>
@@ -22,5 +22,31 @@
     </form>
     <p class="sub" style="margin:16px 0 0">Accounts are issued by invitation. New here? <a href="/guide">Read the setup guide</a>.</p>
   </div>
+<script src="/static/vault.js?v={{$.StaticVer}}"></script>
+<script>
+// Vault: at-rest encryption is on by default. On submit, the browser
+// derives the wrap key (KDF(password, salt) — the password never re-travels)
+// and hands it to the gateway, which creates the vault on first login and
+// caches the DEK for this process. Best-effort: login proceeds even if the
+// vault stays locked (the chat page can re-unlock on demand).
+(function () {
+  const form = document.getElementById('loginForm');
+  form.addEventListener('submit', async (e) => {
+    const u = document.getElementById('username').value.trim();
+    const p = document.getElementById('password').value;
+    if (!u || !p || !window.Vault) return; // native submit, no vault
+    e.preventDefault();
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+    let wi = null;
+    try { wi = await withTimeout(Vault.wrapInfo(u).catch(() => null), 8000); } catch (err) {}
+    let salt = (wi && wi.ok && wi.data && wi.data.enabled && wi.data.salt) ? wi.data.salt : null;
+    if (!salt) salt = Vault.randomSalt();
+    const add = (n, v) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = n; i.value = v; form.appendChild(i); };
+    add('vault_key', Vault.derive(p, salt));
+    add('vault_salt', salt);
+    form.submit();
+  });
+})();
+</script>
 </body>
 </html>

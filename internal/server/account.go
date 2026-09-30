@@ -127,12 +127,36 @@ func (s *Server) handleChatPassword(w http.ResponseWriter, r *http.Request) {
 			"error": "current password incorrect", "code": "wrong_current_password"})
 		return
 	}
+	// Vault: the wrap key derives from the password, so a change invalidates
+	// the stored wrapped DEK. Rekey BEFORE the password patch: if the rekey
+	// fails we change nothing (no inconsistent "new password + old vault"
+	// state), and if the patch later fails we re-key back, so the vault and
+	// the password never disagree on disk.
+	if s.vault != nil {
+		if err := s.vault.RekeyOnPasswordChange(sess.U, body.OldPassword, body.NewPassword); err != nil {
+			log.Printf("vault rekey before password change: %s: %v — password NOT changed", sess.U, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "could not re-key your encrypted data, so the password was not changed. Please try again.",
+				"code":  "vault_rekey_failed"})
+			return
+		}
+	}
 	// PB requires oldPassword when a user changes their own password.
 	if err := s.pb.PatchUser(rec.ID, map[string]any{
 		"oldPassword":     body.OldPassword,
 		"password":        body.NewPassword,
 		"passwordConfirm": body.NewPassword,
 	}); err != nil {
+		// Re-key back so the vault and password stay consistent (the DEK is
+		// still available in this request). Best-effort: if it fails the
+		// vault is left under the new password and the admin can re-key.
+		if s.vault != nil {
+			if rerr := s.vault.RekeyOnPasswordChange(sess.U, body.NewPassword, body.OldPassword); rerr != nil {
+				log.Printf("vault re-key-back after failed password patch: %s: %v", sess.U, rerr)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": "password update failed"})

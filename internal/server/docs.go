@@ -435,3 +435,11 @@ func errBody(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// errBodyCode is errBody + a machine-readable code (the UI's vault_locked
+// interceptor matches on it).
+func errBodyCode(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
+}

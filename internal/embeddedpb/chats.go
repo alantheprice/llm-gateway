@@ -92,6 +92,28 @@ func (a *App) GetChat(user, id string) (*Chat, error) {
 	return &c, nil
 }
 
+// ListChatIDs: the user's live conversation ids (newest first) — the
+// one-shot vault migration walks this in batches. (dbx scans into a slice of
+// structs, not a bare []string.)
+func (a *App) ListChatIDs(user string) ([]string, error) {
+	if a.pb.DB() == nil {
+		return nil, fmt.Errorf("chats: DB not open")
+	}
+	var rows []struct {
+		ID string `db:"id"`
+	}
+	err := a.pb.DB().NewQuery(`SELECT id FROM chats WHERE user = {:user} AND deleted = 0 ORDER BY updated DESC`).
+		Bind(dbx.Params{"user": user}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	return ids, nil
+}
+
 // ChatUsage: how many live conversations the user has, and their bytes.
 func (a *App) ChatUsage(user string) (count int, bytes int64, err error) {
 	if a.pb.DB() == nil {

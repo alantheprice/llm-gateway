@@ -2,6 +2,7 @@ package server
 
 import (
 	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -129,6 +130,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginClearFailures(ip, username)
+	// Vault: the login page always sends a browser-derived wrap key (hex,
+	// from KDF(password, salt)) plus the salt used. Enable creates the
+	// vault on first login (at-rest protection by default) and caches the
+	// DEK for this process; on later logins it just unlocks. Best-effort —
+	// a failed/absent unlock must not block the login; the chat page can
+	// re-unlock on demand later.
+	if vk := r.FormValue("vault_key"); vk != "" && s.vault != nil {
+		if key, err := hexWrapKey(vk); err == nil {
+			var salt []byte
+			if sh := r.FormValue("vault_salt"); sh != "" {
+				salt, _ = hex.DecodeString(sh)
+			}
+			if err := s.vault.Enable(rec.Username, key, salt); err != nil {
+				log.Printf("vault on login: %s: %v (login continues)", rec.Username, err)
+			}
+		}
+	}
 	claims := auth.Claims{U: rec.Username, Role: rec.Role, Ep: s.store.Epoch(rec.Username)}
 	redirect := "/chat"
 	if s.mustChangePW(rec.Username) {
@@ -450,11 +468,22 @@ Questions? Just reply to this email.
 			errBody(w, 400, pbErrMsg(err))
 			return
 		}
+		note := "shown once - pass to user"
+		// Vault: the wrap key derives from the password. A reset orphans the
+		// stored wrapped DEK unless we re-key it now. We don't know the old
+		// password, so this only works while the user's DEK is cached (they're
+		// signed in); otherwise the encrypted data is permanently locked —
+		// surface that to the admin instead of hiding it.
+		if s.vault != nil {
+			if err := s.vault.RekeyToPassword(rec.Username, pw); err != nil {
+				log.Printf("vault rekey after admin reset: %s: %v — user's encrypted data is now LOCKED", rec.Username, err)
+				note += "; WARNING: the user's encrypted chats/documents could not be re-keyed and are now locked"
+			}
+		}
 		s.store.BumpEpoch(target) // kill sessions minted before the reset
 		s.setMustChangePW(target, true)
 		log.Printf("Admin %s reset password for %s", sess.U, target)
-		jsonOK(w, map[string]any{"status": "ok", "password": pw,
-			"note": "shown once - pass to user"})
+		jsonOK(w, map[string]any{"status": "ok", "password": pw, "note": note})
 	case "delete_user":
 		if target == sess.U {
 			errBody(w, 400, "you cannot delete your own account")

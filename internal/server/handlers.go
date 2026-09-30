@@ -86,8 +86,22 @@ func (s *Server) handleChangePWSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/change-password?error=temporary+password+incorrect", http.StatusFound)
 		return
 	}
+	// Vault: rekey BEFORE the password patch (see handleChatPassword for the
+	// why) so the vault and the password can never end up mismatched on disk.
+	if s.vault != nil {
+		if err := s.vault.RekeyOnPasswordChange(sess.U, oldPW, newPW); err != nil {
+			log.Printf("vault rekey before first-login pw set: %s: %v — password NOT changed", sess.U, err)
+			http.Redirect(w, r, "/change-password?error=encrypted+data+re-key+failed%2C+password+not+changed", http.StatusFound)
+			return
+		}
+	}
 	if err := s.pb.PatchUser(rec.ID, map[string]any{
 		"oldPassword": oldPW, "password": newPW, "passwordConfirm": newPW}); err != nil {
+		if s.vault != nil {
+			if rerr := s.vault.RekeyOnPasswordChange(sess.U, newPW, oldPW); rerr != nil {
+				log.Printf("vault re-key-back after failed first-login pw patch: %s: %v", sess.U, rerr)
+			}
+		}
 		http.Redirect(w, r, "/change-password?error=password+update+failed", http.StatusFound)
 		return
 	}
@@ -152,6 +166,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chats/", s.handleAPIChats)
 	mux.HandleFunc("/api/documents", s.handleAPIDocs)
 	mux.HandleFunc("/api/documents/", s.handleAPIDocs)
+	mux.HandleFunc("/api/vault/wrapinfo", s.handleVaultWrapInfo)
+	mux.HandleFunc("/api/vault", s.handleAPIVault)
+	mux.HandleFunc("/api/vault/", s.handleAPIVault)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  s.handleKeysPage, // page

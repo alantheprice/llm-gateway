@@ -597,3 +597,12 @@ dialog.connectors::backdrop { background: rgba(0, 0, 0, .5); }
 .capb { font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); background: var(--card2); white-space: nowrap; }
 .capb.strong { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, transparent); }
 .capb.guess { border-style: dashed; }
+
+/* ---- vault (at-rest encryption) unlock modal + settings status ---- */
+.vlt-overlay { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, #000 55%, transparent); }
+.vlt-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: min(400px, 92vw); box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+.vlt-card h3 { margin: 0 0 6px; font-size: 15px; }
+.vlt-sub { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; line-height: 1.45; }
+.vlt-card input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card2); color: var(--text); font-size: 14px; }
+.vlt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.vlt-err { color: var(--danger, #d33); font-size: 12.5px; margin-top: 10px; }

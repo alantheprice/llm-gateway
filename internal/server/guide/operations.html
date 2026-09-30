@@ -142,6 +142,27 @@ tar czf llm-gateway-backup.tgz /var/lib/llm-gateway/pb /opt/llm-gateway/{users.j
 cp -p /opt/llm-gateway/users.json.key /secure/place/
 sudo systemctl start llm-gateway
 </code></pre>
+<h3 id="encrypted-chat--document-data-vault">Encrypted chat &amp; document data (vault)</h3>
+<p>Since the vault change, each user's chat history and document-search data<br>
+are encrypted per-user (SPEC §12). The DEK never leaves gateway memory;<br>
+only a wrapped DEK + public salt sit in the <code>vault</code> table inside <code>data.db</code>.</p>
+<ul>
+<li>Backups of <code>pb/</code> (and <code>users.json</code>) are therefore <strong>inherently safe</strong>:<br>
+a copied <code>data.db</code> + <code>users.json</code> + PB password hash cannot be opened<br>
+without each user's current password. No extra off-site key to store.</li>
+<li>Restoring a backup preserves the protection; the user's next sign-in<br>
+unlocks it as usual.</li>
+<li><strong>Password change re-keys the data key in the same request</strong> (the<br>
+gateway derives both wrap keys server-side — the passwords are in that<br>
+request anyway). If you ever see <code>vault rekey … ENCRYPTED DATA IS NOW LOCKED</code> in the journal, the user's encrypted data is unreachable: treat<br>
+that user's chat/document history as lost (their API access and keys<br>
+still work).</li>
+<li><strong>Admin password reset</strong> can only re-key while the user's session is<br>
+live (the DEK is cached). Reset a locked-out user's password while they<br>
+have no session and their encrypted data becomes permanently<br>
+unreachable — the admin UI response carries an explicit WARNING when<br>
+that happens.</li>
+</ul>
 <h3 id="secrets-in-usersjson">Secrets in users.json</h3>
 <p>The session signing secret, each user's UI key and connector (MCP) auth headers are stored <strong>encrypted</strong> in <code>users.json</code> (AES-256-GCM). The key is in <code>users.json.key</code> next to it (mode 600; override the path with <code>LLM_GATEWAY_SECRETS_KEY_FILE</code>), created on first start. Older files with plain values are encrypted automatically on the next start.</p>
 <ul>

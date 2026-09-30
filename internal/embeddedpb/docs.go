@@ -53,11 +53,11 @@ type DocMeta struct {
 
 // DocChunk is one chunk of a document with its embedding.
 type DocChunk struct {
-	DocID     string   `db:"doc_id"`
-	Seq       int      `db:"seq"`
-	Text      string   `db:"text"`
-	Embedding []byte   `db:"embedding"`
-	Dims      int      `db:"dims"`
+	DocID     string `db:"doc_id"`
+	Seq       int    `db:"seq"`
+	Text      string `db:"text"`
+	Embedding []byte `db:"embedding"`
+	Dims      int    `db:"dims"`
 }
 
 // InitDocsSchema creates the docs + doc_chunks tables (idempotent).
@@ -128,23 +128,40 @@ func (a *App) DocCount(user string) (int, error) {
 }
 
 // ReplaceDocChunks: delete then re-insert the chunks for one document.
-// Called after re-embedding (upsert of the whole document).
+// Called after re-embedding (upsert of the whole document) and by the vault
+// migration's in-place re-seal. Atomic: the delete + inserts run in a single
+// write transaction (on the non-concurrent, single-connection handle, so the
+// BEGIN/COMMIT stay on one SQLite connection), so a crash or error mid-loop
+// rolls back and cannot leave the document with a partial or empty chunk set.
 func (a *App) ReplaceDocChunks(user, docID string, chunks []DocChunk) error {
 	if a.pb.DB() == nil {
 		return fmt.Errorf("docs: DB not open")
 	}
-	if _, err := a.pb.DB().NewQuery(`DELETE FROM doc_chunks WHERE user = {:user} AND doc_id = {:doc}`).
+	// Non-concurrent handle is a single-connection pool (MaxOpenConns=1),
+	// so the BEGIN ... COMMIT below is one coherent SQLite transaction.
+	db := a.pb.NonconcurrentDB()
+	if _, err := db.NewQuery(`BEGIN IMMEDIATE`).Execute(); err != nil {
+		return err
+	}
+	rollback := func() { _, _ = db.NewQuery(`ROLLBACK`).Execute() }
+
+	if _, err := db.NewQuery(`DELETE FROM doc_chunks WHERE user = {:user} AND doc_id = {:doc}`).
 		Bind(dbx.Params{"user": user, "doc": docID}).Execute(); err != nil {
+		rollback()
 		return err
 	}
 	for _, c := range chunks {
-		if _, err := a.pb.DB().NewQuery(`
+		if _, err := db.NewQuery(`
 			INSERT INTO doc_chunks (user, doc_id, seq, text, embedding, dims)
 			VALUES ({:user}, {:doc}, {:seq}, {:text}, {:emb}, {:dims})`).
 			Bind(dbx.Params{"user": user, "doc": docID, "seq": c.Seq, "text": c.Text,
 				"emb": c.Embedding, "dims": c.Dims}).Execute(); err != nil {
+			rollback()
 			return err
 		}
+	}
+	if _, err := db.NewQuery(`COMMIT`).Execute(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -162,6 +179,40 @@ func (a *App) SearchChunks(user string) ([]DocChunk, error) {
 		JOIN docs d ON d.user = c.user AND d.id = c.doc_id
 		WHERE c.user = {:user} AND d.deleted = 0`).
 		Bind(dbx.Params{"user": user}).All(&out)
+	return out, err
+}
+
+// ListDocIDs: the user's live document ids — the vault migration walks this.
+// (dbx scans into a slice of structs, not a bare []string.)
+func (a *App) ListDocIDs(user string) ([]string, error) {
+	if a.pb.DB() == nil {
+		return nil, fmt.Errorf("docs: DB not open")
+	}
+	var rows []struct {
+		ID string `db:"id"`
+	}
+	err := a.pb.DB().NewQuery(`SELECT id FROM docs WHERE user = {:user} AND deleted = 0 ORDER BY created DESC`).
+		Bind(dbx.Params{"user": user}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	return ids, nil
+}
+
+// ListDocChunks: one document's chunks (text + embedding), for in-place
+// re-sealing.
+func (a *App) ListDocChunks(user, docID string) ([]DocChunk, error) {
+	if a.pb.DB() == nil {
+		return nil, fmt.Errorf("docs: DB not open")
+	}
+	var out []DocChunk
+	err := a.pb.DB().NewQuery(`SELECT doc_id, seq, text, embedding, dims FROM doc_chunks
+		WHERE user = {:user} AND doc_id = {:doc} ORDER BY seq`).
+		Bind(dbx.Params{"user": user, "doc": docID}).All(&out)
 	return out, err
 }
 

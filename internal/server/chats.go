@@ -70,12 +70,31 @@ func (s *Server) handleAPIChats(w http.ResponseWriter, r *http.Request) {
 		if list == nil {
 			list = []embeddedpb.ChatMeta{}
 		}
+		// Vault: titles may be sealed; open them (a locked vault shows an
+		// empty title rather than leaking ciphertext). Users without a
+		// vault pass through plaintext with no DEK required.
+		if s.vault != nil {
+			for i := range list {
+				if t, err := s.vault.Open(user, list[i].Title); err == nil {
+					list[i].Title = t
+				} else {
+					list[i].Title = ""
+				}
+			}
+		}
 		writeJSON(map[string]any{"chats": list, "now": time.Now().UnixMilli()})
 		return
 	}
 	if !chatIDRE.MatchString(id) {
 		errBody(w, http.StatusBadRequest, "bad conversation id")
 		return
+	}
+	// Vault: sealed chats are only readable while this user's vault is
+	// unlocked (DEK cached in-process). A locked vault is a recoverable 503
+	// the UI turns into a "sign in to unlock" prompt.
+	vaultLockedBody := func() {
+		errBodyCode(w, http.StatusServiceUnavailable, "vault_locked",
+			"this conversation is encrypted; sign in to unlock it")
 	}
 
 	switch r.Method {
@@ -89,8 +108,18 @@ func (s *Server) handleAPIChats(w http.ResponseWriter, r *http.Request) {
 			errBody(w, http.StatusNotFound, "no such conversation")
 			return
 		}
-		writeJSON(map[string]any{"id": c.ID, "title": c.Title, "model": c.Model, "created": c.Created,
-			"updated": c.Updated, "messages": json.RawMessage(c.Messages)})
+		title, msgs := c.Title, c.Messages
+		if s.vault != nil {
+			if title, err = s.vault.Open(user, title); err == nil {
+				msgs, err = s.vault.Open(user, msgs)
+			}
+			if err != nil {
+				vaultLockedBody()
+				return
+			}
+		}
+		writeJSON(map[string]any{"id": c.ID, "title": title, "model": c.Model, "created": c.Created,
+			"updated": c.Updated, "messages": json.RawMessage(msgs)})
 	case http.MethodPut:
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxChatBytes+64<<10))
 		if err != nil {
@@ -138,10 +167,20 @@ func (s *Server) handleAPIChats(w http.ResponseWriter, r *http.Request) {
 		if len(title) > 200 {
 			title = title[:200]
 		}
+		stitle, smsgs := title, string(in.Messages)
+		if s.vault != nil {
+			if stitle, err = s.vault.Seal(user, stitle); err == nil {
+				smsgs, err = s.vault.Seal(user, smsgs)
+			}
+			if err != nil {
+				vaultLockedBody()
+				return
+			}
+		}
 		err = store.SaveChat(user, embeddedpb.Chat{
-			ChatMeta: embeddedpb.ChatMeta{ID: id, Title: title, Model: in.Model, Created: in.Created,
+			ChatMeta: embeddedpb.ChatMeta{ID: id, Title: stitle, Model: in.Model, Created: in.Created,
 				Updated: in.Updated, MsgCount: len(msgs)},
-			Messages: string(in.Messages),
+			Messages: smsgs,
 		})
 		if errors.Is(err, embeddedpb.ErrChatStale) {
 			w.Header().Set("Content-Type", "application/json")
