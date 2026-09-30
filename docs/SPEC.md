@@ -57,7 +57,7 @@ Rules:
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
 | GET | `/health` | none | `200 "OK"` text/plain |
-| GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized, the caller's private GPUs added |
+| GET | `/v1/models` | none by default; key/LAN when `gateway.models_require_auth` | catalog; pool member ids hidden, virtual names synthesized, the caller's private GPUs added; every entry carries `context_length` (tokens — a shared model's is its members' largest) |
 | POST | `/v1/chat/completions` | key or LAN-trust | route (pool or direct); stream-aware proxy |
 | POST | `/v1/completions` | key or LAN-trust | direct to resolved backend |
 | POST | `/v1/embeddings` | key or LAN-trust | shared model, else the embedding backend |

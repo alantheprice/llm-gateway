@@ -92,6 +92,11 @@ type ModelEntry struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	OwnedBy string `json:"owned_by"`
+	// ContextLength: the model's context window in tokens — the largest
+	// member window for a shared model (config override beats the
+	// engine-reported value), the engine's value for a standalone model.
+	// 0/absent when no backend has reported one yet.
+	ContextLength int `json:"context_length,omitempty"`
 	// Capabilities: endpoints, input/output modalities, features, source.
 	Capabilities *Capabilities `json:"capabilities,omitempty"`
 	// Architecture: the same modalities in the shape OpenRouter-style
@@ -110,7 +115,7 @@ func (s *Server) registerInferenceDocs() {
 	modelsOp := huma.Operation{
 		OperationID: "get-v1-models", Method: http.MethodGet, Path: "/v1/models",
 		Tags: []string{"inference"}, Summary: "Model catalog",
-		Description: "Lists advertised models. Pool members collapse to the pool name; the caller's private GPUs are included. Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust.",
+		Description: "Lists advertised models. Pool members collapse to the pool name; the caller's private GPUs are included. Every entry carries context_length (tokens; a shared model's is its members' largest). Public by default — gateway.models_require_auth=true gates it behind key/session/LAN trust.",
 		Responses:   map[string]*huma.Response{"200": {Description: "Catalog (public)"}},
 	}
 	if s.cfg.Gateway.ModelsRequireAuth {

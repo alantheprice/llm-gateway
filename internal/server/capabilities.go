@@ -403,7 +403,8 @@ func checkCaps(w http.ResponseWriter, r *http.Request, name string, c Capabiliti
 	return false
 }
 
-// describe fills a catalog entry's capabilities and architecture.
+// describe fills a catalog entry's capabilities, architecture and context
+// window.
 func (s *Server) describe(e ModelEntry, user string) ModelEntry {
 	c, ok := s.capsFor(e.ID, user)
 	if !ok {
@@ -415,7 +416,36 @@ func (s *Server) describe(e ModelEntry, user string) ModelEntry {
 		InputModalities:  c.Input,
 		OutputModalities: c.Output,
 	}
+	e.ContextLength = s.contextLength(e.ID, user)
 	return e
+}
+
+// contextLength: the context window of a model name (0 when unknown).
+// A shared model's window is its members' largest (config max_context
+// override beats the engine-reported max_model_len), so clients see the
+// size requests are actually fit-tested against; a standalone or private
+// model uses its own backend's value.
+func (s *Server) contextLength(name, user string) int {
+	if _, pool, ok := s.poolFor(name); ok {
+		best := 0
+		for _, m := range pool.Members {
+			n := m.MaxContext
+			if n == 0 {
+				n = s.maxContext(m.Backend)
+			}
+			if n > best {
+				best = n
+			}
+		}
+		return best
+	}
+	if url, _ := s.resolve(name); url != "" {
+		return s.maxContext(url)
+	}
+	if pm, ok := s.resolvePrivate(user, name); ok {
+		return s.maxContext(pm.URL)
+	}
+	return 0
 }
 
 // detectedCaps: capabilities of a name before any admin override (for the

@@ -233,3 +233,49 @@ func TestUpdateLinkValidation(t *testing.T) {
 		t.Fatalf("settings survive revoke: %+v", ls)
 	}
 }
+
+// A caller's private GPU link shows up in /v1/models with its engine's
+// context window; an anonymous caller never sees it.
+func TestPrivateLinkContextLength(t *testing.T) {
+	rig, _ := newLinkRig(t, "carol", auth.RoleLink)
+	rig.waitRegistered(t)
+	rig.s.PollOnce() // learns the link engine's context window (262144)
+
+	modelsFor := func(key string) map[string]any {
+		req, _ := http.NewRequest("GET", rig.gw.URL+"/v1/models", nil)
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Data []struct {
+				ID            string `json:"id"`
+				ContextLength int    `json:"context_length"`
+			} `json:"data"`
+		}
+		json.NewDecoder(resp.Body).Decode(&out)
+		byID := map[string]any{}
+		for _, d := range out.Data {
+			byID[d.ID] = d.ContextLength
+		}
+		return byID
+	}
+
+	carol, _, _ := rig.s.store.CreateKey("carol", "k2", "user", false)
+	owner := modelsFor(carol)
+	if owner["e2e/m"] != 262144 {
+		t.Fatalf("e2e/m context_length = %v, want 262144", owner["e2e/m"])
+	}
+	// The shared model it serves carries its own (largest-member) window.
+	if owner["qwen"] != 262144 {
+		t.Fatalf("qwen context_length = %v, want 262144", owner["qwen"])
+	}
+	// Anonymous callers get no private links at all.
+	if _, ok := modelsFor("")["e2e/m"]; ok {
+		t.Fatalf("anonymous caller sees the private link e2e/m: %v", modelsFor(""))
+	}
+}

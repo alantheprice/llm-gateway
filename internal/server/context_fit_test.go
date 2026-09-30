@@ -50,6 +50,25 @@ func fitConf(a, b string) string {
 	 "overflow_threshold":0.2,"cache_affinity":true}},"public_models":["qwen"]}`
 }
 
+// fakeOpenaiModel: an OpenAI-API engine that reports one model's context
+// window; the basic poller counts it as up.
+func fakeOpenaiModel(t *testing.T, id string, maxModelLen int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/models":
+			fmt.Fprintf(w, `{"data":[{"id":%q,"max_model_len":%d}]}`, id, maxModelLen)
+		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
+			fmt.Fprintf(w, `{"id":"x","model":%q,"choices":[{"message":{"role":"assistant","content":"ok"}}]}`, id)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func chat(t *testing.T, s *Server, messages string) int {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -108,5 +127,47 @@ func TestAffinityAppliesToLargePrompts(t *testing.T) {
 	}
 	if b.served.Load() != 2 || a.served.Load() != 0 {
 		t.Fatalf("turn 2 left its cache: a=%d b=%d", a.served.Load(), b.served.Load())
+	}
+}
+
+// GET /v1/models publishes each model's context window: a shared model's is
+// its members' largest (a config max_context override beats the engine's
+// report for that member), a standalone model's is its engine's report.
+func TestModelsPublishContextLength(t *testing.T) {
+	small, big := newFakeNinfer(t, 32000), newFakeNinfer(t, 262144)
+	solo := fakeOpenaiModel(t, "solo-model", 131072)
+	conf := fmt.Sprintf(`{"gateway":{"port":0,"trust_local_networks":true},"local_networks":["192.168.1.0/24"],
+	 "model_pools":{"qwen":{"members":[
+	    {"model_id":"m","backend":"%s"},
+	    {"model_id":"m","backend":"%s","max_context":8192}]}},
+	 "public_models":["qwen"]}`, small.srv.URL, big.srv.URL)
+	s := testServer(t, conf, nil)
+	s.mu.Lock()
+	s.backends[solo.URL] = &BackendInfo{Models: []string{"solo-model"}, Chat: true}
+	s.mu.Unlock()
+	s.PollOnce() // learns each engine's context window from /v1/models
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/v1/models", nil)
+	r.RemoteAddr = "192.168.1.50:5555"
+	s.Handler().ServeHTTP(w, r)
+	var out struct {
+		Data []ModelEntry `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]int{}
+	for _, e := range out.Data {
+		byID[e.ID] = e.ContextLength
+	}
+	// qwen: max member window — the 8192 override caps the 262144 member, so
+	// the unoverridden 32000 member dominates.
+	if got := byID["qwen"]; got != 32000 {
+		t.Errorf("qwen context_length = %d, want 32000", got)
+	}
+	// solo-model: its engine-reported window.
+	if got := byID["solo-model"]; got != 131072 {
+		t.Errorf("solo-model context_length = %d, want 131072", got)
 	}
 }
