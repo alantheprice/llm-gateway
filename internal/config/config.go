@@ -94,6 +94,20 @@ type ImagePromptingCfg struct {
 	SystemPrompt string `json:"system_prompt,omitempty"` // "" = the built-in instructions
 }
 
+// RAGCfg: personal document search (upload + embed + retrieve). Vectors are
+// stored embedded (SQLite BLOB, in-process cosine) — no external store.
+// EmbeddingModel: the model name to embed with (a pool name or a discovered
+// embedding model id). "" = first discovered Embeds backend.
+type RAGCfg struct {
+	EmbeddingModel   string `json:"embedding_model,omitempty"`
+	ChunkChars       int    `json:"chunk_chars"`        // 0 → 3200
+	OverlapChars     int    `json:"overlap_chars"`      // 0 → 300
+	MaxDocsPerUser   int    `json:"max_docs_per_user"`  // 0 → 100
+	MaxDocBytes      int    `json:"max_doc_bytes"`      // 0 → 5 MB
+	MaxChunksPerDoc  int    `json:"max_chunks_per_doc"` // 0 → 4000
+	MaxEmbedBatch    int    `json:"max_embed_batch"`    // 0 → 32
+}
+
 // AlertsCfg: problems worth a notification (a service down, an engine
 // restarting, a link disconnected, disk space, quotas), sent to webhooks.
 type AlertsCfg struct {
@@ -186,6 +200,8 @@ type Config struct {
 	ImagePrompting ImagePromptingCfg `json:"image_prompting"`
 	// Alerts: notifications about problems (see AlertsCfg).
 	Alerts AlertsCfg `json:"alerts"`
+	// RAG: personal document search (upload + embed + retrieve).
+	RAG RAGCfg `json:"rag"`
 
 	path     string
 	mtime    time.Time
@@ -224,6 +240,24 @@ func (c *Config) applyDefaults() {
 	}
 	if c.ElectricityRate <= 0 {
 		c.ElectricityRate = 0.125
+	}
+	if c.RAG.ChunkChars == 0 {
+		c.RAG.ChunkChars = 3200
+	}
+	if c.RAG.OverlapChars == 0 {
+		c.RAG.OverlapChars = 300
+	}
+	if c.RAG.MaxDocsPerUser == 0 {
+		c.RAG.MaxDocsPerUser = 100
+	}
+	if c.RAG.MaxDocBytes == 0 {
+		c.RAG.MaxDocBytes = 5 << 20
+	}
+	if c.RAG.MaxChunksPerDoc == 0 {
+		c.RAG.MaxChunksPerDoc = 4000
+	}
+	if c.RAG.MaxEmbedBatch == 0 {
+		c.RAG.MaxEmbedBatch = 32
 	}
 }
 

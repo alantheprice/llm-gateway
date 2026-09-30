@@ -380,7 +380,10 @@
             if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
             if (t.summary) chip.title = t.summary;
           } else {
-            chip.textContent = (t.name === 'web_search' ? '🌐 searching: ' : '📄 reading: ') + arg;
+            const label = t.name === 'web_search' ? '🌐 searching: '
+              : t.name === 'document_search' ? '📚 searching docs: '
+              : '📄 reading: ';
+            chip.textContent = label + arg;
             if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
             if (t.status === 'error' && t.summary) chip.title = t.summary;
           }

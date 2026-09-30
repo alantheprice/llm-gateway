@@ -1,0 +1,155 @@
+{{define "title"}}Documents — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+// Your personal documents: upload → chunk + embed → searchable from the
+// chat's document_search tool. All calls are session-cookie based
+// (the signed-in user's own docs); no API key needed on this page.
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j.error || j.message || ('request failed (' + r.status + ')');
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return j;
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtBytes(n) { n = Number(n || 0); if (n >= 1e9) return (n/1e9).toFixed(1)+' GB'; if (n >= 1e6) return (n/1e6).toFixed(1)+' MB'; if (n >= 1e3) return (n/1e3).toFixed(0)+' KB'; return n+' B'; }
+function fmtDate(ms) { try { return new Date(ms).toLocaleDateString(); } catch(e) { return ''; } }
+
+const $id = (s) => document.getElementById(s);
+let loading = false;
+
+async function load() {
+  const list = $id('docList');
+  try {
+    const { docs } = await api('/api/documents');
+    if (!Array.isArray(docs) || docs.length === 0) {
+      list.innerHTML = '<div class="empty muted">No documents yet. Upload a <code>.txt</code>, <code>.md</code>, <code>.html</code>, <code>.csv</code> or <code>.json</code> file and ask the chat about it.</div>';
+      return;
+    }
+    list.innerHTML = docs.map(d =>
+      '<div class="docrow">' +
+        '<div class="docinfo"><strong>' + esc(d.name) + '</strong>' +
+          '<span class="muted"> · ' + fmtBytes(d.size) + ' · ' + (d.chunks||0) + ' chunks · ' + fmtDate(d.created) + '</span></div>' +
+        '<button class="btn small danger" data-del="' + esc(d.id) + '">Delete</button>' +
+      '</div>').join('');
+    list.querySelectorAll('[data-del]').forEach(b => b.onclick = () => delDoc(b.dataset.del, b));
+  } catch (e) {
+    list.innerHTML = '<div class="empty" style="color:var(--danger)">' + esc(e.message) + '</div>';
+  }
+}
+
+async function delDoc(id, btn) {
+  if (!confirm('Delete this document?')) return;
+  btn.disabled = true;
+  try { await api('/api/documents/' + encodeURIComponent(id), {method: 'DELETE'}); }
+  catch (e) { alert('Delete failed: ' + e.message); btn.disabled = false; return; }
+  load();
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  const box = $id('uploadBox');
+  const status = $id('uploadStatus');
+  box.classList.add('busy');
+  status.textContent = 'Chunking and embedding…';
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const j = await api('/api/documents', {method: 'POST', body: fd});
+    status.textContent = 'Added ' + (j.chunks||0) + ' chunks from “' + esc(file.name) + '”.';
+    status.style.color = 'var(--primary)';
+  } catch (e) {
+    status.textContent = e.message;
+    status.style.color = 'var(--danger)';
+  }
+  box.classList.remove('busy');
+  load();
+}
+
+async function loadToggle() {
+  try {
+    const p = await api('/api/prefs');
+    const t = $id('docTool');
+    t.checked = !!p.docs_enabled;
+    $id('docToolHint').textContent = p.docs_enabled
+      ? 'On — the chat can search these documents.'
+      : 'Off — the document_search tool is unavailable in the chat.';
+  } catch (e) { /* ignore */ }
+}
+function saveDocPref(on) {
+  api('/api/prefs', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({docs_enabled: on})}).then(loadToggle).catch(()=>loadToggle());
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const inp = $id('docFile'), box = $id('uploadBox');
+  $id('pickBtn').onclick = () => inp.click();
+  inp.onchange = () => { uploadFile(inp.files[0]); inp.value = ''; };
+  $id('docTool').onchange = (e) => saveDocPref(e.target.checked);
+  ['dragenter','dragover'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.remove('drag'); }));
+  box.addEventListener('drop', e => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
+  load();
+  loadToggle();
+});
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.upl { border: 1.5px dashed var(--border); border-radius: 10px; background: var(--card2); padding: 22px 18px; text-align: center; transition: border-color .15s, background .15s; }
+.upl.drag { border-color: var(--info); background: var(--card2); }
+.upl.busy { opacity: .7; }
+.upl .big { font-size: 22px; margin-bottom: 6px; }
+.upl p { margin: 4px 0; font-size: 13.5px; color: var(--muted); }
+.upl .hint { font-size: 12px; }
+.urow { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+#uploadStatus { font-size: 13px; margin-top: 10px; min-height: 18px; }
+.dochead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 8px; flex-wrap: wrap; }
+.docrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; background: var(--card2); }
+.docinfo { min-width: 0; overflow: hidden; }
+.docinfo strong { font-size: 13.5px; }
+.docinfo .muted { font-size: 12px; }
+.empty { padding: 18px; text-align: center; }
+.toolrow { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--card2); margin-top: 16px; }
+.toolrow .tt { font-weight: 600; font-size: 13.5px; }
+.toolrow .th { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.btn.small { padding: 4px 10px; font-size: 12.5px; }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+</style>
+<div class="page">
+  <h1>Documents</h1>
+  <p class="muted" style="font-size:13.5px; margin-top:-4px">
+    Upload documents and search them from the chat. Your documents stay private to you.
+  </p>
+
+  <div class="upl" id="uploadBox">
+    <div class="big">📄</div>
+    <p><strong>Drop a document here</strong> or</p>
+    <div class="urow">
+      <button class="btn" id="pickBtn">Choose file</button>
+      <input type="file" id="docFile" accept=".txt,.md,.markdown,.rst,.csv,.json,.html,.htm" hidden>
+      <span class="muted hint">.txt · .md · .html · .csv · .json · up to ~5 MB</span>
+    </div>
+    <div id="uploadStatus" role="status"></div>
+  </div>
+
+  <div class="dochead"><h2 style="font-size:15px; margin:0">Your documents</h2></div>
+  <div id="docList"></div>
+
+  <div class="toolrow">
+    <label class="switch"><input type="checkbox" id="docTool"> On</label>
+    <div>
+      <div class="tt">Search documents in the chat</div>
+      <div class="th" id="docToolHint"></div>
+    </div>
+  </div>
+  <p class="muted hint" style="margin-top:8px">
+    When on, the chat gets a <code>document_search</code> tool: ask a question about what you've
+    uploaded and it answers with a citation to the document and the matching text.
+  </p>
+</div>
+{{end}}

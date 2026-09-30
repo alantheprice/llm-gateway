@@ -82,6 +82,7 @@ type Server struct {
 	// call site must nil-check.
 	ops   OpsStore
 	chats ChatStore  // chat history (nil without the embedded database)
+	docs  DocStore   // personal document search (nil without the embedded database)
 	oauth oauthState // connector sign-ins in progress
 	// alerts: problem detection and notification (alerts.go).
 	alerts   *alerter
@@ -164,8 +165,9 @@ func (s *Server) SetOps(ops OpsStore) {
 	s.muOps.Lock()
 	s.ops = ops
 	s.muOps.Unlock()
-	// The same database keeps chat history.
+	// The same database keeps chat history and document search.
 	s.chats, _ = ops.(ChatStore)
+	s.docs, _ = ops.(DocStore)
 }
 
 // SyncUsageToOps mirrors the in-memory usage tallies (lifetime users map

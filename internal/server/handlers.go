@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/completions", s.handlePassthrough)
 	mux.HandleFunc("/v1/images/generations", s.handleImages)
 	mux.HandleFunc("/v1/embeddings", s.handleEmbeddings)
+	mux.HandleFunc("/v1/rag/search", s.handleRAGSearch)
 	mux.HandleFunc("/v1/", s.handleV1Other)
 	mux.HandleFunc("/usage", s.handleUsageRich)
 	mux.HandleFunc("/usage/users", s.handleUsageUsers)
@@ -139,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
 	mux.HandleFunc("/models", s.handleModelsPage)
+	mux.HandleFunc("/documents", s.handleDocumentsPage)
 	mux.HandleFunc("/images", s.handleImagesPage)
 	mux.HandleFunc("/embeddings", s.handleEmbeddingsPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
@@ -148,6 +150,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chats", s.handleAPIChats)
 	mux.HandleFunc("/api/alerts", s.handleAPIAlerts)
 	mux.HandleFunc("/api/chats/", s.handleAPIChats)
+	mux.HandleFunc("/api/documents", s.handleAPIDocs)
+	mux.HandleFunc("/api/documents/", s.handleAPIDocs)
 	mux.HandleFunc("/downloads/", s.handleAgentDownload)
 	mux.HandleFunc("/keys", s.methodSwitch(map[string]http.HandlerFunc{
 		http.MethodGet:  s.handleKeysPage, // page

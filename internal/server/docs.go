@@ -163,6 +163,19 @@ func (s *Server) registerInferenceDocs() {
 			},
 		},
 		{
+			OperationID: "rag-search", Method: http.MethodPost, Path: "/v1/rag/search",
+			Summary:     "Search your documents (RAG retrieval)",
+			Description: "Cosine search over the caller's uploaded documents. Body {\"query\":\"...\",\"top_k\":5}. Returns ranked chunks (doc name + text + score). Backed by the document-search tool in the chat.",
+			Tags:        []string{"inference"},
+			Security:    secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "Ranked chunks"},
+				"400": {Description: "Bad body / no query"},
+				"401": {Description: "Missing/invalid key"},
+				"503": {Description: "Document search unavailable"},
+			},
+		},
+		{
 			OperationID: "backends-snapshot", Method: http.MethodGet, Path: "/backends",
 			Summary:     "Per-backend engine load snapshot",
 			Description: "Engine-aware scores (0=idle, 1=saturated), lanes, running/waiting, decode tps, daily energy kWh, cache-hit pct per backend. Triggers a fresh metrics poll.",

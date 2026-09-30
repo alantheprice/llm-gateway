@@ -24,6 +24,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body = s.withMCPServers(r.Context(), body, user, keyID)
+	body = s.withDocsTool(body, user, keyID)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		s.agentURL+"/v1/agent/chat", bytesReader(body))

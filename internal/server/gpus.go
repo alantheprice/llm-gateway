@@ -48,6 +48,15 @@ func (s *Server) handleModelsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, "models.html", "models", "Models")
 }
 
+// handleDocumentsPage: /documents — the user's personal documents (upload,
+// list, delete) that back the document-search tool in the chat.
+func (s *Server) handleDocumentsPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSessionPage(w, r); !ok {
+		return
+	}
+	s.renderPage(w, r, "documents.html", "documents", "Documents")
+}
+
 // handleEmbeddingsPage: /embeddings — try embedding models with the
 // user's own key: similarity between texts, and search by a query.
 func (s *Server) handleEmbeddingsPage(w http.ResponseWriter, r *http.Request) {
