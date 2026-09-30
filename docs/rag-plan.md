@@ -14,7 +14,8 @@ Two processes, two modules:
 - **gateway** (`llmgateway`, this repo) — owns the DB, the embedding backend, and the RAG
   search. New table + store + `/v1/rag/search` + `/api/documents` (upload/list/delete) + a
   `docs_tool` flag injected into the agent body.
-- **seed-agent** (`llm-gateway/seed-agent`, `/home/aprice/llm_manager/seed-agent`) — the tool
+- **seed-agent** (`llm-gateway/seed-agent`, the nested module in this repo, deployed to
+  `/home/aprice/llm-gateway/seed-agent`) — the tool
   executor. New `document_search` tool that calls the gateway's `/v1/rag/search` with the
   caller's key. Deployed via `deploy-seed-agent.sh` (systemd `seed-agent.service`).
 - **UI** (this repo, `internal/web/`) — Documents page + a "Documents" row in the Connectors

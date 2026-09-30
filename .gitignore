@@ -10,3 +10,7 @@ cost_history.json
 bin/
 /link-agent
 .sprout/
+# seed-agent (nested module): built binary + runtime state
+seed-agent/seed-agent
+seed-agent/seed-agent.new
+seed-agent/seed-agent.prev

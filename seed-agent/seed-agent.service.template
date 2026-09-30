@@ -1,0 +1,23 @@
+[Unit]
+Description=seed-agent - agentic web-search loop for LLM Gateway
+After=network.target llm-gateway.service
+Wants=llm-gateway.service
+
+[Service]
+Type=simple
+User=aprice
+WorkingDirectory=/home/aprice/llm-gateway/seed-agent
+ExecStart=/home/aprice/llm-gateway/seed-agent/seed-agent
+Restart=always
+RestartSec=5
+Environment=LISTEN=127.0.0.1:8095
+Environment=AGENT_MODEL=qwen3.8-27b
+Environment=GATEWAY_API_KEY=__SET_AT_DEPLOY__
+Environment=JINA_API_KEY=__SET_AT_DEPLOY__
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=seed-agent
+
+[Install]
+WantedBy=multi-user.target
