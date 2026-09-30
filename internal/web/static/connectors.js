@@ -65,6 +65,23 @@ const Connectors = (() => {
     cxRender();
     return r.data;
   }
+  // Built-in tools: the gateway's document_search switch (prefs.docs_enabled).
+  // Same store the /documents page reports from, so both views always agree.
+  function cxDocsEl() { return document.getElementById('cxDocsOn'); }
+  async function cxDocsLoad() {
+    const on = cxDocsEl(); if (!on) return;
+    const r = await api('/api/prefs').catch(() => null);
+    if (!r || !r.ok) return;
+    on.checked = !!r.data.docs_enabled;
+    document.getElementById('cxDocsHint').innerHTML = (r.data.docs_enabled
+      ? 'On — in <strong>🌐 Web</strong> mode the chat can search your documents.'
+      : 'Off — the <code>document_search</code> tool is unavailable in the chat.') +
+      ' <a href="/documents">Manage documents →</a>';
+  }
+  function cxDocsSave(checked) {
+    api('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docs_enabled: checked }) }).then(cxDocsLoad).catch(cxDocsLoad);
+  }
   function cxFormBody(action) {
     const b = { action, name: document.getElementById('cxName').value.trim(), url: document.getElementById('cxURL').value.trim() };
     const mode = document.getElementById('cxAuth').value;
@@ -116,6 +133,8 @@ const Connectors = (() => {
   if (cx) {
     document.getElementById('cxClose').onclick = () => cx.close();
     cx.addEventListener('click', e => { if (e.target === cx) cx.close(); });
+    const docsOn = cxDocsEl();
+    if (docsOn) docsOn.onchange = e => cxDocsSave(e.target.checked);
     const authSel = document.getElementById('cxAuth');
     authSel.onchange = () => {
       document.getElementById('cxHeaderRow').hidden = authSel.value !== 'header';
@@ -145,6 +164,7 @@ const Connectors = (() => {
       out.innerHTML = r.ok ? cxToolList(r.data.test) : '<div class="cx-err">✗ ' + esc(r.data.error || 'failed') + '</div>';
     };
     cxLoad();
+    cxDocsLoad();
   }
 
 

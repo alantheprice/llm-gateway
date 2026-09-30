@@ -72,23 +72,16 @@ async function uploadFile(file) {
 async function loadToggle() {
   try {
     const p = await api('/api/prefs');
-    const t = $id('docTool');
-    t.checked = !!p.docs_enabled;
     $id('docToolHint').textContent = p.docs_enabled
       ? 'On — the chat can search these documents.'
-      : 'Off — the document_search tool is unavailable in the chat.';
+      : 'Off — turn it on in the Connectors dialog (🔌) or Settings → Connectors.';
   } catch (e) { /* ignore */ }
-}
-function saveDocPref(on) {
-  api('/api/prefs', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({docs_enabled: on})}).then(loadToggle).catch(()=>loadToggle());
 }
 
 window.addEventListener('DOMContentLoaded', () => {
   const inp = $id('docFile'), box = $id('uploadBox');
   $id('pickBtn').onclick = () => inp.click();
   inp.onchange = () => { uploadFile(inp.files[0]); inp.value = ''; };
-  $id('docTool').onchange = (e) => saveDocPref(e.target.checked);
   ['dragenter','dragover'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.add('drag'); }));
   ['dragleave','drop'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.remove('drag'); }));
   box.addEventListener('drop', e => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
@@ -114,9 +107,9 @@ window.addEventListener('DOMContentLoaded', () => {
 .docinfo strong { font-size: 13.5px; }
 .docinfo .muted { font-size: 12px; }
 .empty { padding: 18px; text-align: center; }
-.toolrow { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--card2); margin-top: 16px; }
-.toolrow .tt { font-weight: 600; font-size: 13.5px; }
-.toolrow .th { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.toolstatus { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--card2); margin-top: 16px; }
+.toolstatus .tt { font-weight: 600; font-size: 13.5px; }
+.toolstatus .th { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .btn.small { padding: 4px 10px; font-size: 12.5px; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 </style>
@@ -140,16 +133,15 @@ window.addEventListener('DOMContentLoaded', () => {
   <div class="dochead"><h2 style="font-size:15px; margin:0">Your documents</h2></div>
   <div id="docList"></div>
 
-  <div class="toolrow">
-    <label class="switch"><input type="checkbox" id="docTool"> On</label>
-    <div>
-      <div class="tt">Search documents in the chat</div>
-      <div class="th" id="docToolHint"></div>
-    </div>
+  <div class="toolstatus" id="docToolStatus">
+    <div class="tt">Document search in the chat</div>
+    <div class="th" id="docToolHint">Loading…</div>
   </div>
   <p class="muted hint" style="margin-top:8px">
     When on, the chat gets a <code>document_search</code> tool: ask a question about what you've
     uploaded and it answers with a citation to the document and the matching text.
+    On/off lives in the <a href="/settings#connectors">Connectors dialog</a> — the same place
+    as your MCP connectors, since it's a chat tool.
   </p>
 </div>
 {{end}}

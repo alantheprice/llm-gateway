@@ -27,6 +27,15 @@
   <div class="cx-head"><h2>Connectors</h2><button class="btn sm" id="cxClose" aria-label="Close">✕</button></div>
   <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>🌐 Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
   <div class="flash" id="cxFlash"></div>
+  <div class="cx-built">
+    <div class="cx-sub">Built-in tools</div>
+    <div class="cx-item">
+      <div class="cx-line"><label class="cx-on"><input type="checkbox" id="cxDocsOn"> <strong>📄 Document search</strong></label>
+        <span class="cx-url">search the documents you've uploaded</span></div>
+      <div class="cx-line muted" id="cxDocsHint"></div>
+    </div>
+  </div>
+  <div class="cx-built"><div class="cx-sub">Your connectors</div></div>
   <div id="cxList"></div>
   <form id="cxForm" class="cx-form" autocomplete="off">
     <div class="cx-sub">Add a server</div>

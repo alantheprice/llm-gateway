@@ -511,6 +511,8 @@ dialog.connectors::backdrop { background: rgba(0, 0, 0, .5); }
 .cx-head { display: flex; align-items: center; justify-content: space-between; }
 .cx-head h2 { margin: 0; font-size: 17px; }
 .cx-intro { font-size: 13px; margin: 8px 0 12px; }
+.cx-built { margin-top: 2px; }
+.cx-built + .cx-built { border-top: 1px solid var(--border2); margin-top: 12px; padding-top: 10px; }
 .cx-item { border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
 .cx-line { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
 .cx-url { color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
