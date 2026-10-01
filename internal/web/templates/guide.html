@@ -21,7 +21,7 @@
 .guide-foot { margin-top: 32px; font-size: 13px; }
 </style>
 <div class="page">
-  {{if .Chrome}}<div class="page-head"><button class="hamburger" id="hamburger" aria-label="Menu">☰</button><h1>Help</h1></div>{{end}}
+  {{if .Chrome}}<div class="page-head"><button class="hamburger" id="hamburger" aria-label="Menu">{{Icon "menu"}}</button><h1>Help</h1></div>{{end}}
   <nav class="guide-tabs" aria-label="Help topics">{{.Extra.tabs}}</nav>
   <article class="guide">{{.Extra.body}}</article>
   {{if not .Chrome}}<p class="guide-foot muted"><a href="/">Sign in to LLM Gateway →</a></p>{{end}}

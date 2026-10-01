@@ -14,12 +14,12 @@
   <input type="search" id="convoSearch" class="convo-search" placeholder="Search chats" aria-label="Search chats">
   <nav class="convo-list" id="convoList"></nav>
   <p class="convos-foot muted">Chats are saved to your account and sync across your devices.
-  <br>🔒 Chats and documents are encrypted and private to you — only your password opens them. If your password is ever reset while you're signed out, your encrypted history can't be recovered.</p>
+  <br>Chats and documents are encrypted and private to you — only your password opens them. If your password is ever reset while you're signed out, your encrypted history can't be recovered.</p>
 </aside>
 <div class="convos-backdrop" id="convosBackdrop"></div>
 <div class="chat-main">
   <div class="chat-head">
-    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <button class="hamburger" id="hamburger" aria-label="Menu">{{Icon "menu"}}</button>
     <button class="btn convos-btn" id="convosBtn" aria-label="Your chats" title="Your chats">{{Icon "message-square"}}<span class="btn-label"> Chats</span></button>
     <h1 id="chatTitle">New chat</h1>
     <span style="flex:1"></span>
@@ -36,9 +36,9 @@
       <div class="composer-tools">
         <label class="tool-toggle" id="toolsLabel" title="Let the model search the web">
           <input type="checkbox" id="toolsToggle">
-          <span class="globe">🌐</span><span class="tool-label" id="toolsText">Web</span>
+          <span class="globe">{{Icon "globe"}}</span><span class="tool-label" id="toolsText">Web</span>
         </label>
-        <button type="button" class="tool-toggle" id="connectorsBtn" title="Connect remote MCP servers: their tools join Web mode">🔌<span class="tool-label"> Connectors</span></button>
+        <button type="button" class="tool-toggle" id="connectorsBtn" title="Connect remote MCP servers: their tools join Web mode">{{Icon "plug"}}<span class="tool-label"> Connectors</span></button>
         <span style="flex:1"></span>
         <button class="btn primary" id="send">{{Icon "send"}}<span class="btn-label">Send</span></button>
       </div>

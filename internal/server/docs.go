@@ -176,6 +176,33 @@ func (s *Server) registerInferenceDocs() {
 			},
 		},
 		{
+			OperationID: "memory-search", Method: http.MethodPost, Path: "/v1/memories/search",
+			Summary:     "Search your memories (semantic retrieval)",
+			Description: "Cosine search over the caller's saved memories. Body {\"query\":\"...\",\"top_k\":5}. Returns ranked memories (text + score). Backed by the memory_search tool in the chat.",
+			Tags:        []string{"inference"},
+			Security:    secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "Ranked memories"},
+				"400": {Description: "Bad body / no query"},
+				"401": {Description: "Missing/invalid key"},
+				"503": {Description: "Memory storage unavailable"},
+			},
+		},
+		{
+			OperationID: "memory-save", Method: http.MethodPost, Path: "/v1/memories/save",
+			Summary:     "Save a memory",
+			Description: "Embeds and stores a short fact for the caller. Body {\"text\":\"...\"}. Backed by the memory_save tool in the chat.",
+			Tags:        []string{"inference"},
+			Security:    secs(secBearer, secSession),
+			Responses: map[string]*huma.Response{
+				"200": {Description: "{ok, id}"},
+				"400": {Description: "Bad body / too long"},
+				"401": {Description: "Missing/invalid key"},
+				"413": {Description: "Memory limit reached"},
+				"503": {Description: "Memory storage unavailable"},
+			},
+		},
+		{
 			OperationID: "backends-snapshot", Method: http.MethodGet, Path: "/backends",
 			Summary:     "Per-backend engine load snapshot",
 			Description: "Engine-aware scores (0=idle, 1=saturated), lanes, running/waiting, decode tps, daily energy kWh, cache-hit pct per backend. Triggers a fresh metrics poll.",

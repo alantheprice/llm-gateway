@@ -13,7 +13,7 @@ known); a *password reset* orphans the data (documented, explicit).
   DEK. Per-user secrecy.
 - ❌ Not: a fully compromised gateway process (DEKs live in process memory while
   unlocked) or a fully compromised OS user with /proc access.
-- ⚠️ Documents: `text` + `name` are encrypted; **`embedding` BLOBs stay plaintext**
+- Warning: Documents: `text` + `name` are encrypted; **`embedding` BLOBs stay plaintext**
   (the in-process cosine search runs over them). Partial guarantee for docs, full
   for chats.
 

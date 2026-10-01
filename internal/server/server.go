@@ -80,11 +80,12 @@ type Server struct {
 	// ops: SQLite ops tables (usage_daily, cost_history) in the embedded
 	// PocketBase's database. Nil in tests that don't embed PB — every
 	// call site must nil-check.
-	ops   OpsStore
-	chats ChatStore  // chat history (nil without the embedded database)
-	docs  DocStore   // personal document search (nil without the embedded database)
-	vault *VaultMgr  // per-user data keys for at-rest encryption (nil without the embedded database)
-	oauth oauthState // connector sign-ins in progress
+	ops      OpsStore
+	chats    ChatStore   // chat history (nil without the embedded database)
+	docs     DocStore    // personal document search (nil without the embedded database)
+	memories MemoryStore // personal memories (nil without the embedded database)
+	vault    *VaultMgr   // per-user data keys for at-rest encryption (nil without the embedded database)
+	oauth    oauthState  // connector sign-ins in progress
 	// alerts: problem detection and notification (alerts.go).
 	alerts   *alerter
 	dataDirs []string // extra directories whose disk space is watched
@@ -169,6 +170,7 @@ func (s *Server) SetOps(ops OpsStore) {
 	// The same database keeps chat history and document search.
 	s.chats, _ = ops.(ChatStore)
 	s.docs, _ = ops.(DocStore)
+	s.memories, _ = ops.(MemoryStore)
 	// Vault: per-user DEKs for at-rest encryption (memory-only keys).
 	if appConcrete, ok := ops.(*embeddedpb.App); ok {
 		s.vault = NewVault(appConcrete)

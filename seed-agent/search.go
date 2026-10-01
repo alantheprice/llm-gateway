@@ -18,14 +18,18 @@ import (
 //	web_search: search the internet (Jina search API)
 //	fetch_page: read a URL as clean markdown (Jina Reader API)
 //	document_search: search the user's own uploaded documents (gateway RAG)
+//	memory_save / memory_search: the user's own saved memories (gateway)
 type SearchExecutor struct {
 	jinaKey string
 	client  *http.Client
 	// Per-request (set on a per-request copy, not the shared instance):
-	// docsEnabled gates the document_search tool; docKey is the caller's
-	// gateway key, so /v1/rag/search resolves to the caller's own docs.
-	docsEnabled bool
-	docKey      string
+	// docsEnabled gates the document_search tool; memoryEnabled gates the
+	// memory tools. docKey / memoryKey are the caller's gateway key, so the
+	// gateway's per-user endpoints resolve to the caller's own data.
+	docsEnabled   bool
+	docKey        string
+	memoryEnabled bool
+	memoryKey     string
 }
 
 func NewSearchExecutor(jinaKey string) *SearchExecutor {
@@ -76,6 +80,9 @@ func (s *SearchExecutor) GetTools() []core.Tool {
 			},
 		}})
 	}
+	// memory_save / memory_search are only offered when the caller enabled the
+	// memory toggle (the gateway sets memory_tool from the user's preference).
+	tools = append(tools, s.memoryTools()...)
 	return tools
 }
 
@@ -250,6 +257,18 @@ func (s *SearchExecutor) Execute(ctx context.Context, calls []core.ToolCall) []c
 			result, err = s.fetchPage(ctx, call.Function.Arguments)
 		case "document_search":
 			result, err = s.docSearch(ctx, call.Function.Arguments)
+		case "memory_save", "memory_search":
+			// Enforced here too (not just in GetTools): a hallucinated call
+			// must not run for a caller whose memory toggle is off.
+			if !s.memoryEnabled {
+				result = "memory tools are not enabled for this caller"
+				break
+			}
+			if call.Function.Name == "memory_save" {
+				result, err = s.memorySave(ctx, call.Function.Arguments)
+			} else {
+				result, err = s.memorySearch(ctx, call.Function.Arguments)
+			}
 		default:
 			result = fmt.Sprintf("unknown tool: %s", call.Function.Name)
 		}

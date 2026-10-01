@@ -382,7 +382,8 @@ func main() {
 			MCPServers   []mcpServerCfg `json:"mcp_servers"`
 			MCPNotices   []string       `json:"mcp_notices"` // connectors the gateway couldn't hand over
 			AllowPrivate bool           `json:"allow_private"`
-			DocsTool     bool           `json:"docs_tool"` // caller enabled document_search
+			DocsTool     bool           `json:"docs_tool"`   // caller enabled document_search
+			MemoryTool   bool           `json:"memory_tool"` // caller enabled the memory tools
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -426,13 +427,16 @@ func main() {
 
 		provider.onReasoning = func(r string) { send("reasoning", map[string]string{"content": r}) }
 
-		// Per-request copy of the search executor: the document_search tool
-		// is gated on this caller's preference and must use this caller's
-		// key so /v1/rag/search resolves to their own documents. (The shared
-		// executor's client is reused; http.Client is safe for concurrency.)
+		// Per-request copy of the search executor: the document_search and
+		// memory tools are gated on this caller's preferences and must use
+		// this caller's key so the gateway's per-user endpoints resolve to
+		// their own data. (The shared executor's client is reused;
+		// http.Client is safe for concurrency.)
 		reqExec := *executor
 		reqExec.docsEnabled = in.DocsTool
 		reqExec.docKey = in.APIKey
+		reqExec.memoryEnabled = in.MemoryTool
+		reqExec.memoryKey = in.APIKey
 
 		// Remote MCP servers the user connected: their tools join the loop.
 		tools, problems := connectMCP(r.Context(), &reqExec, in.MCPServers, in.AllowPrivate)
@@ -449,6 +453,9 @@ func main() {
 			"details not in the snippets (at most 2 fetches). You MUST produce a final answer with sources cited as [n] - never end on a tool call. Be concise."
 		if in.DocsTool {
 			prompt += " The user has uploaded documents. Use document_search to answer questions about their own files, notes or papers; cite the document name it comes from."
+		}
+		if in.MemoryTool {
+			prompt += " The user has a personal memory. When the user states a durable preference, decision, or project fact — or asks you to remember something — call memory_save with one self-contained fact. At the start of a task where prior context would help, call memory_search to recall their saved preferences and facts. Do not store secrets or one-off details."
 		}
 		if names := tools.serverNames(); len(names) > 0 {
 			prompt += " You also have tools from the user's connected services (" + strings.Join(names, ", ") +

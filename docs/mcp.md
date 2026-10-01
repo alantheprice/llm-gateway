@@ -6,7 +6,7 @@ Connect **remote MCP servers** to the chat, and the model can use their tools: l
 
 ## Add a server
 
-1. In **Chat**, click **🔌 Connectors**.
+1. In **Chat**, click **Connectors**.
 2. Enter:
    - **Name:** a short name, e.g. `github` (lowercase letters, digits, `-`, `_`). Tools show up as `<name>__<tool>`.
    - **URL:** the server's MCP endpoint, e.g. `https://mcp.example.com/mcp`.
@@ -16,9 +16,9 @@ Connect **remote MCP servers** to the chat, and the model can use their tools: l
      - **None:** for public servers.
 3. Click **Test** to connect and list its tools (for a token), then **Add**.
 
-Turn on **🌐 Web** in the composer to use connectors. The toggle reads **Web + N connectors** while any are on. Each connector has its own on/off switch.
+Turn on **Web** in the composer to use connectors. The toggle reads **Web + N connectors** while any are on. Each connector has its own on/off switch.
 
-In a reply, each tool call shows as a chip, e.g. `🔌 github · list_issues ✓`. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.
+In a reply, each tool call shows as a chip, e.g. `github · list_issues ✓`. Hover it for the result. If a server can't be reached, the reply says so and the chat carries on without it.
 
 ## Finding servers
 

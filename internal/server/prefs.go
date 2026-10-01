@@ -19,10 +19,11 @@ func (s *Server) handleAPIPrefs(w http.ResponseWriter, r *http.Request) {
 	p := s.store.PrefsOf(sess.U)
 	if r.Method == http.MethodPost || r.Method == http.MethodPut {
 		var in struct {
-			Theme       *string `json:"theme"`
-			ChatModel   *string `json:"chat_model"`
-			ChatWeb     *bool   `json:"chat_web"`
-			DocsEnabled *bool   `json:"docs_enabled"`
+			Theme         *string `json:"theme"`
+			ChatModel     *string `json:"chat_model"`
+			ChatWeb       *bool   `json:"chat_web"`
+			DocsEnabled   *bool   `json:"docs_enabled"`
+			MemoryEnabled *bool   `json:"memory_enabled"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
 			errBody(w, http.StatusBadRequest, "invalid JSON")
@@ -50,6 +51,9 @@ func (s *Server) handleAPIPrefs(w http.ResponseWriter, r *http.Request) {
 		if in.DocsEnabled != nil {
 			p.DocsEnabled = *in.DocsEnabled
 		}
+		if in.MemoryEnabled != nil {
+			p.MemoryEnabled = *in.MemoryEnabled
+		}
 		if err := s.store.SetPrefs(sess.U, p); err != nil {
 			errBody(w, http.StatusInternalServerError, "save failed")
 			return
@@ -64,7 +68,7 @@ func (s *Server) handleAPIPrefs(w http.ResponseWriter, r *http.Request) {
 
 func prefsView(p auth.UserPrefs) map[string]any {
 	return map[string]any{"theme": p.Theme, "chat_model": p.ChatModel, "chat_web": p.ChatWeb != nil && *p.ChatWeb,
-		"chat_web_set": p.ChatWeb != nil, "docs_enabled": p.DocsEnabled}
+		"chat_web_set": p.ChatWeb != nil, "docs_enabled": p.DocsEnabled, "memory_enabled": p.MemoryEnabled}
 }
 
 // handleSettingsPage: /settings — account, appearance, chat defaults,

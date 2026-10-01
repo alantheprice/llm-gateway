@@ -129,6 +129,7 @@ a.identity:hover { background: var(--card2); }
   font-size: 17px; cursor: pointer; color: var(--text);
 }
 .hamburger { display: none; }
+.hamburger svg { width: 16px; height: 16px; }
 .backdrop { display: none; }
 
 @media (max-width: 720px) {
@@ -496,6 +497,9 @@ body.chatpage .main { height: 100dvh; }
   transition: all .15s;
 }
 .tool-toggle input { display: none; }
+.tool-toggle svg { width: 13px; height: 13px; }
+.tool-toggle .globe { display: inline-flex; }
+.tool-toggle .globe svg { width: 13px; height: 13px; }
 .tool-toggle:hover { border-color: var(--muted); color: var(--text); }
 .tool-toggle.on {
   background: color-mix(in srgb, var(--primary) 16%, transparent);

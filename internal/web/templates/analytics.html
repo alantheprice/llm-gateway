@@ -54,7 +54,7 @@ async function load() {
   const note = document.getElementById('gpunote');
   if (note) {
     note.textContent = hot.length && cool.length
-      ? '⚠ ' + hot.map(g => g.gpu_label || g.backend).join(', ') + ' averages ' +
+      ? 'Warning: ' + hot.map(g => g.gpu_label || g.backend).join(', ') + ' averages ' +
         hot.map(g => ms(g.queue_avg)).join(', ') + ' of queue wait while ' +
         cool.map(g => g.gpu_label || g.backend).join(', ') + ' has headroom — routing may be unbalanced.'
       : '';
@@ -148,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <style>.subh { font-size: 13px; margin: 14px 0 6px; } .subh:first-child { margin-top: 0; }</style>
 <div class="page">
   <div class="page-head">
-    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <button class="hamburger" id="hamburger" aria-label="Menu">{{Icon "menu"}}</button>
     <h1>Performance</h1>
     <span style="flex:1"></span>
     <div id="range"></div>

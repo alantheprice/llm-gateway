@@ -25,14 +25,19 @@
    with static/connectors.js. */}}
 {{define "connectors"}}<dialog id="connectors" class="connectors">
   <div class="cx-head"><h2>Connectors</h2><button class="btn sm" id="cxClose" aria-label="Close">✕</button></div>
-  <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>🌐 Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
+  <p class="muted cx-intro">Connect remote <a href="/guide/mcp" target="_blank">MCP servers</a> by URL; nothing runs on your computer. When <strong>Web</strong> is on, the model can use their tools as well as web search. The gateway keeps your auth headers and sends them only to that server.</p>
   <div class="flash" id="cxFlash"></div>
   <div class="cx-built">
     <div class="cx-sub">Built-in tools</div>
     <div class="cx-item">
-      <div class="cx-line"><label class="cx-on"><input type="checkbox" id="cxDocsOn"> <strong>📄 Document search</strong></label>
+      <div class="cx-line"><label class="cx-on"><input type="checkbox" id="cxDocsOn"> <strong>Document search</strong></label>
         <span class="cx-url">search the documents you've uploaded</span></div>
       <div class="cx-line muted" id="cxDocsHint"></div>
+    </div>
+    <div class="cx-item">
+      <div class="cx-line"><label class="cx-on"><input type="checkbox" id="cxMemOn"> <strong>Memory</strong></label>
+        <span class="cx-url">the chat remembers your preferences and facts</span></div>
+      <div class="cx-line muted" id="cxMemHint"></div>
     </div>
   </div>
   <div class="cx-built"><div class="cx-sub">Your connectors</div></div>
@@ -82,6 +87,7 @@
       <a href="/embeddings" class="nav-item {{if eq .Nav "embeddings"}}active{{end}}">{{Icon "scatter-chart"}}<span>Embeddings</span></a>
       <a href="/models" class="nav-item {{if eq .Nav "models"}}active{{end}}">{{Icon "box"}}<span>Models</span></a>
       <a href="/documents" class="nav-item {{if eq .Nav "documents"}}active{{end}}">{{Icon "file-text"}}<span>Documents</span></a>
+      <a href="/memories" class="nav-item {{if eq .Nav "memories"}}active{{end}}">{{Icon "brain"}}<span>Memories</span></a>
       <div class="nav-section">Developer</div>
       <a href="/keys" class="nav-item {{if eq .Nav "keys"}}active{{end}}">{{Icon "key-round"}}<span>API Keys</span></a>
       <a href="/gpus" class="nav-item {{if eq .Nav "gpus"}}active{{end}}">{{Icon "cpu"}}<span>My GPUs</span></a>

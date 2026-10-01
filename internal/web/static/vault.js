@@ -196,7 +196,7 @@
         overlay.className = 'vlt-overlay';
         overlay.innerHTML =
           '<div class="vlt-card">' +
-          '  <h3>🔒 Unlock your data</h3>' +
+          '  <h3>Unlock your data</h3>' +
           '  <p class="vlt-sub">Your chats and documents are encrypted and private to you. ' +
           'Enter your password to unlock them for this session.</p>' +
           '  <input type="password" autocomplete="current-password" placeholder="Password">' +

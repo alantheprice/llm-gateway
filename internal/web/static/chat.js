@@ -247,7 +247,7 @@
   /* ---------- stats footer ---------- */
   function statsLine(st) {
     if (!st || !st.tg) return '';
-    let s = '⚡ ' + Math.round(st.tg) + ' tok/s';
+    let s = Math.round(st.tg) + ' tok/s';
     if (st.pp) s += ' · pp ' + Math.round(st.pp);
     if (st.cache_pct != null) {
       s += ' · cache ' + Math.round(st.cache_pct) + '%';
@@ -347,7 +347,7 @@
     row.className = 'msg-row ' + m.role;
     const av = document.createElement('div');
     av.className = 'avatar';
-    av.textContent = m.role === 'user' ? (cfg && cfg.username ? cfg.username[0].toUpperCase() : 'U') : '\u26a1';
+    av.textContent = m.role === 'user' ? (cfg && cfg.username ? cfg.username[0].toUpperCase() : 'U') : 'A';
     row.appendChild(av);
     const div = document.createElement('div');
     div.className = 'msg ' + m.role;
@@ -357,7 +357,7 @@
         const wrap = document.createElement('div');
         const label = document.createElement('span');
         label.className = 'thinking-label';
-        label.textContent = '\u2727 Thinking';
+        label.textContent = 'Thinking';
         const th = document.createElement('div');
         th.className = 'thinking-body collapsed';
         th.textContent = m.thinking;
@@ -372,17 +372,19 @@
           const arg = (t.args || '').replace(/^"|"$/g, '').slice(0, 70);
           if (t.name === 'notice') {
             chip.classList.add('warn');
-            chip.textContent = '⚠ ' + (t.summary || '');
+            chip.textContent = t.summary || '';
           } else if (t.name.includes('__')) {
             // A connector's tool: <server>__<tool>.
             const i = t.name.indexOf('__');
-            chip.textContent = '🔌 ' + t.name.slice(0, i) + ' · ' + t.name.slice(i + 2) + (arg && arg !== '{}' ? ': ' + arg : '');
+            chip.textContent = t.name.slice(0, i) + ' · ' + t.name.slice(i + 2) + (arg && arg !== '{}' ? ': ' + arg : '');
             if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
             if (t.summary) chip.title = t.summary;
           } else {
-            const label = t.name === 'web_search' ? '🌐 searching: '
-              : t.name === 'document_search' ? '📚 searching docs: '
-              : '📄 reading: ';
+            const label = t.name === 'web_search' ? 'Web search: '
+              : t.name === 'document_search' ? 'Searching documents: '
+              : t.name === 'memory_search' ? 'Searching memories: '
+              : t.name === 'memory_save' ? 'Saving memory: '
+              : 'Reading: ';
             chip.textContent = label + arg;
             if (t.status !== 'running') chip.textContent += t.status === 'error' ? ' ✗' : ' ✓';
             if (t.status === 'error' && t.summary) chip.title = t.summary;
@@ -494,7 +496,7 @@
         '<span class="c-text"><span class="c-title">' + esc(s.title) + '</span>' +
         '<span class="c-meta">' + esc(whenLabel(s.updated)) + ' · ' + n + ' message' + (n === 1 ? '' : 's') + '</span></span>' +
         '<span class="c-actions"><button type="button" data-act="rename" title="Rename" aria-label="Rename">✎</button>' +
-        '<button type="button" class="del" data-act="del" title="Delete" aria-label="Delete">🗑</button></span></div>';
+        '<button type="button" class="del" data-act="del" title="Delete" aria-label="Delete">✕</button></span></div>';
     }
     convoList.innerHTML = h || '<p class="convo-empty muted">' + (q ? 'No chats match “' + esc(q) + '”.' : 'No chats yet. Your conversations will appear here.') + '</p>';
     const title = document.getElementById('chatTitle');
@@ -547,7 +549,7 @@
   ];
   function renderWelcome() {
     landing.innerHTML = '<div class="welcome"><h2>What can I help with?</h2>' +
-      '<p class="w-sub">Chatting with <strong>' + esc(modelEl.value || 'a model') + '</strong>. Turn on 🌐 Web to let it search the web and use your connectors.</p>' +
+      '<p class="w-sub">Chatting with <strong>' + esc(modelEl.value || 'a model') + '</strong>. Turn on Web to let it search the web and use your connectors.</p>' +
       '<div class="w-starters">' + STARTERS.map(t => '<button type="button">' + esc(t) + '</button>').join('') + '</div></div>';
     landing.style.display = 'block';
     landing.querySelectorAll('.w-starters button').forEach(b => b.onclick = () => {
@@ -626,18 +628,18 @@
             if (e.type === 'rate_limit_error' && e.resets_at && typeof TZ !== 'undefined') {
               const used = (e.used != null && e.limit != null)
                 ? ` (${e.used} of ${e.limit} tokens)` : '';
-              a.content = '⚠ 429: Daily token limit reached' + used +
+              a.content = '429: Daily token limit reached' + used +
                 ' — resets ' + TZ.instantLocal(e.resets_at, {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) + '.';
             } else if (e.type === 'rate_limited') {
-              a.content = '⚠ 429: Too many requests from your IP — slow down and retry.';
+              a.content = '429: Too many requests from your IP — slow down and retry.';
             } else {
-              a.content = '⚠ 429: ' + (e.message || body.slice(0, 300));
+              a.content = '429: ' + (e.message || body.slice(0, 300));
             }
           } catch (e) {
-            a.content = '⚠ 429: ' + body.slice(0, 300);
+            a.content = '429: ' + body.slice(0, 300);
           }
         } else {
-          a.content = '⚠ ' + resp.status + ': ' + body.slice(0, 300);
+          a.content = resp.status + ': ' + body.slice(0, 300);
         }
       } else if (useTools) {
         // seed-agent SSE: start / tool_start / tool_end / content / done
@@ -658,7 +660,7 @@
             try { d = JSON.parse(line.slice(6)); } catch (e) { continue; }
             if (ev === 'tool_start') {
               a.tools.push({ name: d.tool || 'tool', args: d.args || '', status: 'running' });
-              if (s.title === 'New chat') s.title = '🔎 ' + (d.args || 'search').slice(0, 58);
+              if (s.title === 'New chat') s.title = 'Search: ' + (d.args || 'search').slice(0, 58);
             } else if (ev === 'tool_end') {
               const t = [...a.tools].reverse().find(t => t.status === 'running');
               if (t) { t.status = d.status || 'done'; t.summary = d.summary || ''; }
@@ -669,7 +671,7 @@
             } else if (ev === 'reasoning') {
               a.thinking += d.content || '';
             } else if (ev === 'error') {
-              a.content += '⚠ ' + (d.error || 'agent error');
+              a.content += d.error || 'Agent error';
             } else if (ev === 'done') {
               // The final answer; replaces text streamed on the way (e.g.
               // "let me search…" before a tool call).
@@ -724,8 +726,8 @@
         }
       }
     } catch (e) {
-      if (e.name === 'AbortError') { a.content += a.content ? '' : ' ⚠ stopped'; }
-      else a.content += (a.content ? '\n' : '') + '⚠ connection error: ' + e;
+      if (e.name === 'AbortError') { a.content += a.content ? '' : ' — stopped'; }
+      else a.content += (a.content ? '\n' : '') + 'Connection error: ' + e;
     }
     delete a.pending;
     if (a.stats && tok0 && tokEnd && tokEnd > tok0) {

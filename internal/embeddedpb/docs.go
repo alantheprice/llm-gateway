@@ -121,10 +121,14 @@ func (a *App) DocCount(user string) (int, error) {
 	if a.pb.DB() == nil {
 		return 0, fmt.Errorf("docs: DB not open")
 	}
-	var n int
-	err := a.pb.DB().NewQuery(`SELECT COUNT(*) FROM docs WHERE user = {:user} AND deleted = 0`).
-		Bind(dbx.Params{"user": user}).One(&n)
-	return n, err
+	var c struct {
+		N int `db:"n"`
+	}
+	if err := a.pb.DB().NewQuery(`SELECT COUNT(*) AS n FROM docs WHERE user = {:user} AND deleted = 0`).
+		Bind(dbx.Params{"user": user}).One(&c); err != nil {
+		return 0, err
+	}
+	return c.N, nil
 }
 
 // ReplaceDocChunks: delete then re-insert the chunks for one document.

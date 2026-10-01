@@ -74,7 +74,7 @@ async function loadToggle() {
     const p = await api('/api/prefs');
     $id('docToolHint').textContent = p.docs_enabled
       ? 'On — the chat can search these documents.'
-      : 'Off — turn it on in the Connectors dialog (🔌) or Settings → Connectors.';
+      : 'Off — turn it on in the Connectors dialog or Settings → Connectors.';
   } catch (e) { /* ignore */ }
 }
 
@@ -96,7 +96,8 @@ window.addEventListener('DOMContentLoaded', () => {
 .upl { border: 1.5px dashed var(--border); border-radius: 10px; background: var(--card2); padding: 22px 18px; text-align: center; transition: border-color .15s, background .15s; }
 .upl.drag { border-color: var(--info); background: var(--card2); }
 .upl.busy { opacity: .7; }
-.upl .big { font-size: 22px; margin-bottom: 6px; }
+.upl .big { margin-bottom: 6px; color: var(--muted); }
+.upl .big svg { width: 40px; height: 40px; }
 .upl p { margin: 4px 0; font-size: 13.5px; color: var(--muted); }
 .upl .hint { font-size: 12px; }
 .urow { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 10px; flex-wrap: wrap; }
@@ -120,7 +121,7 @@ window.addEventListener('DOMContentLoaded', () => {
   </p>
 
   <div class="upl" id="uploadBox">
-    <div class="big">📄</div>
+    <div class="big"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></div>
     <p><strong>Drop a document here</strong> or</p>
     <div class="urow">
       <button class="btn" id="pickBtn">Choose file</button>

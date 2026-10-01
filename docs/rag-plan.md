@@ -75,7 +75,7 @@ No matches → empty `results` (not an error).
 ## Tool selection (the explicit gate)
 
 - Per-user pref `docs_enabled` (mirror `ChatWeb` in `UserPrefs`, `internal/auth/prefs.go`).
-- UI: a "📄 Document search" row in the Connectors dialog (not a URL connector — just an
+- UI: a "Document search" row in the Connectors dialog (not a URL connector — just an
   enabled checkbox). Reads/writes `prefs.docs_enabled` via `/api/prefs`.
 - `withMCPServers` (`mcp.go:343`) additionally sets `m["docs_tool"] = <bool>` (the user's
   enabled state). The sidecar is the only consumer; it is loopback-only, so the flag is safe.
@@ -98,8 +98,8 @@ No matches → empty `results` (not an error).
 
 - New page `/documents` (template `documents.html`): list (name, size, chunks, date), upload
   (file input + drag-drop), delete. Register the route in `Handler()` + a nav link.
-- `connectors.js` / `_layout.html`: add the "📄 Document search" enabled row.
-- `chat.js`: a `document_search` tool-chip case (📄 "searching your documents: <args>");
+- `connectors.js` / `_layout.html`: add the "Document search" enabled row.
+- `chat.js`: a `document_search` tool-chip case ("Searching documents: <args>");
   answers already cite `[n]` (markdown), and the nerd panel shows the tool summary.
 
 ## Config (`internal/config/config.go`)

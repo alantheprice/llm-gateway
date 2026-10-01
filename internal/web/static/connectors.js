@@ -74,13 +74,30 @@ const Connectors = (() => {
     if (!r || !r.ok) return;
     on.checked = !!r.data.docs_enabled;
     document.getElementById('cxDocsHint').innerHTML = (r.data.docs_enabled
-      ? 'On — in <strong>🌐 Web</strong> mode the chat can search your documents.'
+      ? 'On — in <strong>Web</strong> mode the chat can search your documents.'
       : 'Off — the <code>document_search</code> tool is unavailable in the chat.') +
       ' <a href="/documents">Manage documents →</a>';
   }
   function cxDocsSave(checked) {
     api('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docs_enabled: checked }) }).then(cxDocsLoad).catch(cxDocsLoad);
+  }
+  // Memory tools: the gateway's memory_save/memory_search toggle
+  // (prefs.memory_enabled). Same store the /memories page reports from.
+  function cxMemEl() { return document.getElementById('cxMemOn'); }
+  async function cxMemLoad() {
+    const on = cxMemEl(); if (!on) return;
+    const r = await api('/api/prefs').catch(() => null);
+    if (!r || !r.ok) return;
+    on.checked = !!r.data.memory_enabled;
+    document.getElementById('cxMemHint').innerHTML = (r.data.memory_enabled
+      ? 'On — in <strong>Web</strong> mode the chat can save and recall your memories.'
+      : 'Off — the <code>memory_save</code>/<code>memory_search</code> tools are unavailable in the chat.') +
+      ' <a href="/memories">Manage memories →</a>';
+  }
+  function cxMemSave(checked) {
+    api('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory_enabled: checked }) }).then(cxMemLoad).catch(cxMemLoad);
   }
   function cxFormBody(action) {
     const b = { action, name: document.getElementById('cxName').value.trim(), url: document.getElementById('cxURL').value.trim() };
@@ -135,6 +152,8 @@ const Connectors = (() => {
     cx.addEventListener('click', e => { if (e.target === cx) cx.close(); });
     const docsOn = cxDocsEl();
     if (docsOn) docsOn.onchange = e => cxDocsSave(e.target.checked);
+    const memOn = cxMemEl();
+    if (memOn) memOn.onchange = e => cxMemSave(e.target.checked);
     const authSel = document.getElementById('cxAuth');
     authSel.onchange = () => {
       document.getElementById('cxHeaderRow').hidden = authSel.value !== 'header';
@@ -151,7 +170,7 @@ const Connectors = (() => {
         if (b.auth === 'oauth') {
           const added = (d.servers || []).find(x => x.name === b.name);
           if (added) cxSignIn(added.id);
-        } else flash('Added ' + b.name + '. Turn on 🌐 Web to use it.', false, 'cxFlash');
+        } else flash('Added ' + b.name + '. Turn on Web to use it.', false, 'cxFlash');
       }
     };
     document.getElementById('cxTest').onclick = async e => {
@@ -165,6 +184,7 @@ const Connectors = (() => {
     };
     cxLoad();
     cxDocsLoad();
+    cxMemLoad();
   }
 
 

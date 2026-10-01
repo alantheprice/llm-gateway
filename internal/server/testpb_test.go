@@ -41,7 +41,7 @@ func testPB(t *testing.T) (*embeddedpb.App, int, string) {
 		if pbErr = pbApp.WaitUntilHealthy("127.0.0.1", pbPortN, 20*time.Second); pbErr != nil {
 			return
 		}
-		for _, f := range []func() error{pbApp.InitOpsTables, pbApp.InitRequestsSchema, pbApp.InitChatsSchema, pbApp.InitDocsSchema} {
+		for _, f := range []func() error{pbApp.InitOpsTables, pbApp.InitRequestsSchema, pbApp.InitChatsSchema, pbApp.InitDocsSchema, pbApp.InitMemoriesSchema} {
 			if pbErr = f(); pbErr != nil {
 				return
 			}

@@ -141,6 +141,9 @@ func main() {
 	if err := pbApp.InitDocsSchema(); err != nil {
 		log.Printf("document search schema: %v (continuing)", err)
 	}
+	if err := pbApp.InitMemoriesSchema(); err != nil {
+		log.Printf("memories schema: %v (continuing)", err)
+	}
 	if err := pbApp.InitVaultSchema(); err != nil {
 		log.Printf("vault schema: %v (continuing)", err)
 	}

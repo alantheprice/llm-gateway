@@ -116,6 +116,11 @@ func (v *VaultMgr) Unlock(user string, wrapKey []byte) error {
 	v.setEnv(user, dek)
 	v.mu.Unlock()
 	log.Printf("Vault unlocked for %s", user)
+	// Re-trigger the one-shot migration: if a previous run was interrupted
+	// (restart, lock loss mid-run) some rows may still be plaintext. The
+	// migration is idempotent and deduped, so this is a no-op when it has
+	// already completed.
+	v.startMigration(user)
 	return nil
 }
 
@@ -378,7 +383,24 @@ func (v *VaultMgr) migrate(user string) {
 		v.setMig(user, migState{Active: true, ChatsDone: total, ChatsTotal: total, DocsDone: j + 1, DocsTotal: dtotal})
 	}
 
-	log.Printf("Vault migration complete for %s (%d chats, %d docs)", user, total, dtotal)
+	// Memories: seal each stored fact (embeddings stay plaintext — the
+	// cosine index). The original updated timestamp is preserved.
+	mems, err := v.app.AllMemories(user)
+	if err != nil {
+		log.Printf("vault migration (%s): list memories: %v", user, err)
+		return
+	}
+	for k := range mems {
+		env, err := v.Envelope(user)
+		if err != nil {
+			return
+		}
+		if err := v.app.UpdateMemory(user, mems[k].ID, env.Seal(mems[k].Text), mems[k].Embedding, mems[k].Dims, mems[k].Updated); err != nil {
+			log.Printf("vault migration (%s): memory %s re-seal: %v", user, mems[k].ID, err)
+		}
+	}
+
+	log.Printf("Vault migration complete for %s (%d chats, %d docs, %d memories)", user, total, dtotal, len(mems))
 }
 
 // RekeyOnPasswordChange re-wraps the user's DEK under a wrap key derived

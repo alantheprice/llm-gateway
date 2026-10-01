@@ -103,7 +103,7 @@ function applyTheme(t) {
   sel.onchange = () => { savePref({chat_model: sel.value}, 'Default model saved.'); try { localStorage.setItem('chat.model', sel.value); } catch (e) {} };
   const web = document.getElementById('defweb');
   web.checked = !!p.chat_web;
-  web.onchange = () => { savePref({chat_web: web.checked}, web.checked ? 'Chats start with 🌐 Web on.' : 'Chats start with 🌐 Web off.'); try { localStorage.setItem('chat.web', web.checked ? '1' : '0'); } catch (e) {} };
+  web.onchange = () => { savePref({chat_web: web.checked}, web.checked ? 'Chats start with Web on.' : 'Chats start with Web off.'); try { localStorage.setItem('chat.web', web.checked ? '1' : '0'); } catch (e) {} };
 })();
 
 // ---------- connectors summary ----------
@@ -113,7 +113,7 @@ document.addEventListener('connectors:change', e => {
     ? '<ul class="setlist">' + list.map(v => '<li><strong>' + esc(v.name) + '</strong> <span class="muted">' + esc(v.url) + '</span> ' +
         (v.enabled ? '<span class="badge ok">on</span>' : '<span class="badge off">off</span>') +
         (v.auth === 'oauth' && !v.signed_in ? ' <span class="badge grace">not signed in</span>' : '') + '</li>').join('') + '</ul>'
-    : '<p class="muted">None yet. Connectors add tools from services like GitHub, Notion or Linear to chats in 🌐 Web mode.</p>';
+    : '<p class="muted">None yet. Connectors add tools from services like GitHub, Notion or Linear to chats in Web mode.</p>';
 });
 document.getElementById('managecx').onclick = () => Connectors.open();
 Connectors.reload();
@@ -223,7 +223,7 @@ document.getElementById('export').addEventListener('click', async () => {
 </style>
 <div class="page settings">
   <div class="page-head">
-    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <button class="hamburger" id="hamburger" aria-label="Menu">{{Icon "menu"}}</button>
     <h1>Settings</h1></div>
   <nav class="set-jump" aria-label="Sections"><a href="#account">Account</a><a href="#appearance">Appearance</a><a href="#chat">Chat</a><a href="#connectors">Connectors</a><a href="#protection">Data protection</a><a href="#data">Your data</a></nav>
   <div class="flash" id="flash"></div>
@@ -269,13 +269,13 @@ document.getElementById('export').addEventListener('click', async () => {
     <h2>Chat</h2>
     <div class="setrow"><div class="sr-text"><strong>Default model</strong><span>What new chats use. You can still switch per chat.</span></div>
       <select id="defmodel" aria-label="Default model"></select></div>
-    <div class="setrow"><div class="sr-text"><strong>Start with 🌐 Web on</strong><span>Lets the model search the web and use your connectors. Slower, with sources.</span></div>
+    <div class="setrow"><div class="sr-text"><strong>Start with Web on</strong><span>Lets the model search the web and use your connectors. Slower, with sources.</span></div>
       <label class="switch"><input type="checkbox" id="defweb"> On</label></div>
   </div>
 
   <div class="card" id="connectors">
     <h2>Connectors</h2>
-    <p class="muted" style="margin:0 0 10px">Remote MCP servers whose tools the model can use in 🌐 Web mode. <a href="/guide/mcp">How connectors work</a></p>
+    <p class="muted" style="margin:0 0 10px">Remote MCP servers whose tools the model can use in Web mode. <a href="/guide/mcp">How connectors work</a></p>
     <div id="cxsummary"><p class="muted">Loading…</p></div>
     <button class="btn" id="managecx">Manage connectors</button>
   </div>
@@ -284,7 +284,7 @@ document.getElementById('export').addEventListener('click', async () => {
     <h2>Data protection</h2>
     <p class="muted" style="margin:0 0 10px">Your chats and documents are stored <strong>encrypted</strong>. Only your
     password can open them — a stolen copy of the gateway database (or a backup) reveals nothing.</p>
-    <p class="muted" style="margin:0 0 10px">⚠️ Changing your password is safe (your data key is re-wrapped in the same step).
+    <p class="muted" style="margin:0 0 10px">Changing your password is safe (your data key is re-wrapped in the same step).
     But if an admin <strong>resets</strong> your password while you're signed out, the gateway can't re-wrap your data key and
     your encrypted chats and documents can't be recovered.</p>
     <div class="setrow"><div class="sr-text" id="vlt-status"><strong>Checking…</strong><span>Reading your vault status.</span></div>
