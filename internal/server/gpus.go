@@ -48,22 +48,27 @@ func (s *Server) handleModelsPage(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, r, "models.html", "models", "Models")
 }
 
-// handleDocumentsPage: /documents — the user's personal documents (upload,
-// list, delete) that back the document-search tool in the chat.
-func (s *Server) handleDocumentsPage(w http.ResponseWriter, r *http.Request) {
+// handleDataPage: /data — the user's own data the model can use:
+// documents (upload/list/delete → the chat's document-search tool) and
+// memories (add/list/delete → the memory tools), on one page.
+func (s *Server) handleDataPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSessionPage(w, r); !ok {
 		return
 	}
-	s.renderPage(w, r, "documents.html", "documents", "Documents")
+	s.renderPage(w, r, "data.html", "data", "Your Data")
 }
 
-// handleMemoriesPage: /memories — the user's personal memories (add, list,
-// delete) that back the memory tools (save + search) in the chat.
-func (s *Server) handleMemoriesPage(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSessionPage(w, r); !ok {
-		return
+// handleDataRedirects: the old /documents and /memories URLs now live on the
+// merged /data page.
+func (s *Server) handleDataRedirects(w http.ResponseWriter, r *http.Request) {
+	section := "documents"
+	if strings.HasSuffix(r.URL.Path, "/memories") {
+		section = "memories"
 	}
-	s.renderPage(w, r, "memories.html", "memories", "Memories")
+	if _, ok := s.requireSessionPage(w, r); !ok {
+		return // not signed in: the auth gate decides where to send them
+	}
+	http.Redirect(w, r, "/data#"+section, http.StatusFound)
 }
 
 // handleEmbeddingsPage: /embeddings — try embedding models with the

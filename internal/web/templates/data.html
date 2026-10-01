@@ -1,0 +1,242 @@
+{{define "title"}}Your Data — LLM Gateway{{end}}
+{{define "scripts"}}
+<script>
+// Your data: the things you own that the model can use.
+//   Documents — upload → chunk + embed → the chat's document_search tool.
+//   Memories  — short facts → the chat's memory_save / memory_search tools.
+// Both are private to the signed-in user (session-cookie APIs, no key), and
+// the model's access to each is switched on in the Connectors dialog
+// (prefs.docs_enabled / prefs.memory_enabled) — the same place as MCP
+// connectors, since they're chat tools.
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j.error || j.message || ('request failed (' + r.status + ')');
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return j;
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtDate(ms) { try { return new Date(ms).toLocaleDateString(); } catch(e) { return ''; } }
+function fmtBytes(n) { n = Number(n || 0); if (n >= 1e9) return (n/1e9).toFixed(1)+' GB'; if (n >= 1e6) return (n/1e6).toFixed(1)+' MB'; if (n >= 1e3) return (n/1e3).toFixed(0)+' KB'; return n+' B'; }
+
+const $id = (s) => document.getElementById(s);
+
+/* ---------- documents ---------- */
+
+async function loadDocs() {
+  const list = $id('docList');
+  try {
+    const { docs } = await api('/api/documents');
+    if (!Array.isArray(docs) || docs.length === 0) {
+      list.innerHTML = '<div class="empty muted">No documents yet. Upload a <code>.txt</code>, <code>.md</code>, <code>.html</code>, <code>.csv</code> or <code>.json</code> file and ask the chat about it.</div>';
+      return;
+    }
+    list.innerHTML = docs.map(d =>
+      '<div class="docrow">' +
+        '<div class="docinfo"><strong>' + esc(d.name) + '</strong>' +
+          '<span class="muted"> · ' + fmtBytes(d.size) + ' · ' + (d.chunks||0) + ' chunks · ' + fmtDate(d.created) + '</span></div>' +
+        '<button class="btn small danger" data-del="' + esc(d.id) + '">Delete</button>' +
+      '</div>').join('');
+    list.querySelectorAll('[data-del]').forEach(b => b.onclick = () => delDoc(b.dataset.del, b));
+  } catch (e) {
+    list.innerHTML = '<div class="empty" style="color:var(--danger)">' + esc(e.message) + '</div>';
+  }
+}
+
+async function delDoc(id, btn) {
+  if (!confirm('Delete this document?')) return;
+  btn.disabled = true;
+  try { await api('/api/documents/' + encodeURIComponent(id), {method: 'DELETE'}); }
+  catch (e) { alert('Delete failed: ' + e.message); btn.disabled = false; return; }
+  loadDocs();
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  const box = $id('uploadBox'), status = $id('uploadStatus');
+  box.classList.add('busy');
+  status.textContent = 'Chunking and embedding…';
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const j = await api('/api/documents', {method: 'POST', body: fd});
+    status.textContent = 'Added ' + (j.chunks||0) + ' chunks from “' + esc(file.name) + '”.';
+    status.style.color = 'var(--primary)';
+  } catch (e) {
+    status.textContent = e.message;
+    status.style.color = 'var(--danger)';
+  }
+  box.classList.remove('busy');
+  loadDocs();
+}
+
+/* ---------- memories ---------- */
+
+async function loadMems() {
+  const list = $id('memList');
+  try {
+    const { memories } = await api('/api/memories');
+    if (!Array.isArray(memories) || memories.length === 0) {
+      list.innerHTML = '<div class="empty muted">No memories yet. Add one below, or in the chat ask it to remember something ("remember that I …").</div>';
+      return;
+    }
+    list.innerHTML = memories.map(m =>
+      '<div class="memrow">' +
+        '<div class="memtext" title="' + esc(m.text) + '">' + esc(m.text) + '</div>' +
+        '<span class="muted memdate">' + fmtDate(m.updated) + '</span>' +
+        '<button class="btn small danger" data-del="' + esc(m.id) + '">Delete</button>' +
+      '</div>').join('');
+    list.querySelectorAll('[data-del]').forEach(b => b.onclick = () => delMem(b.dataset.del, b));
+  } catch (e) {
+    list.innerHTML = '<div class="empty" style="color:var(--danger)">' + esc(e.message) + '</div>';
+  }
+}
+
+async function delMem(id, btn) {
+  if (!confirm('Delete this memory?')) return;
+  btn.disabled = true;
+  try { await api('/api/memories/' + encodeURIComponent(id), {method: 'DELETE'}); }
+  catch (e) { alert('Delete failed: ' + e.message); btn.disabled = false; return; }
+  loadMems();
+}
+
+async function addMemory() {
+  const inp = $id('memText'), status = $id('memStatus');
+  const text = inp.value.trim();
+  if (!text) { status.textContent = 'Type a memory first.'; status.style.color = 'var(--danger)'; return; }
+  status.textContent = 'Saving…'; status.style.color = 'var(--muted)';
+  try {
+    await api('/api/memories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }) });
+    inp.value = '';
+    status.textContent = 'Saved.';
+    status.style.color = 'var(--primary)';
+  } catch (e) {
+    status.textContent = e.message;
+    status.style.color = 'var(--danger)';
+  }
+}
+
+/* ---------- the model-access toggles (one prefs fetch drives both) ---------- */
+
+async function loadToggles() {
+  try {
+    const p = await api('/api/prefs');
+    // Static strings only (not user input) — innerHTML is safe here.
+    $id('docToolHint').innerHTML = p.docs_enabled
+      ? 'On — the chat can search these documents.'
+      : 'Off — turn it on in the <a href="/settings#connectors">Connectors dialog</a>.';
+    $id('memToolHint').innerHTML = p.memory_enabled
+      ? 'On — the chat can save and recall your memories.'
+      : 'Off — turn it on in the <a href="/settings#connectors">Connectors dialog</a>.';
+  } catch (e) { /* ignore */ }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const inp = $id('docFile'), box = $id('uploadBox');
+  $id('pickBtn').onclick = () => inp.click();
+  inp.onchange = () => { uploadFile(inp.files[0]); inp.value = ''; };
+  ['dragenter','dragover'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.remove('drag'); }));
+  box.addEventListener('drop', e => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
+
+  $id('memAdd').onclick = addMemory;
+  $id('memText').addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); addMemory(); }
+  });
+
+  loadDocs();
+  loadMems();
+  loadToggles();
+});
+</script>
+{{end}}
+{{define "content"}}
+<style>
+.page [hidden] { display: none !important; }
+.data-card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 14px 16px; margin-top: 14px; }
+.data-card h2 { font-size: 15px; margin: 0 0 2px; }
+.data-card .sub { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
+.upl { border: 1.5px dashed var(--border); border-radius: 10px; background: var(--card2); padding: 22px 18px; text-align: center; transition: border-color .15s, background .15s; }
+.upl.drag { border-color: var(--info); background: var(--card2); }
+.upl.busy { opacity: .7; }
+.upl .big { margin-bottom: 6px; color: var(--muted); }
+.upl .big svg { width: 40px; height: 40px; }
+.upl p { margin: 4px 0; font-size: 13.5px; color: var(--muted); }
+.upl .hint { font-size: 12px; }
+.urow { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+#uploadStatus { font-size: 13px; margin-top: 10px; min-height: 18px; }
+.docrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; background: var(--card2); }
+.docinfo { min-width: 0; overflow: hidden; }
+.docinfo strong { font-size: 13.5px; }
+.docinfo .muted { font-size: 12px; }
+.memform { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+.memform textarea { width: 100%; resize: vertical; min-height: 56px; max-height: 200px;
+  font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card2); color: var(--text); }
+#memStatus { font-size: 13px; min-height: 18px; }
+.memrow { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; background: var(--card2); }
+.memtext { min-width: 0; flex: 1 1 auto; font-size: 13.5px; overflow-wrap: anywhere; }
+.memdate { font-size: 12px; white-space: nowrap; }
+.empty { padding: 18px; text-align: center; }
+.toolstatus { border-top: 1px solid var(--border2); margin-top: 12px; padding-top: 10px; }
+.toolstatus .tt { font-weight: 600; font-size: 13px; }
+.toolstatus .th { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.btn.small { padding: 4px 10px; font-size: 12.5px; }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+</style>
+<div class="page">
+  <h1>Your Data</h1>
+  <p class="muted" style="font-size:13.5px; margin-top:-4px">
+    Things you own that the model can use — private to you. The model's access to each
+    is switched on in the <a href="/settings#connectors">Connectors dialog</a>, next to your MCP connectors.
+  </p>
+
+  <section class="data-card" id="documents">
+    <h2>Documents</h2>
+    <p class="sub">Upload files and search them from the chat — it answers with a citation to the document.</p>
+
+    <div class="upl" id="uploadBox">
+      <div class="big"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></div>
+      <p><strong>Drop a document here</strong> or</p>
+      <div class="urow">
+        <button class="btn" id="pickBtn">Choose file</button>
+        <input type="file" id="docFile" accept=".txt,.md,.markdown,.rst,.csv,.json,.html,.htm" hidden>
+        <span class="muted hint">.txt · .md · .html · .csv · .json · up to ~5 MB</span>
+      </div>
+      <div id="uploadStatus" role="status"></div>
+    </div>
+
+    <div id="docList"></div>
+
+    <div class="toolstatus">
+      <div class="tt">Document search in the chat</div>
+      <div class="th" id="docToolHint">Loading…</div>
+    </div>
+  </section>
+
+  <section class="data-card" id="memories">
+    <h2>Memories</h2>
+    <p class="sub">Short facts the chat remembers about you — preferences, decisions, project facts.</p>
+
+    <div class="memform">
+      <label class="muted" for="memText" style="font-size:12.5px">Add a memory <span class="hint">· up to 2000 characters · max 500</span></label>
+      <textarea id="memText" placeholder="e.g. I prefer responses in English · my project uses Go + PostgreSQL" maxlength="2000"></textarea>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" id="memAdd">Save memory</button>
+        <span id="memStatus" role="status"></span>
+      </div>
+    </div>
+
+    <div id="memList"></div>
+
+    <div class="toolstatus">
+      <div class="tt">Memory in the chat</div>
+      <div class="th" id="memToolHint">Loading…</div>
+    </div>
+  </section>
+</div>
+{{end}}

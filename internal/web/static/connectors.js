@@ -66,7 +66,7 @@ const Connectors = (() => {
     return r.data;
   }
   // Built-in tools: the gateway's document_search switch (prefs.docs_enabled).
-  // Same store the /documents page reports from, so both views always agree.
+  // Same store the /data page reports from, so both views always agree.
   function cxDocsEl() { return document.getElementById('cxDocsOn'); }
   async function cxDocsLoad() {
     const on = cxDocsEl(); if (!on) return;
@@ -76,14 +76,14 @@ const Connectors = (() => {
     document.getElementById('cxDocsHint').innerHTML = (r.data.docs_enabled
       ? 'On — in <strong>Web</strong> mode the chat can search your documents.'
       : 'Off — the <code>document_search</code> tool is unavailable in the chat.') +
-      ' <a href="/documents">Manage documents →</a>';
+      ' <a href="/data#documents">Manage documents →</a>';
   }
   function cxDocsSave(checked) {
     api('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docs_enabled: checked }) }).then(cxDocsLoad).catch(cxDocsLoad);
   }
   // Memory tools: the gateway's memory_save/memory_search toggle
-  // (prefs.memory_enabled). Same store the /memories page reports from.
+  // (prefs.memory_enabled). Same store the /data page reports from.
   function cxMemEl() { return document.getElementById('cxMemOn'); }
   async function cxMemLoad() {
     const on = cxMemEl(); if (!on) return;
@@ -93,7 +93,7 @@ const Connectors = (() => {
     document.getElementById('cxMemHint').innerHTML = (r.data.memory_enabled
       ? 'On — in <strong>Web</strong> mode the chat can save and recall your memories.'
       : 'Off — the <code>memory_save</code>/<code>memory_search</code> tools are unavailable in the chat.') +
-      ' <a href="/memories">Manage memories →</a>';
+      ' <a href="/data#memories">Manage memories →</a>';
   }
   function cxMemSave(checked) {
     api('/api/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },

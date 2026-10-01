@@ -156,8 +156,9 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.HandleFunc("/gpus", s.handleGPUsPage)
 	mux.HandleFunc("/models", s.handleModelsPage)
-	mux.HandleFunc("/documents", s.handleDocumentsPage)
-	mux.HandleFunc("/memories", s.handleMemoriesPage)
+	mux.HandleFunc("/data", s.handleDataPage)
+	mux.HandleFunc("/documents", s.handleDataRedirects) // → /data#documents
+	mux.HandleFunc("/memories", s.handleDataRedirects)  // → /data#memories
 	mux.HandleFunc("/images", s.handleImagesPage)
 	mux.HandleFunc("/embeddings", s.handleEmbeddingsPage)
 	mux.HandleFunc("/api/gpus", s.handleAPIGPUs)
